@@ -48,6 +48,9 @@ test('desktop and narrow layouts show scene plus useful panels without overflow'
 test('persistent Workspace islands can be created without a model and selected in the actual 3D overview', async ({
   page,
 }) => {
+  // Island labels float with their scene. Use the supported accessible mode so
+  // real pointer clicks stay deterministic on low-frame-rate CI runners.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   // This isolated HostAPI fixture tests UI persistence wiring. It never ships in the application.
   await page.addInitScript(() => {
     const initial = [
