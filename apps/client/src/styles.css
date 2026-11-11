@@ -407,6 +407,19 @@ nav button.active {
   margin-top: 10px;
   flex-shrink: 0;
 }
+.stage-cosmic .stage-title h1 {
+  color: #f3edf8;
+}
+.stage-cosmic .stage-title p,
+.stage-cosmic .scene-caption {
+  color: #b9c9e3;
+}
+.stage-cosmic .caption-line {
+  background: #778bb0;
+}
+.stage-cosmic .view-controls {
+  background: #eaf0f5;
+}
 .scene-caption {
   position: absolute;
   left: 30px;
@@ -462,6 +475,32 @@ nav button.active {
 .view-controls select:focus-visible {
   outline: 2px solid #4e777d;
   outline-offset: 2px;
+}
+.character-settings {
+  padding: 17px 0;
+  border-bottom: 1px solid #cfdbdf;
+}
+.character-settings form {
+  display: grid;
+  gap: 8px;
+}
+.character-settings .button-row {
+  flex-wrap: wrap;
+}
+.character-settings p {
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}
+.character-settings .text-button {
+  margin-top: 8px;
+}
+.scene-label b {
+  max-width: 140px;
+  display: inline-block;
+  vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .view-controls > span {
   height: 16px;

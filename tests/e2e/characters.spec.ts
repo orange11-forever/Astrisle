@@ -48,7 +48,7 @@ test('whale companions have selectable closeups and preserve the accessible scen
   await page.screenshot({ path: 'test-results/whale-girl-back.png', fullPage: true });
   await page.getByRole('button', { name: '回到全景', exact: true }).click();
   await expect(focus).toHaveValue('');
-  await expect(page.getByText('悬浮星岛 · 鲸鱼伙伴', { exact: true })).toBeVisible();
+  await expect(page.getByText('宇宙中的悬浮星岛', { exact: true })).toBeVisible();
   await page.screenshot({ path: 'test-results/whale-girl-studio.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(focus).toBeVisible();

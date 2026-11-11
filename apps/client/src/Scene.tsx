@@ -10,13 +10,17 @@ import {
 } from 'react';
 import type { ReactNode, RefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { ContactShadows, Html, OrbitControls } from '@react-three/drei';
+import { Html, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
-import type { ProjectSnapshot, Task } from '@astrisle/contracts';
+import { DEFAULT_CHARACTERS } from '@astrisle/contracts';
+import type { CharacterProfile, ProjectSnapshot, Task } from '@astrisle/contracts';
 import { directScene, emptyDirector, resolveStation } from './director';
 import type { SceneIntent } from './director';
 import { IslandLandscape } from './IslandLandscape';
-import { createBlueWhaleGirl } from './characters/blue-whale-girl';
+import { CharacterVisual } from './characters/CharacterVisual';
+import type { CharacterMotion } from './characters/CharacterVisual';
+import { CosmicBackdrop } from './CosmicBackdrop';
+import { SceneFrameBudget, useSceneActivity } from './render-budget';
 
 const c = {
   paper: '#e7eef0',
@@ -31,9 +35,9 @@ export type Panel = 'goal' | 'tasks' | 'evidence' | 'artifacts' | 'requests' | '
 export type CharacterFocus = 'mori' | 'luma' | 'user';
 type V3 = [number, number, number];
 const homes: Record<CharacterFocus, V3> = {
-  mori: [-3.8, 0.02, 1.85],
-  luma: [3.8, 0.02, 1.85],
-  user: [0, 0.02, 4.6],
+  mori: [-3.45, 0.02, 1.2],
+  luma: [3.45, 0.02, 1.2],
+  user: [0, 0.02, 3.65],
 };
 function Box({
   position = [0, 0, 0],
@@ -84,7 +88,7 @@ function Cylinder({
 }) {
   return (
     <mesh castShadow receiveShadow position={position}>
-      <cylinderGeometry args={[radius, radius, height, 48]} />
+      <cylinderGeometry args={[radius, radius, height, radius < 0.12 ? 8 : 24]} />
       <meshStandardMaterial color={color} roughness={0.7} />
     </mesh>
   );
@@ -182,7 +186,8 @@ function Lamp({ position }: { position: V3 }) {
 function Desk({ x, onClick }: { x: number; onClick: () => void }) {
   return (
     <group
-      position={[x, 0, -0.3]}
+      position={[x, 0, -1.1]}
+      scale={[0.94, 0.82, 0.94]}
       onClick={(e) => {
         e.stopPropagation();
         onClick();
@@ -254,25 +259,29 @@ function StarTable({ active, onClick }: { active: boolean; onClick: () => void }
         <octahedronGeometry args={[0.19]} />
         <meshStandardMaterial color={c.brass} metalness={0.65} roughness={0.2} />
       </mesh>
-      <Ring radius={2.55} y={0.95} arc={Math.PI * 1.72} rotation={0.42} />
-      {[0, 1, 2, 3, 4, 5, 6].map((i) => (
-        <Cylinder
-          key={i}
-          position={[Math.cos(i * 0.8) * 2.55, 0.5, Math.sin(i * 0.8) * 2.55]}
-          radius={0.025}
-          height={0.9}
-          color={c.brass}
-        />
-      ))}
     </group>
   );
 }
 const anchors: Record<string, V3> = {
-  table: [-1.7, 0, 1.8],
-  compare: [0.8, 0, -2.4],
-  dock: [3.5, 0, 3],
-  mail: [-3.5, 0, 3],
+  table: [-1.65, 0, 1.4],
+  compare: [0.8, 0, -2.5],
+  dock: [3.2, 0, 2.7],
+  mail: [-3.2, 0, 2.7],
 };
+/** One tiny draw instead of rendering the whole island into a shadow framebuffer. */
+function GroundShadow() {
+  return (
+    <mesh position={[0, 0.006, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={1}>
+      <planeGeometry args={[1.15, 0.85]} />
+      <shaderMaterial
+        transparent
+        depthWrite={false}
+        vertexShader="varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }"
+        fragmentShader="varying vec2 vUv; void main(){ float a=0.18*(1.0-smoothstep(0.1,1.0,length(vUv-0.5)*2.0)); gl_FragColor=vec4(0.05,0.07,0.12,a); }"
+      />
+    </mesh>
+  );
+}
 function Avatar({
   id,
   home,
@@ -282,8 +291,9 @@ function Avatar({
   reduced,
   onClick,
   preview = false,
+  profile,
 }: {
-  id: string;
+  id: CharacterFocus;
   home: V3;
   color: string;
   task?: Task;
@@ -291,76 +301,30 @@ function Avatar({
   reduced: boolean;
   onClick?: () => void;
   preview?: boolean;
+  profile?: CharacterProfile;
 }) {
-  const body = useRef<THREE.Group>(null);
   const root = useRef<THREE.Group>(null);
-  const model = useMemo(() => createBlueWhaleGirl({ accent: color }), [color]);
-  const retirement = useRef<
-    { model: typeof model; timer: ReturnType<typeof setTimeout> } | undefined
-  >(undefined);
-  const parcel = useMemo(() => {
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(0.22, 0.035, 0.25),
-      new THREE.MeshStandardMaterial({ color: c.paper, roughness: 0.8 }),
-    );
-    mesh.name = 'handoff-parcel';
-    mesh.position.set(0, -0.29, 0.13);
-    mesh.visible = false;
-    return mesh;
-  }, [model]);
-  useEffect(() => {
-    // StrictMode reconnects effects using the same model; retire only a real unmount.
-    if (retirement.current?.model === model) {
-      clearTimeout(retirement.current.timer);
-      retirement.current = undefined;
-    }
-    model.joints.rightArm.add(parcel);
-    return () => {
-      model.joints.rightArm.remove(parcel);
-      const timer = setTimeout(() => {
-        model.dispose();
-        parcel.geometry.dispose();
-        parcel.material.dispose();
-        if (retirement.current?.timer === timer) retirement.current = undefined;
-      }, 0);
-      retirement.current = { model, timer };
-    };
-  }, [model, parcel]);
+  const motion = useRef<CharacterMotion>({
+    walking: false,
+    working: false,
+    carrying: false,
+    time: 0,
+  });
+  const character = profile ?? DEFAULT_CHARACTERS.find((entry) => entry.id === id)!;
   const target = intent && !intent.stationary ? anchors[intent.anchor] || home : home;
+  const targetVector = useMemo(() => new THREE.Vector3(...target), [target]);
   useFrame(({ clock }, delta) => {
-    if (!root.current || !body.current) return;
-    const t = clock.elapsedTime + (id === 'mori' ? 0 : id === 'luma' ? 2.4 : 4.8);
-    const targetV = new THREE.Vector3(...target);
-    const dist = root.current.position.distanceTo(targetV);
-    if (reduced) root.current.position.copy(targetV);
-    else root.current.position.lerp(targetV, 1 - Math.exp(-Math.min(delta, 0.05) * 1.8));
-    const walk = dist > 0.15 && !reduced;
+    if (!root.current) return;
+    const distance = root.current.position.distanceTo(targetVector);
+    if (reduced) root.current.position.copy(targetVector);
+    else root.current.position.lerp(targetVector, 1 - Math.exp(-Math.min(delta, 0.05) * 1.8));
+    const walking = distance > 0.15 && !reduced;
     const working = task?.status === 'running' && !/model|response|等待/i.test(task.step);
-    const motion = reduced ? 0 : 1;
-    const joints = model.joints;
-    body.current.position.y = Math.sin(t * 1.7) * 0.012 * motion;
-    joints.head.rotation.z = Math.sin(t * 0.7) * 0.035 * motion;
-    joints.hair.rotation.z = Math.sin(t * 0.9 + 0.8) * 0.018 * motion;
-    const swing = walk ? Math.sin(t * 8) * 0.38 : 0;
-    joints.leftLeg.rotation.x = swing;
-    joints.rightLeg.rotation.x = -swing;
-    joints.leftArm.rotation.x = walk
-      ? -swing
-      : working
-        ? -0.65 + Math.sin(t * 5) * 0.07 * motion
-        : intent
-          ? -0.65
-          : Math.sin(t * 0.9) * 0.05 * motion;
-    joints.rightArm.rotation.x = walk
-      ? swing
-      : working
-        ? -0.65 + Math.cos(t * 5) * 0.07 * motion
-        : intent
-          ? -0.6
-          : Math.sin(t * 0.9 + 1) * 0.05 * motion;
-    parcel.visible = !!intent;
-    parcel.material.color.set(intent?.kind === 'return' ? c.coral : c.paper);
-    root.current.rotation.y = walk
+    motion.current.walking = walking;
+    motion.current.working = working;
+    motion.current.carrying = !!intent;
+    motion.current.time = clock.elapsedTime + (id === 'mori' ? 0 : id === 'luma' ? 2.4 : 4.8);
+    root.current.rotation.y = walking
       ? Math.atan2(target[0] - root.current.position.x, target[2] - root.current.position.z)
       : preview
         ? 0
@@ -377,12 +341,11 @@ function Avatar({
         onClick?.();
       }}
     >
-      <group ref={body}>
-        <primitive object={model.root} />
-      </group>
+      <CharacterVisual profile={character} motionRef={motion} reduced={reduced} accent={color} />
+      <GroundShadow />
       {!preview && id !== 'user' && (
         <Label position={[0, 2.12, 0]} onClick={onClick}>
-          <b>{id === 'mori' ? 'Mori' : 'Luma'}</b>
+          <b>{character.displayName}</b>
           <span>
             {task
               ? task.status === 'running'
@@ -449,6 +412,7 @@ function World({
   reset,
   fixed,
   focus,
+  characters,
 }: {
   workspaceId: string;
   snapshot?: ProjectSnapshot;
@@ -457,6 +421,7 @@ function World({
   reset: number;
   fixed: boolean;
   focus?: CharacterFocus;
+  characters?: CharacterProfile[];
 }) {
   const director = useRef(emptyDirector());
   const [intents, setIntents] = useState<SceneIntent[]>([]);
@@ -483,6 +448,9 @@ function World({
     occupied.add(i.anchor);
     return resolveStation(i, conflict, 1500)!;
   });
+  const profileFor = (id: CharacterFocus) =>
+    characters?.find((profile) => profile.id === id) ??
+    DEFAULT_CHARACTERS.find((profile) => profile.id === id)!;
   if (focus) {
     const home = homes[focus];
     return (
@@ -499,6 +467,7 @@ function World({
         <CameraRig reset={reset} fixed={fixed} focus={focus} />
         <Avatar
           id={focus}
+          profile={profileFor(focus)}
           home={home}
           color={focus === 'mori' ? '#497a75' : focus === 'luma' ? '#818ba9' : '#ceb8a1'}
           reduced={reduced}
@@ -508,34 +477,16 @@ function World({
           <cylinderGeometry args={[0.75, 0.79, 0.09, 64]} />
           <meshStandardMaterial color="#f3f2ec" roughness={0.86} />
         </mesh>
-        <ContactShadows
-          position={[home[0], 0.001, home[2]]}
-          opacity={0.3}
-          scale={3}
-          blur={2.4}
-          far={3}
-          resolution={256}
-        />
       </>
     );
   }
   return (
     <>
-      <color attach="background" args={['#dce7ed']} />
-      <fog attach="fog" args={['#dce7ed', 70, 140]} />
-      <ambientLight intensity={1.25} />
-      <hemisphereLight args={['#e9f1ff', '#718b8e', 2]} />
-      <directionalLight
-        position={[-6, 12, 8]}
-        intensity={3}
-        castShadow
-        shadow-mapSize={[1024, 1024]}
-        shadow-camera-left={-8}
-        shadow-camera-right={8}
-        shadow-camera-top={8}
-        shadow-camera-bottom={-8}
-        shadow-bias={-0.001}
-      />
+      <CosmicBackdrop reduced={reduced} />
+      <ambientLight intensity={0.9} />
+      <hemisphereLight args={['#c6d9ff', '#64557c', 1.35]} />
+      <directionalLight position={[-6, 12, 8]} intensity={2.3} color="#ffe8c8" />
+      <directionalLight position={[6, 3, -8]} intensity={1.1} color="#98a9ed" />
       <CameraRig reset={reset} fixed={fixed} focus={focus} />
       <IslandLandscape workspaceId={workspaceId} reduced={reduced} />
       <group position={[0, -0.38, 0]}>
@@ -543,13 +494,8 @@ function World({
           <cylinderGeometry args={[6.1, 5.4, 0.55, 80]} />
           <meshStandardMaterial color="#a5b4b5" />
         </mesh>
-        <mesh position={[0, -0.7, 0]} rotation={[0, 0.1, 0]}>
-          <coneGeometry args={[5.6, 1.6, 9]} />
-          <meshStandardMaterial color={c.rock} flatShading />
-        </mesh>
         <Cylinder position={[0, 0.3, 0]} radius={5.97} height={0.13} color="#b9ad97" />
         <Ring radius={5.78} y={0.39} />
-        <Ring radius={3} y={0.39} color="#e0d2b2" />
         {Array.from({ length: 19 }, (_, i) => (
           <Box
             key={i}
@@ -559,11 +505,11 @@ function World({
           />
         ))}
       </group>
-      <group position={[0, 0, -0.1]}>
+      <group position={[0, 0, -0.65]} scale={0.82}>
         <StarTable active={!!snapshot} onClick={() => onPanel('goal')} />
       </group>
-      <Desk x={-3.9} onClick={() => onPanel('tasks')} />
-      <Desk x={3.9} onClick={() => onPanel('tasks')} />
+      <Desk x={-3.6} onClick={() => onPanel('tasks')} />
+      <Desk x={3.6} onClick={() => onPanel('tasks')} />
       <group position={[0, 0, -3.55]} onClick={() => onPanel('evidence')}>
         <Box position={[0, 1.5, 0]} scale={[2.2, 1.7, 0.13]} color={c.wood} />
         <Box position={[-0.55, 1.52, 0.085]} scale={[0.94, 1.4, 0.025]} color="#dce4de" />
@@ -605,17 +551,17 @@ function World({
           rotation={[0, 0, -0.13]}
         />
       </group>
-      <group position={[-3.65, 0, 3.05]} onClick={() => onPanel('requests')}>
+      <group position={[-4.2, 0, 2.7]} onClick={() => onPanel('requests')}>
         <Cylinder radius={0.55} height={0.12} position={[0, 0.12, 0]} color={c.wood} />
         <Cylinder radius={0.04} height={0.95} position={[0, 0.6, 0]} color={c.brass} />
         <Box position={[0, 1.18, 0]} scale={[0.8, 0.67, 0.24]} color="#d3dfdc" />
         <Box position={[0, 1.22, 0.14]} scale={[0.49, 0.06, 0.03]} color={c.ink} />
-        <Label position={[0, 1.9, 0]} onClick={() => onPanel('requests')}>
+        <Label position={[-0.4, 0.85, 0.65]} onClick={() => onPanel('requests')}>
           回信匣
           {snapshot?.requests.some((r) => r.status === 'open') ? ' · 需要你' : ' · 输入与审批'}
         </Label>
       </group>
-      <group position={[3.65, 0, 3]} onClick={() => onPanel('artifacts')}>
+      <group position={[4.2, 0, 2.7]} onClick={() => onPanel('artifacts')}>
         <Box position={[0, 0.12, 0]} scale={[2, 0.2, 1.5]} color={c.wood} />
         <Box position={[0, 0.48, 0]} scale={[1.25, 0.56, 0.8]} color="#dce0d1" />
         {[-0.57, 0.57].map((x) => (
@@ -627,7 +573,7 @@ function World({
         >
           <Box position={[0, 0.04, 0.4]} scale={[1.3, 0.1, 0.86]} color="#e3e4d7" />
         </group>
-        <Label position={[0, 1.5, 0]} onClick={() => onPanel('artifacts')}>
+        <Label position={[0, 0.95, 0.9]} onClick={() => onPanel('artifacts')}>
           交付港 · {snapshot?.artifacts.length ? `${snapshot.artifacts.length} 项成果` : '等待成果'}
         </Label>
       </group>
@@ -660,6 +606,7 @@ function World({
       </group>
       <Avatar
         id="mori"
+        profile={profileFor('mori')}
         home={homes.mori}
         color="#497a75"
         task={snapshot?.tasks.find(
@@ -671,6 +618,7 @@ function World({
       />
       <Avatar
         id="luma"
+        profile={profileFor('luma')}
         home={homes.luma}
         color="#818ba9"
         task={snapshot?.tasks.find(
@@ -680,31 +628,13 @@ function World({
         reduced={reduced}
         onClick={() => onPanel('tasks')}
       />
-      <Avatar id="user" home={homes.user} color="#ceb8a1" reduced={reduced} />
-      <ContactShadows
-        position={[0, -1.7, 0]}
-        opacity={0.22}
-        scale={26}
-        blur={2.8}
-        far={10}
-        resolution={256}
+      <Avatar
+        id="user"
+        profile={profileFor('user')}
+        home={homes.user}
+        color="#ceb8a1"
+        reduced={reduced}
       />
-      <mesh position={[-6, 6, -15]}>
-        <sphereGeometry args={[1.3, 32, 24]} />
-        <meshBasicMaterial color="#f5f1d4" />
-      </mesh>
-      {[-1, 1].map((side) => (
-        <group key={side} position={[side * 9, -2, -2]}>
-          {Array.from({ length: 6 }, (_, i) => (
-            <Sphere
-              key={i}
-              position={[Math.sin(i * 2) * 2, -i * 0.12, Math.cos(i) * 3]}
-              scale={[3, 1, 2]}
-              color="#e9eef0"
-            />
-          ))}
-        </group>
-      ))}
     </>
   );
 }
@@ -732,14 +662,10 @@ export function StudioScene(props: {
   reset: number;
   fixed: boolean;
   focus?: CharacterFocus;
+  characters?: CharacterProfile[];
 }) {
   const portal = useRef<HTMLDivElement>(null!);
-  const [visible, setVisible] = useState(!document.hidden);
-  useEffect(() => {
-    const update = () => setVisible(!document.hidden);
-    document.addEventListener('visibilitychange', update);
-    return () => document.removeEventListener('visibilitychange', update);
-  }, []);
+  const active = useSceneActivity();
   return (
     <SceneBoundary>
       <div className="studio-canvas" style={{ position: 'absolute', inset: 0 }}>
@@ -749,12 +675,12 @@ export function StudioScene(props: {
           style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 2 }}
         />
         <Canvas
-          shadows
-          dpr={[1, 1.6]}
-          frameloop={visible ? 'always' : 'never'}
+          dpr={1}
+          frameloop="demand"
           camera={{ position: [12, 12, 17.5], fov: 38 }}
-          gl={{ antialias: true, powerPreference: 'high-performance' }}
+          gl={{ antialias: true, powerPreference: 'default' }}
         >
+          <SceneFrameBudget reduced={props.reduced} active={active} />
           <LabelPortal.Provider value={portal}>
             <Suspense fallback={null}>
               <World {...props} />

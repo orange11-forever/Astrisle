@@ -166,12 +166,41 @@ export interface Capability {
   available: boolean;
   detail: string;
 }
+export type CharacterId = 'mori' | 'luma' | 'user';
+export interface CharacterModel {
+  assetId: string;
+  filename: string;
+  format: 'glb' | 'gltf';
+  byteLength: number;
+  triangleCount: number;
+  animationCount: number;
+  hasSkins: boolean;
+}
+export interface CharacterProfile {
+  id: CharacterId;
+  displayName: string;
+  model?: CharacterModel;
+  /** Changes only after a successful import, including repair of the same content hash. */
+  modelRevision?: number;
+  rotationY?: 0 | 90 | 180 | 270;
+}
+export interface CharacterUpdate {
+  displayName?: string;
+  resetModel?: boolean;
+  rotationY?: 0 | 90 | 180 | 270;
+}
+export const DEFAULT_CHARACTERS: readonly CharacterProfile[] = [
+  { id: 'mori', displayName: 'Mori' },
+  { id: 'luma', displayName: 'Luma' },
+  { id: 'user', displayName: '我' },
+];
 export interface Bootstrap {
   workspaces: Workspace[];
   commissions: Commission[];
   provider: ProviderSettings;
   capabilities: Capability[];
   version: string;
+  characters?: CharacterProfile[];
 }
 export interface NewWorkspaceInput {
   name: string;
@@ -213,6 +242,10 @@ export interface ApplyPreview {
 }
 export interface HostAPI {
   bootstrap(): Promise<Bootstrap>;
+  getCharacters?(): Promise<CharacterProfile[]>;
+  updateCharacter?(id: CharacterId, patch: CharacterUpdate): Promise<CharacterProfile>;
+  importCharacter?(id: CharacterId): Promise<CharacterProfile | null>;
+  loadCharacterModel?(assetId: string): Promise<Uint8Array>;
   createWorkspace(input: NewWorkspaceInput): Promise<Workspace>;
   chooseDirectory(): Promise<string | null>;
   submit(input: SubmitInput): Promise<CommandResult>;
