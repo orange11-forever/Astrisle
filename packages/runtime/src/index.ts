@@ -25,6 +25,7 @@ import {
 import { assertPlainPath } from '../../executor/src/path-guard';
 import { complete, validateArguments, type Call, type Message } from './provider';
 import { planTool, runtimeTools } from './tools';
+import { buildTaskContinuation, summarizeTaskEvidence } from './task-context';
 export interface RuntimeService {
   bootstrap(): Promise<Bootstrap>;
   createWorkspace(input: NewWorkspaceInput): Promise<Workspace>;
@@ -64,6 +65,17 @@ export function createRuntime(options: RuntimeOptions): RuntimeService {
 }
 class OutcomeUnknownError extends Error {}
 const interruptedTitle = 'Inspect interrupted task';
+function pendingTaskRequest(snapshot: ProjectSnapshot, taskId: string) {
+  const requests = snapshot.requests.filter((r) => r.taskId === taskId && r.status === 'open');
+  return requests.find((r) => r.kind === 'approval') ?? requests[0];
+}
+function waitForTaskRequests(snapshot: ProjectSnapshot, task: Task): boolean {
+  const request = pendingTaskRequest(snapshot, task.id);
+  if (!request) return false;
+  task.status = request.kind === 'approval' ? 'waiting_approval' : 'waiting_input';
+  task.step = request.title;
+  return true;
+}
 class Runtime implements RuntimeService {
   private store: RuntimeStore;
   private listeners = new Set<(snapshot: ProjectSnapshot) => void>();
@@ -82,40 +94,109 @@ class Runtime implements RuntimeService {
   constructor(private options: RuntimeOptions) {
     this.store = new RuntimeStore(options.dataRoot);
     const unknown = this.store.unknownCalls();
-    for (const snapshot of this.store.projects())
-      if (['active', 'cancelling'].includes(snapshot.commission.status)) {
+    for (const snapshot of this.store.projects()) {
+      const calls = unknown.filter((call) => call.projectId === snapshot.commission.id);
+      const uncertain = calls.filter(
+        (call) => !['model', 'plan'].includes(call.request.kind ?? ''),
+      );
+      if (['accepted', 'cancelled'].includes(snapshot.commission.status)) continue;
+      if (
+        ['active', 'cancelling'].includes(snapshot.commission.status) ||
+        calls.length ||
+        snapshot.tasks.some((t) => t.status === 'running')
+      ) {
         snapshot.commission.status = 'paused';
         snapshot.commission.summary =
-          'Runtime restarted. Previous calls may have an unknown outcome; inspect evidence before resuming.';
-        for (const task of snapshot.tasks)
-          if (task.status === 'running') {
-            task.status = 'waiting_input';
+          'Runtime restarted. Saved actions are available; inspect any unknown outcomes before resuming.';
+        let changed = calls.some(
+          (call) => call.state === 'running' || ['model', 'plan'].includes(call.request.kind ?? ''),
+        );
+        for (const task of snapshot.tasks) {
+          const taskCalls = calls.filter((call) => call.taskId === task.id);
+          const unresolved = uncertain.filter((call) => call.taskId === task.id);
+          const legacyUnknown =
+            task.status === 'running' &&
+            !taskCalls.length &&
+            !this.store.recentTaskCalls(snapshot.commission.id, task.id).length;
+          if (unresolved.length || legacyUnknown) {
+            if (task.status !== 'waiting_approval' || task.error !== 'outcome_unknown')
+              changed = true;
+            task.status = 'waiting_approval';
             task.error = 'outcome_unknown';
             task.step = 'Inspect previous tool output before resuming';
-            const id = randomUUID();
+            if (
+              !snapshot.requests.some(
+                (r) => r.taskId === task.id && r.status === 'open' && r.title === interruptedTitle,
+              )
+            ) {
+              changed = true;
+              snapshot.requests.push({
+                id: randomUUID(),
+                commissionId: snapshot.commission.id,
+                taskId: task.id,
+                kind: 'approval',
+                title: 'Inspect interrupted task',
+                detail: `Previous execution outcome is unknown. Inspect calls ${unresolved.map((call) => `${call.id} (${call.request.name ?? 'unknown tool'})`).join(', ') || 'without a saved receipt'}, processes and files. Describe the observed state before approving continuation; old calls will not be replayed.`,
+                status: 'open',
+                createdAt: now(),
+              });
+            }
+          } else if (task.status === 'running') {
+            changed = true;
+            task.status = 'queued';
+            delete task.error;
+            task.step = 'Ready to continue from saved actions';
+            waitForTaskRequests(snapshot, task);
+          }
+        }
+        for (const call of uncertain.filter(
+          (call) => !snapshot.tasks.some((task) => task.id === call.taskId),
+        )) {
+          if (
+            !snapshot.requests.some(
+              (r) =>
+                r.status === 'open' && r.title === interruptedTitle && r.taskId === call.taskId,
+            )
+          ) {
+            changed = true;
             snapshot.requests.push({
-              id,
+              id: randomUUID(),
               commissionId: snapshot.commission.id,
-              taskId: task.id,
+              taskId: call.taskId,
               kind: 'approval',
-              title: 'Inspect interrupted task',
-              detail:
-                'Previous execution outcome is unknown. Confirm the task workspace is safe to continue; this will not replay the old call.',
+              title: interruptedTitle,
+              detail: `Inspect interrupted call ${call.id} before continuing.`,
               status: 'open',
               createdAt: now(),
             });
           }
+        }
+        const original = this.store.get(snapshot.commission.id);
+        if (!changed && original.commission.status === 'paused') continue;
         this.event(
           snapshot,
           'recovery',
           'Paused after restart; no interrupted tool call was replayed',
         );
-        this.store.transaction(() => this.store.save(snapshot));
+        this.store.transaction(() => {
+          this.store.save(snapshot);
+          for (const call of calls) {
+            if (['model', 'plan'].includes(call.request.kind ?? ''))
+              this.store.endCall(call.id, {
+                ok: false,
+                code: 'interrupted',
+                output: 'Model request interrupted; no returned actions were dispatched.',
+              });
+            else if (call.state === 'running')
+              this.store.endCall(call.id, {
+                ok: false,
+                code: 'outcome_unknown',
+                output: 'Runtime stopped before a durable tool receipt.',
+              });
+          }
+        });
       }
-    for (const call of unknown)
-      this.store.endCall(call.id, {
-        code: 'outcome_unknown',
-      });
+    }
   }
   private event(
     s: ProjectSnapshot,
@@ -332,6 +413,8 @@ class Runtime implements RuntimeService {
       const r = s.requests.find((r) => r.id === requestId)!;
       r.answer = answer;
       r.status = r.kind === 'approval' && approve !== true ? 'rejected' : 'answered';
+      if (r.title === interruptedTitle)
+        this.store.reconcileCalls(snapshot.commission.id, r.taskId, answer);
       const t = s.tasks.find((t) => t.id === r.taskId);
       if (t) {
         t.status = 'queued';
@@ -340,6 +423,7 @@ class Runtime implements RuntimeService {
             ? 'Approval rejected; find an alternative'
             : 'User input received';
         if (r.title === interruptedTitle) delete t.error;
+        waitForTaskRequests(s, t);
       }
       if (r.title === 'Review proposed plan' && approve === true) s.commission.status = 'active';
     });
@@ -515,8 +599,20 @@ class Runtime implements RuntimeService {
     if (this.closing) return;
     queueMicrotask(() => {
       if (this.closing || this.closed) return;
-      const s = this.store.get(id);
+      let s = this.store.get(id);
       if (s.commission.status !== 'active') return;
+      if (
+        s.tasks.some(
+          (t) => ['queued', 'waiting_dependency'].includes(t.status) && pendingTaskRequest(s, t.id),
+        )
+      ) {
+        this.change(id, 'task_waiting', 'Unanswered user requests still block their tasks', (s) => {
+          for (const task of s.tasks)
+            if (['queued', 'waiting_dependency'].includes(task.status))
+              waitForTaskRequests(s, task);
+        });
+        s = this.store.get(id);
+      }
       if (!s.tasks.some((t) => t.status !== 'cancelled')) {
         if (!this.planning.has(id)) this.startPlan(id);
         return;
@@ -729,6 +825,7 @@ class Runtime implements RuntimeService {
               : 'failed';
             t.error = this.safeError(e);
             t.step = signal.aborted ? 'Stopped' : 'Execution failed';
+            if (signal.aborted) waitForTaskRequests(s, t);
             if (!signal.aborted) {
               s.commission.status = 'paused';
               s.commission.summary = 'A task failed; inspect evidence before resuming';
@@ -750,6 +847,7 @@ class Runtime implements RuntimeService {
       (a) => a.validity === 'current' && task.dependencies.includes(a.taskId),
     );
     for (const a of inputs) {
+      if (task.inputVersions.includes(a.versionId)) continue;
       const path = resolve(workPath, a.relativePath),
         rel = relative(workPath, path);
       if (rel.startsWith('..') || isAbsolute(rel)) throw new Error('Invalid artifact input path');
@@ -769,6 +867,7 @@ class Runtime implements RuntimeService {
         taskId,
       },
     );
+    const evidence = initial.evidence.filter((e) => e.taskId === taskId);
     const messages: Message[] = [
       {
         role: 'system',
@@ -782,8 +881,17 @@ class Runtime implements RuntimeService {
           task,
           inputs,
           userAnswers: initial.requests.filter((r) => r.taskId === taskId && r.status !== 'open'),
-          priorEvidence: initial.evidence.filter((e) => e.taskId === taskId),
+          pendingRequests: initial.requests.filter(
+            (r) => r.status === 'open' && (!r.taskId || r.taskId === taskId),
+          ),
+          priorEvidence: summarizeTaskEvidence(evidence),
+          priorEvidenceMayBeTruncated: evidence.length > 24,
           availableArtifacts: initial.artifacts,
+          continuation: await buildTaskContinuation(
+            workPath,
+            this.store.recentTaskCalls(id, taskId),
+            inputs.concat(initial.artifacts.filter((a) => a.taskId === taskId)),
+          ),
         }),
       },
     ];
@@ -848,9 +956,28 @@ class Runtime implements RuntimeService {
           const definition = definitions.find((t) => t.name === call.name);
           if (!definition) throw new Error('Unregistered tool');
           validateArguments(call.args, definition.parameters);
-          if (runtimeTools.some((t) => t.name === call.name))
-            output = await this.runtimeTool(id, taskId, workPath, call);
-          else output = await this.executorTool(id, taskId, workPath, call, signal);
+          if (runtimeTools.some((t) => t.name === call.name)) {
+            const runId = randomUUID();
+            this.store.startCall(runId, id, taskId, {
+              kind: 'runtime_tool',
+              name: call.name,
+              args: call.args,
+              revision: s.commission.revision,
+            });
+            try {
+              output = await this.runtimeTool(id, taskId, workPath, call);
+              this.store.endCall(runId, output);
+            } catch (error) {
+              this.store.endCall(runId, {
+                ok: false,
+                code: error instanceof OutcomeUnknownError ? 'OUTCOME_UNKNOWN' : 'tool_error',
+                output: this.safeError(error),
+              });
+              if (error instanceof OutcomeUnknownError)
+                this.requireReconciliation(id, taskId, runId, call.name);
+              throw error;
+            }
+          } else output = await this.executorTool(id, taskId, workPath, call, signal);
         } catch (e) {
           if (e instanceof OutcomeUnknownError) throw e;
           output = {
@@ -893,6 +1020,7 @@ class Runtime implements RuntimeService {
       kind: 'tool',
       name: call.name,
       args: call.args,
+      revision: s.commission.revision,
     });
     this.change(id, 'tool_started', `Calling ${call.name}`, (s) => {
       s.tasks.find((t) => t.id === taskId)!.step = call.name;
@@ -916,13 +1044,12 @@ class Runtime implements RuntimeService {
             },
             signal,
           });
-      this.store.endCall(runId, output);
     } catch (e) {
-      this.store.endCall(runId, {
+      output = {
         ok: false,
-        error: this.safeError(e),
-      });
-      throw e;
+        code: definition?.effect === 'read' ? 'tool_error' : 'OUTCOME_UNKNOWN',
+        output: this.safeError(e),
+      };
     }
     const unknown =
       output.code === 'OUTCOME_UNKNOWN' || output.metadata?.stopStatus === 'outcome_unknown';
@@ -949,6 +1076,7 @@ class Runtime implements RuntimeService {
       'tool_finished',
       `${call.name}: ${output.ok ? 'returned successfully' : 'failed'}`,
       (s) => {
+        this.store.endCall(runId, { ...output, evidenceId, inputVersionIds: task.inputVersions });
         s.evidence.push({
           id: evidenceId,
           kind: 'tool',
@@ -969,35 +1097,7 @@ class Runtime implements RuntimeService {
       },
     );
     if (unknown) {
-      this.change(
-        id,
-        'tool_outcome_unknown',
-        'Tool returned without confirmation that its external effects or process have stopped',
-        (s) => {
-          s.commission.status = 'paused';
-          s.commission.summary =
-            'A tool outcome is unknown. Inspect its process, files and logs before continuing or confirming cancellation.';
-          const t = s.tasks.find((t) => t.id === taskId)!;
-          t.status = 'waiting_approval';
-          t.error = 'outcome_unknown';
-          t.step = 'Outcome unknown; reconciliation required';
-          s.requests.push({
-            id: randomUUID(),
-            commissionId: id,
-            taskId,
-            kind: 'approval',
-            title: interruptedTitle,
-            detail: `Call ${runId} (${call.name}) could not confirm its outcome. Inspect the actual process, files and logs. Describe the observed state and approve only after reconciliation.`,
-            status: 'open',
-            createdAt: now(),
-          });
-        },
-        { taskId },
-      );
-      for (const run of this.running.values())
-        if (run.commissionId === id)
-          run.controller.abort(new OutcomeUnknownError('Tool outcome unknown'));
-      throw new OutcomeUnknownError('Tool outcome unknown');
+      this.requireReconciliation(id, taskId, runId, call.name);
     }
     signal.throwIfAborted();
     return {
@@ -1005,6 +1105,42 @@ class Runtime implements RuntimeService {
       evidenceId,
       inputVersionIds: task.inputVersions,
     };
+  }
+  private requireReconciliation(id: string, taskId: string, runId: string, name: string): never {
+    this.change(
+      id,
+      'tool_outcome_unknown',
+      'Tool returned without confirmation that its external effects or process have stopped',
+      (s) => {
+        s.commission.status = 'paused';
+        s.commission.summary =
+          'A tool outcome is unknown. Inspect its process, files and logs before continuing or confirming cancellation.';
+        const t = s.tasks.find((t) => t.id === taskId)!;
+        t.status = 'waiting_approval';
+        t.error = 'outcome_unknown';
+        t.step = 'Outcome unknown; reconciliation required';
+        if (
+          !s.requests.some(
+            (r) => r.taskId === taskId && r.status === 'open' && r.title === interruptedTitle,
+          )
+        )
+          s.requests.push({
+            id: randomUUID(),
+            commissionId: id,
+            taskId,
+            kind: 'approval',
+            title: interruptedTitle,
+            detail: `Call ${runId} (${name}) could not confirm its outcome. Inspect the actual process, files and logs. Describe the observed state and approve only after reconciliation.`,
+            status: 'open',
+            createdAt: now(),
+          });
+      },
+      { taskId },
+    );
+    for (const run of this.running.values())
+      if (run.commissionId === id)
+        run.controller.abort(new OutcomeUnknownError('Tool outcome unknown'));
+    throw new OutcomeUnknownError('Tool outcome unknown');
   }
   private async pinnedHashes(
     workPath: string,
@@ -1136,29 +1272,42 @@ class Runtime implements RuntimeService {
         )
           throw new Error(`Publish every changed file before integration: ${change.path}`);
       }
-      const integration = await integrateTaskWorkspace(s.workspace, workPath, changes);
+      let integration;
+      try {
+        // Validation above is effect-free. Integration may write several managed files;
+        // a thrown I/O error cannot establish which writes reached the filesystem.
+        integration = await integrateTaskWorkspace(s.workspace, workPath, changes);
+        if (integration.ok)
+          this.change(id, 'task_completed', String(a.summary), (s) => {
+            const t = s.tasks.find((t) => t.id === taskId)!;
+            if (t.status !== 'running') return;
+            const versions = s.artifacts
+              .filter((a) => a.taskId === taskId && a.validity === 'current')
+              .map((a) => a.versionId);
+            const reviewed =
+              versions.length > 0 &&
+              versions.every((v) =>
+                s.evidence.some(
+                  (e) =>
+                    e.kind === 'review' &&
+                    e.status === 'passed' &&
+                    e.artifactVersionIds.includes(v),
+                ),
+              );
+            t.status =
+              s.tasks.some((r) => r.kind === 'review' && r.dependencies.includes(taskId)) &&
+              !reviewed
+                ? 'awaiting_review'
+                : 'passed';
+            t.step = String(a.summary);
+          });
+      } catch (error) {
+        throw new OutcomeUnknownError(
+          `Managed integration may be partial: ${this.safeError(error)}`,
+        );
+      }
       if (!integration.ok)
         throw new Error(`Integration conflicts: ${integration.conflicts.join(', ')}`);
-      this.change(id, 'task_completed', String(a.summary), (s) => {
-        const t = s.tasks.find((t) => t.id === taskId)!;
-        if (t.status !== 'running') return;
-        const versions = s.artifacts
-          .filter((a) => a.taskId === taskId && a.validity === 'current')
-          .map((a) => a.versionId);
-        const reviewed =
-          versions.length > 0 &&
-          versions.every((v) =>
-            s.evidence.some(
-              (e) =>
-                e.kind === 'review' && e.status === 'passed' && e.artifactVersionIds.includes(v),
-            ),
-          );
-        t.status =
-          s.tasks.some((r) => r.kind === 'review' && r.dependencies.includes(taskId)) && !reviewed
-            ? 'awaiting_review'
-            : 'passed';
-        t.step = String(a.summary);
-      });
       return {
         ok: true,
       };
