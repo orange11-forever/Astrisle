@@ -16,7 +16,7 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true });
 });
 async function fixture() {
-  const root = await fs.mkdtemp(join(tmpdir(), 'astrisle-workspace-'));
+  const root = await fs.realpath(await fs.mkdtemp(join(tmpdir(), 'astrisle-workspace-')));
   roots.push(root);
   const source = join(root, 'source');
   await fs.mkdir(join(source, '.git'), { recursive: true });

@@ -43,7 +43,9 @@ jobs:
       - name: Code formatting
         run: pnpm.cmd format:check
       - name: Runtime and executor tests
-        run: pnpm.cmd test
+        run: |
+          node --input-type=module -e "import { tmpdir } from 'node:os'; import { realpath } from 'node:fs/promises'; console.log(JSON.stringify({ temp: tmpdir(), canonicalTemp: await realpath(tmpdir()) }));"
+          pnpm.cmd test
       - name: Office tests
         run: .venv/Scripts/python.exe -m pytest workers/office/tests -q --basetemp=workers/office/.test-tmp
       - name: Build desktop application

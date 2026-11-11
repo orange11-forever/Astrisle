@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -13,7 +13,7 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 it('previews task changes without integrating and rejects files added after that inventory', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'astrisle-inventory-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'astrisle-inventory-')));
   roots.push(root);
   const workspace = await createWorkspaceStorage({ name: 'Inventory race' }, root);
   const task = await createTaskWorkspace(workspace, 'author');
@@ -26,7 +26,7 @@ it('previews task changes without integrating and rejects files added after that
   expect(await readdir(workspace.workPath)).toEqual([]);
 });
 it('rechecks exact candidate hashes before committing a previously inventoried change', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'astrisle-inventory-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'astrisle-inventory-')));
   roots.push(root);
   const workspace = await createWorkspaceStorage({ name: 'Hash race' }, root);
   const task = await createTaskWorkspace(workspace, 'author');

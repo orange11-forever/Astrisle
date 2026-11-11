@@ -10,7 +10,8 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true });
 });
 async function setup() {
-  const root = await fs.mkdtemp(join(tmpdir(), 'astrisle-executor-'));
+  // Windows runners may expose TEMP through an 8.3 alias; fixtures need a plain root.
+  const root = await fs.realpath(await fs.mkdtemp(join(tmpdir(), 'astrisle-executor-')));
   roots.push(root);
   const work = join(root, 'work');
   await fs.mkdir(work);

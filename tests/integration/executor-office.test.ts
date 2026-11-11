@@ -9,7 +9,7 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true });
 });
 it('invokes real local Python office worker and reports structural and numeric evidence separately', async () => {
-  const root = await fs.mkdtemp(join(tmpdir(), 'astrisle-office-'));
+  const root = await fs.realpath(await fs.mkdtemp(join(tmpdir(), 'astrisle-office-')));
   roots.push(root);
   const context: ToolContext = {
     commissionId: 'c',

@@ -1,7 +1,7 @@
 /** A scripted loopback HTTP provider tests protocol and runtime state. It is not real-model validation. */
 import { afterEach, expect, it } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { mkdtemp, readFile, rm, writeFile, unlink } from 'node:fs/promises';
+import { mkdtemp, realpath, readFile, rm, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createRuntime, type RuntimeService } from '../../packages/runtime/src/index';
@@ -143,7 +143,7 @@ async function fixture(
         server.closeAllConnections();
       }),
   );
-  const dataRoot = await mkdtemp(join(tmpdir(), 'astrisle-execution-'));
+  const dataRoot = await realpath(await mkdtemp(join(tmpdir(), 'astrisle-execution-')));
   cleanup.push(() => rm(dataRoot, { recursive: true, force: true }));
   const port = (server.address() as { port: number }).port;
   const runtime = createRuntime({

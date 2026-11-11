@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRuntime, type RuntimeService } from '../../packages/runtime/src/index';
@@ -18,7 +18,7 @@ afterEach(async () => {
   for (const d of dirs.splice(0)) await rm(d, { recursive: true, force: true });
 });
 async function setup() {
-  const dataRoot = await mkdtemp(join(tmpdir(), 'astrisle-state-'));
+  const dataRoot = await realpath(await mkdtemp(join(tmpdir(), 'astrisle-state-')));
   dirs.push(dataRoot);
   const service = createRuntime({ dataRoot, executor, getCredentials: async () => null });
   services.push(service);

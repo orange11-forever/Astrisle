@@ -13,7 +13,7 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true });
 });
 async function fixture() {
-  const root = await fs.mkdtemp(join(tmpdir(), 'astrisle-process-'));
+  const root = await fs.realpath(await fs.mkdtemp(join(tmpdir(), 'astrisle-process-')));
   roots.push(root);
   const context: ToolContext = {
     commissionId: 'c',
