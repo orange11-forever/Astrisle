@@ -446,6 +446,23 @@ nav button.active {
 .view-controls button.selected {
   background: #c8dcd6;
 }
+.view-controls select {
+  width: auto;
+  min-width: 90px;
+  max-width: 115px;
+  padding: 7px 22px 7px 8px;
+  border: 0;
+  border-radius: 4px;
+  background-color: transparent;
+  color: #203d50;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.view-controls select:focus-visible {
+  outline: 2px solid #4e777d;
+  outline-offset: 2px;
+}
 .view-controls > span {
   height: 16px;
   width: 1px;
@@ -2008,9 +2025,9 @@ details > p {
   }
   .scene-caption {
     left: 17px;
-    bottom: 31px;
+    bottom: 64px;
     font-size: 8px;
-    max-width: 150px;
+    max-width: calc(100% - 34px);
   }
   .view-controls {
     right: 15px;

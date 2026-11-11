@@ -16,6 +16,7 @@ import type { ProjectSnapshot, Task } from '@astrisle/contracts';
 import { directScene, emptyDirector, resolveStation } from './director';
 import type { SceneIntent } from './director';
 import { IslandLandscape } from './IslandLandscape';
+import { createBlueWhaleGirl } from './characters/blue-whale-girl';
 
 const c = {
   paper: '#e7eef0',
@@ -27,7 +28,13 @@ const c = {
   rock: '#7c91a0',
 };
 export type Panel = 'goal' | 'tasks' | 'evidence' | 'artifacts' | 'requests' | 'settings';
+export type CharacterFocus = 'mori' | 'luma' | 'user';
 type V3 = [number, number, number];
+const homes: Record<CharacterFocus, V3> = {
+  mori: [-3.8, 0.02, 1.85],
+  luma: [3.8, 0.02, 1.85],
+  user: [0, 0.02, 4.6],
+};
 function Box({
   position = [0, 0, 0],
   scale = [1, 1, 1],
@@ -274,6 +281,7 @@ function Avatar({
   intent,
   reduced,
   onClick,
+  preview = false,
 }: {
   id: string;
   home: V3;
@@ -282,117 +290,98 @@ function Avatar({
   intent?: SceneIntent;
   reduced: boolean;
   onClick?: () => void;
+  preview?: boolean;
 }) {
-  const body = useRef<THREE.Group>(null),
-    head = useRef<THREE.Group>(null),
-    armL = useRef<THREE.Group>(null),
-    armR = useRef<THREE.Group>(null),
-    legL = useRef<THREE.Group>(null),
-    legR = useRef<THREE.Group>(null),
-    root = useRef<THREE.Group>(null);
+  const body = useRef<THREE.Group>(null);
+  const root = useRef<THREE.Group>(null);
+  const model = useMemo(() => createBlueWhaleGirl({ accent: color }), [color]);
+  const retirement = useRef<
+    { model: typeof model; timer: ReturnType<typeof setTimeout> } | undefined
+  >(undefined);
+  const parcel = useMemo(() => {
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.22, 0.035, 0.25),
+      new THREE.MeshStandardMaterial({ color: c.paper, roughness: 0.8 }),
+    );
+    mesh.name = 'handoff-parcel';
+    mesh.position.set(0, -0.29, 0.13);
+    mesh.visible = false;
+    return mesh;
+  }, [model]);
+  useEffect(() => {
+    // StrictMode reconnects effects using the same model; retire only a real unmount.
+    if (retirement.current?.model === model) {
+      clearTimeout(retirement.current.timer);
+      retirement.current = undefined;
+    }
+    model.joints.rightArm.add(parcel);
+    return () => {
+      model.joints.rightArm.remove(parcel);
+      const timer = setTimeout(() => {
+        model.dispose();
+        parcel.geometry.dispose();
+        parcel.material.dispose();
+        if (retirement.current?.timer === timer) retirement.current = undefined;
+      }, 0);
+      retirement.current = { model, timer };
+    };
+  }, [model, parcel]);
   const target = intent && !intent.stationary ? anchors[intent.anchor] || home : home;
   useFrame(({ clock }, delta) => {
     if (!root.current || !body.current) return;
-    const t = clock.elapsedTime + (id === 'mori' ? 0 : 2.4);
+    const t = clock.elapsedTime + (id === 'mori' ? 0 : id === 'luma' ? 2.4 : 4.8);
     const targetV = new THREE.Vector3(...target);
     const dist = root.current.position.distanceTo(targetV);
     if (reduced) root.current.position.copy(targetV);
     else root.current.position.lerp(targetV, 1 - Math.exp(-Math.min(delta, 0.05) * 1.8));
     const walk = dist > 0.15 && !reduced;
     const working = task?.status === 'running' && !/model|response|等待/i.test(task.step);
-    body.current.position.y = reduced ? 0 : Math.sin(t * 1.7) * 0.012;
-    if (head.current) head.current.rotation.z = reduced ? 0 : Math.sin(t * 0.7) * 0.045;
-    const swing = walk ? Math.sin(t * 8) * 0.52 : 0;
-    if (legL.current) legL.current.rotation.x = swing;
-    if (legR.current) legR.current.rotation.x = -swing;
-    if (armL.current)
-      armL.current.rotation.x = walk
-        ? -swing
-        : working
-          ? -0.65 + Math.sin(t * 5) * 0.09
-          : intent
-            ? -0.85
-            : Math.sin(t * 0.9) * 0.06;
-    if (armR.current)
-      armR.current.rotation.x = walk
-        ? swing
-        : working
-          ? -0.65 + Math.cos(t * 5) * 0.09
-          : intent
-            ? -0.6
-            : Math.sin(t * 0.9 + 1) * 0.06;
+    const motion = reduced ? 0 : 1;
+    const joints = model.joints;
+    body.current.position.y = Math.sin(t * 1.7) * 0.012 * motion;
+    joints.head.rotation.z = Math.sin(t * 0.7) * 0.035 * motion;
+    joints.hair.rotation.z = Math.sin(t * 0.9 + 0.8) * 0.018 * motion;
+    const swing = walk ? Math.sin(t * 8) * 0.38 : 0;
+    joints.leftLeg.rotation.x = swing;
+    joints.rightLeg.rotation.x = -swing;
+    joints.leftArm.rotation.x = walk
+      ? -swing
+      : working
+        ? -0.65 + Math.sin(t * 5) * 0.07 * motion
+        : intent
+          ? -0.65
+          : Math.sin(t * 0.9) * 0.05 * motion;
+    joints.rightArm.rotation.x = walk
+      ? swing
+      : working
+        ? -0.65 + Math.cos(t * 5) * 0.07 * motion
+        : intent
+          ? -0.6
+          : Math.sin(t * 0.9 + 1) * 0.05 * motion;
+    parcel.visible = !!intent;
+    parcel.material.color.set(intent?.kind === 'return' ? c.coral : c.paper);
     root.current.rotation.y = walk
       ? Math.atan2(target[0] - root.current.position.x, target[2] - root.current.position.z)
-      : id === 'user'
-        ? Math.PI
-        : Math.PI * 0.85;
+      : preview
+        ? 0
+        : working
+          ? Math.PI * 0.85
+          : 0.28;
   });
   return (
     <group
       ref={root}
       position={home}
-      onClick={(e) => {
-        e.stopPropagation();
+      onClick={(event) => {
+        event.stopPropagation();
         onClick?.();
       }}
     >
       <group ref={body}>
-        <group position={[0, 0.5, 0]}>
-          <group ref={legL} position={[-0.13, 0, 0]}>
-            <Box position={[0, -0.18, 0]} scale={[0.19, 0.48, 0.22]} color="#344958" />
-            <Box position={[0, -0.4, 0.06]} scale={[0.22, 0.13, 0.33]} color="#374048" />
-          </group>
-          <group ref={legR} position={[0.13, 0, 0]}>
-            <Box position={[0, -0.18, 0]} scale={[0.19, 0.48, 0.22]} color="#344958" />
-            <Box position={[0, -0.4, 0.06]} scale={[0.22, 0.13, 0.33]} color="#374048" />
-          </group>
-        </group>
-        <mesh position={[0, 0.88, 0]} castShadow>
-          <capsuleGeometry args={[0.28, 0.34, 4, 12]} />
-          <meshStandardMaterial color={color} />
-        </mesh>
-        <Box position={[0, 0.89, 0.26]} scale={[0.12, 0.37, 0.025]} color="#e6e0d0" />
-        <group ref={armL} position={[-0.32, 1.06, 0]}>
-          <mesh position={[0, -0.2, 0]} castShadow>
-            <capsuleGeometry args={[0.095, 0.31, 4, 8]} />
-            <meshStandardMaterial color={color} />
-          </mesh>
-          <Sphere position={[0, -0.43, 0]} scale={[0.085, 0.095, 0.08]} color="#d3ab8e" />
-        </group>
-        <group ref={armR} position={[0.32, 1.06, 0]}>
-          <mesh position={[0, -0.2, 0]} castShadow>
-            <capsuleGeometry args={[0.095, 0.31, 4, 8]} />
-            <meshStandardMaterial color={color} />
-          </mesh>
-          <Sphere position={[0, -0.43, 0]} scale={[0.085, 0.095, 0.08]} color="#d3ab8e" />
-          {intent && (
-            <Box
-              position={[0, -0.39, 0.15]}
-              scale={[0.3, 0.04, 0.34]}
-              color={intent.kind === 'return' ? c.coral : c.paper}
-            />
-          )}
-        </group>
-        <group ref={head} position={[0, 1.47, 0]}>
-          <Sphere scale={[0.255, 0.29, 0.235]} color="#dab498" />
-          <Sphere
-            position={[0, 0.13, -0.025]}
-            scale={[0.27, 0.22, 0.25]}
-            color={id === 'mori' ? '#4d4038' : '#3e3940'}
-          />
-          <Sphere position={[-0.19, 0.055, 0.12]} scale={[0.09, 0.16, 0.12]} color="#4d4038" />
-          {id !== 'mori' && (
-            <Sphere position={[0, 0.32, -0.1]} scale={[0.14, 0.14, 0.14]} color="#3e3940" />
-          )}
-          <Sphere position={[-0.084, -0.01, 0.222]} scale={[0.018, 0.025, 0.012]} color={c.ink} />
-          <Sphere position={[0.084, -0.01, 0.222]} scale={[0.018, 0.025, 0.012]} color={c.ink} />
-        </group>
-        {id === 'mori' && (
-          <Box position={[-0.24, 0.76, -0.04]} scale={[0.17, 0.35, 0.25]} color="#a47f53" />
-        )}
+        <primitive object={model.root} />
       </group>
-      {id !== 'user' && (
-        <Label position={[0, 2.04, 0]} onClick={onClick}>
+      {!preview && id !== 'user' && (
+        <Label position={[0, 2.12, 0]} onClick={onClick}>
           <b>{id === 'mori' ? 'Mori' : 'Luma'}</b>
           <span>
             {task
@@ -412,30 +401,42 @@ function Avatar({
     </group>
   );
 }
-function CameraRig({ reset, fixed }: { reset: number; fixed: boolean }) {
+function CameraRig({
+  reset,
+  fixed,
+  focus,
+}: {
+  reset: number;
+  fixed: boolean;
+  focus?: CharacterFocus;
+}) {
   const { camera, size } = useThree();
   const controls = useRef<any>(null);
   useEffect(() => {
     const fit = Math.max(1, 1.05 / (size.width / size.height));
-    camera.position.set(12 * fit, 12 * fit, 17.5 * fit);
-    camera.lookAt(0, 0, 0);
+    const target = focus
+      ? new THREE.Vector3(homes[focus][0], 0.95, homes[focus][2])
+      : new THREE.Vector3(0, 0.35, 0);
+    if (focus) camera.position.set(target.x, target.y + 0.12, target.z + 4.05 * Math.sqrt(fit));
+    else camera.position.set(12 * fit, 12 * fit, 17.5 * fit);
+    camera.lookAt(target);
     if (controls.current) {
-      controls.current.target.set(0, 0.35, 0);
+      controls.current.target.copy(target);
       controls.current.update();
     }
-  }, [reset, camera, size.width, size.height]);
+  }, [reset, focus, camera, size.width, size.height]);
   return (
     <OrbitControls
       ref={controls}
       makeDefault
       enablePan={false}
       enableRotate={!fixed}
-      minDistance={12}
-      maxDistance={70}
-      minPolarAngle={0.48}
-      maxPolarAngle={1.2}
-      minAzimuthAngle={-0.75}
-      maxAzimuthAngle={0.9}
+      minDistance={focus ? 2.3 : 12}
+      maxDistance={focus ? 9 : 70}
+      minPolarAngle={focus ? 0.2 : 0.48}
+      maxPolarAngle={focus ? 1.65 : 1.2}
+      minAzimuthAngle={focus ? -Infinity : -0.75}
+      maxAzimuthAngle={focus ? Infinity : 0.9}
       target={[0, 0.35, 0]}
     />
   );
@@ -447,6 +448,7 @@ function World({
   reduced,
   reset,
   fixed,
+  focus,
 }: {
   workspaceId: string;
   snapshot?: ProjectSnapshot;
@@ -454,6 +456,7 @@ function World({
   reduced: boolean;
   reset: number;
   fixed: boolean;
+  focus?: CharacterFocus;
 }) {
   const director = useRef(emptyDirector());
   const [intents, setIntents] = useState<SceneIntent[]>([]);
@@ -480,6 +483,42 @@ function World({
     occupied.add(i.anchor);
     return resolveStation(i, conflict, 1500)!;
   });
+  if (focus) {
+    const home = homes[focus];
+    return (
+      <>
+        <color attach="background" args={['#e3edf1']} />
+        <ambientLight intensity={0.75} />
+        <hemisphereLight args={['#edf5ff', '#93a6b4', 1.5]} />
+        <directionalLight position={[home[0] - 3, 6, home[2] + 4]} intensity={2.4} />
+        <directionalLight
+          position={[home[0] + 4, 3, home[2] + 1]}
+          intensity={0.7}
+          color="#d2e9ff"
+        />
+        <CameraRig reset={reset} fixed={fixed} focus={focus} />
+        <Avatar
+          id={focus}
+          home={home}
+          color={focus === 'mori' ? '#497a75' : focus === 'luma' ? '#818ba9' : '#ceb8a1'}
+          reduced={reduced}
+          preview
+        />
+        <mesh position={[home[0], -0.05, home[2]]} receiveShadow>
+          <cylinderGeometry args={[0.75, 0.79, 0.09, 64]} />
+          <meshStandardMaterial color="#f3f2ec" roughness={0.86} />
+        </mesh>
+        <ContactShadows
+          position={[home[0], 0.001, home[2]]}
+          opacity={0.3}
+          scale={3}
+          blur={2.4}
+          far={3}
+          resolution={256}
+        />
+      </>
+    );
+  }
   return (
     <>
       <color attach="background" args={['#dce7ed']} />
@@ -497,7 +536,7 @@ function World({
         shadow-camera-bottom={-8}
         shadow-bias={-0.001}
       />
-      <CameraRig reset={reset} fixed={fixed} />
+      <CameraRig reset={reset} fixed={fixed} focus={focus} />
       <IslandLandscape workspaceId={workspaceId} reduced={reduced} />
       <group position={[0, -0.38, 0]}>
         <mesh receiveShadow>
@@ -621,7 +660,7 @@ function World({
       </group>
       <Avatar
         id="mori"
-        home={[-3.8, 0.02, 1.05]}
+        home={homes.mori}
         color="#497a75"
         task={snapshot?.tasks.find(
           (t) => t.agentId === 'mori' && !['passed', 'cancelled'].includes(t.status),
@@ -632,7 +671,7 @@ function World({
       />
       <Avatar
         id="luma"
-        home={[3.8, 0.02, 1.05]}
+        home={homes.luma}
         color="#818ba9"
         task={snapshot?.tasks.find(
           (t) => t.agentId === 'luma' && !['passed', 'cancelled'].includes(t.status),
@@ -641,7 +680,7 @@ function World({
         reduced={reduced}
         onClick={() => onPanel('tasks')}
       />
-      <Avatar id="user" home={[0, 0.02, 4.6]} color="#ceb8a1" reduced={reduced} />
+      <Avatar id="user" home={homes.user} color="#ceb8a1" reduced={reduced} />
       <ContactShadows
         position={[0, -1.7, 0]}
         opacity={0.22}
@@ -692,6 +731,7 @@ export function StudioScene(props: {
   reduced: boolean;
   reset: number;
   fixed: boolean;
+  focus?: CharacterFocus;
 }) {
   const portal = useRef<HTMLDivElement>(null!);
   const [visible, setVisible] = useState(!document.hidden);

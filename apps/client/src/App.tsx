@@ -41,7 +41,7 @@ import type {
 } from '@astrisle/contracts';
 import { StudioScene } from './Scene';
 import { Archipelago } from './Archipelago';
-import type { Panel } from './Scene';
+import type { CharacterFocus, Panel } from './Scene';
 
 const labels: Record<string, string> = {
   draft: '草稿',
@@ -157,6 +157,7 @@ export function App() {
   const [flat, setFlat] = useState(false);
   const [fixed, setFixed] = useState(false);
   const [reset, setReset] = useState(0);
+  const [characterFocus, setCharacterFocus] = useState<CharacterFocus>();
   const [reduced, setReduced] = useState(
     () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || false,
   );
@@ -421,14 +422,18 @@ export function App() {
             <h1>
               {overview
                 ? '你的群岛'
-                : snapshot?.commission.title || workspace?.name || '给想法，一座小岛。'}
+                : characterFocus && !flat
+                  ? `${characterFocus === 'user' ? '我' : characterFocus === 'mori' ? 'Mori' : 'Luma'}的角色特写`
+                  : snapshot?.commission.title || workspace?.name || '给想法，一座小岛。'}
             </h1>
             <p>
               {overview
                 ? '每座岛屿对应一个独立项目；选择小岛，再进入工作室。'
-                : snapshot
-                  ? '伙伴的动作对应实际工作，细节随时可查。'
-                  : '和 Mori、Luma 一起，把想法整理成可检验的成果。'}
+                : characterFocus && !flat
+                  ? '蓝色大肥鱼娘 · Q 版鲸鱼伙伴'
+                  : snapshot
+                    ? '伙伴的动作对应实际工作，细节随时可查。'
+                    : '和 Mori、Luma 一起，把想法整理成可检验的成果。'}
             </p>
           </div>
           {snapshot && <Status value={snapshot.commission.status} />}
@@ -449,6 +454,7 @@ export function App() {
             reduced={reduced}
             reset={reset}
             fixed={fixed}
+            focus={characterFocus}
           />
         ) : (
           <div className="flat-world">
@@ -491,14 +497,38 @@ export function App() {
           <span>
             {overview
               ? `${bootstrap?.workspaces.length || 0} 座持久岛屿 · 每座对应一个项目`
-              : '悬浮星岛 · 程序化角色'}
+              : characterFocus && !flat
+                ? `${characterFocus === 'user' ? '我' : characterFocus === 'mori' ? 'Mori' : 'Luma'} · 拖动旋转，滚轮缩放`
+                : '悬浮星岛 · 鲸鱼伙伴'}
           </span>
         </div>
         <div className="view-controls">
-          <button aria-label="回到全景" title="回到全景" onClick={() => setReset((r) => r + 1)}>
+          <button
+            aria-label="回到全景"
+            title="回到全景"
+            onClick={() => {
+              setCharacterFocus(undefined);
+              setReset((r) => r + 1);
+            }}
+          >
             <Maximize2 size={16} />
           </button>
           <span />
+          {!flat && !overview && (
+            <select
+              aria-label="角色特写"
+              value={characterFocus ?? ''}
+              onChange={(event) => {
+                setCharacterFocus((event.target.value || undefined) as CharacterFocus | undefined);
+                setFixed(false);
+              }}
+            >
+              <option value="">角色特写</option>
+              <option value="mori">Mori</option>
+              <option value="luma">Luma</option>
+              <option value="user">我</option>
+            </select>
+          )}
           <button
             className={fixed ? 'selected' : ''}
             title="固定镜头"
