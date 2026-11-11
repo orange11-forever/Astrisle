@@ -1,0 +1,5 @@
+# Keep checkout line endings consistent with Prettier, including on Windows runners.
+* text=auto eol=lf
+
+# Markdown uses two trailing spaces for intentional hard line breaks.
+*.md whitespace=-blank-at-eol

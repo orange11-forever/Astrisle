@@ -1,0 +1,16 @@
+node_modules/
+.pnpm-store/
+dist/
+release/
+.venv/
+__pycache__/
+.pytest_cache/
+.astrisle-dev/
+.superpowers/
+test-results/
+playwright-report/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+*.log

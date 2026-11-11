@@ -1,0 +1,8 @@
+node_modules
+.pnpm-store
+.venv
+.astrisle-dev
+.superpowers
+dist
+test-results
+pnpm-lock.yaml
