@@ -14,6 +14,7 @@ const api: HostAPI = {
   submit: (input) => invoke('submit', input),
   snapshot: (id) => invoke('snapshot', id),
   control: (id, action) => invoke('control', id, action),
+  updateBudget: (id, budget, revision) => invoke('updateBudget', id, budget, revision),
   answer: (id, answer, approve) => invoke('answer', id, answer, approve),
   revise: (id, instruction, revision) => invoke('revise', id, instruction, revision),
   accept: (id, artifacts) => invoke('accept', id, artifacts),

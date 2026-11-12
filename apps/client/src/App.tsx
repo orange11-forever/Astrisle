@@ -43,6 +43,8 @@ import type {
 import { DEFAULT_CHARACTERS } from '@astrisle/contracts';
 import { StudioScene } from './Scene';
 import { Archipelago } from './Archipelago';
+import { BudgetPanel } from './BudgetPanel';
+import { SceneQualitySelect, type SceneQuality } from './render-quality';
 import type { CharacterFocus, Panel } from './Scene';
 
 const labels: Record<string, string> = {
@@ -158,6 +160,21 @@ export function App() {
   const [navOpen, setNavOpen] = useState(false);
   const [flat, setFlat] = useState(false);
   const [fixed, setFixed] = useState(false);
+  const [sceneQuality, setSceneQuality] = useState<SceneQuality>(() => {
+    try {
+      return localStorage.getItem('astrisle-scene-quality') === 'balanced' ? 'balanced' : 'clear';
+    } catch {
+      return 'clear';
+    }
+  });
+  const changeSceneQuality = (quality: SceneQuality) => {
+    setSceneQuality(quality);
+    try {
+      localStorage.setItem('astrisle-scene-quality', quality);
+    } catch {
+      /* Session preference still applies. */
+    }
+  };
   const [reset, setReset] = useState(0);
   const [characterFocus, setCharacterFocus] = useState<CharacterFocus>();
   const [reduced, setReduced] = useState(
@@ -449,6 +466,7 @@ export function App() {
         </div>
         {overview && !flat ? (
           <Archipelago
+            quality={sceneQuality}
             workspaces={bootstrap?.workspaces || []}
             selectedId={workspaceId}
             onSelect={switchWorkspace}
@@ -456,6 +474,7 @@ export function App() {
           />
         ) : !flat ? (
           <StudioScene
+            quality={sceneQuality}
             key={workspaceId || 'preview'}
             workspaceId={workspaceId || 'preview'}
             snapshot={snapshot}
@@ -634,6 +653,8 @@ export function App() {
               busy={busy}
               reduced={reduced}
               onReduced={setReduced}
+              quality={sceneQuality}
+              onQuality={changeSceneQuality}
               run={run}
               host={host}
               characters={characters}
@@ -700,12 +721,18 @@ export function App() {
                     <dd>{snapshot.commission.scope.allowProcess ? '允许' : '不允许'}</dd>
                     <dt>网络访问</dt>
                     <dd>{snapshot.commission.scope.allowNetwork ? '允许' : '不允许'}</dd>
-                    <dt>预算</dt>
-                    <dd>
-                      {snapshot.commission.stepsUsed} / {snapshot.commission.budget.maxSteps} 步 ·{' '}
-                      {snapshot.commission.budget.maxMinutes} 分钟
-                    </dd>
                   </dl>
+                  <BudgetPanel
+                    key={commissionId}
+                    commission={snapshot.commission}
+                    reworks={
+                      snapshot.events.filter((event) => event.type === 'rework_created').length
+                    }
+                    busy={busy}
+                    onSave={(budget, revision) =>
+                      run(() => host!.updateBudget(commissionId, budget, revision))
+                    }
+                  />
                   <div className="button-row">
                     {snapshot.commission.status === 'paused' ? (
                       <button
@@ -1330,6 +1357,8 @@ function SettingsPanel({
   busy,
   reduced,
   onReduced,
+  quality,
+  onQuality,
   run,
   host,
   characters,
@@ -1338,6 +1367,8 @@ function SettingsPanel({
   busy: boolean;
   reduced: boolean;
   onReduced: (v: boolean) => void;
+  quality: SceneQuality;
+  onQuality: (quality: SceneQuality) => void;
   run: (fn: () => Promise<unknown>, message?: string) => Promise<unknown>;
   host: Window['astrisle'];
   characters: CharacterProfile[];
@@ -1439,6 +1470,7 @@ function SettingsPanel({
         <CharacterSettings key={profile.id} profile={profile} busy={busy} host={host} run={run} />
       ))}
       <h4>场景偏好</h4>
+      <SceneQualitySelect value={quality} onChange={onQuality} />
       <label className="check-label">
         <input type="checkbox" checked={reduced} onChange={(e) => onReduced(e.target.checked)} />
         减少角色动作

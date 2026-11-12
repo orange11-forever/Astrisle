@@ -5,6 +5,7 @@ import type {
   Artifact,
   ArtifactPreview,
   Bootstrap,
+  Budget,
   CommandResult,
   NewWorkspaceInput,
   ProjectSnapshot,
@@ -26,12 +27,14 @@ import { assertPlainPath } from '../../executor/src/path-guard';
 import { complete, validateArguments, type Call, type Message } from './provider';
 import { planTool, runtimeTools } from './tools';
 import { buildTaskContinuation, summarizeTaskEvidence } from './task-context';
+import { budgetExhausted, validBudget } from './budget';
 export interface RuntimeService {
   bootstrap(): Promise<Bootstrap>;
   createWorkspace(input: NewWorkspaceInput): Promise<Workspace>;
   submit(input: SubmitInput): Promise<CommandResult>;
   snapshot(id: string): Promise<ProjectSnapshot>;
   control(id: string, action: 'pause' | 'resume' | 'cancel'): Promise<CommandResult>;
+  updateBudget(id: string, budget: Budget, expectedBudgetRevision: number): Promise<CommandResult>;
   answer(requestId: string, answer: string, approve?: boolean): Promise<CommandResult>;
   revise(id: string, instruction: string, expectedRevision: number): Promise<CommandResult>;
   accept(id: string, artifactIds: string[]): Promise<CommandResult>;
@@ -91,6 +94,7 @@ class Runtime implements RuntimeService {
   private closing = false;
   private closed = false;
   private activeSince = new Map<string, number>();
+  private budgetTimer: ReturnType<typeof setInterval>;
   constructor(private options: RuntimeOptions) {
     this.store = new RuntimeStore(options.dataRoot);
     const unknown = this.store.unknownCalls();
@@ -197,6 +201,76 @@ class Runtime implements RuntimeService {
         });
       }
     }
+    this.budgetTimer = setInterval(() => this.checkpointBudgets(), 1000);
+    this.budgetTimer.unref();
+  }
+  private elapsed(s: ProjectSnapshot): number {
+    const since = this.activeSince.get(s.commission.id);
+    return (
+      (s.commission.activeMilliseconds ?? 0) +
+      (since === undefined ? 0 : Math.max(0, Date.now() - since))
+    );
+  }
+  private settleTime(s: ProjectSnapshot): void {
+    s.commission.activeMilliseconds = this.elapsed(s);
+    if (this.activeSince.has(s.commission.id)) this.activeSince.set(s.commission.id, Date.now());
+  }
+  private syncClock(s: ProjectSnapshot): void {
+    if (s.commission.status !== 'active') this.activeSince.delete(s.commission.id);
+    else if (!this.activeSince.has(s.commission.id))
+      this.activeSince.set(s.commission.id, Date.now());
+  }
+  private markBudgetPaused(s: ProjectSnapshot): void {
+    s.commission.status = 'paused';
+    s.commission.summary = 'Budget reached; adjust the total limits before continuing';
+    this.event(s, 'budget_paused', 'Budget reached; no new model turns will start');
+  }
+  private checkpointBudgets(): void {
+    if (this.closing || this.closed) return;
+    for (const id of this.activeSince.keys()) {
+      let paused = false;
+      const s = this.store.transaction(() => {
+        const s = this.store.get(id);
+        this.settleTime(s);
+        // Step limits are checked at request boundaries; a reserved final turn may finish.
+        if (
+          s.commission.status === 'active' &&
+          s.commission.activeMilliseconds! >= s.commission.budget.maxMinutes * 60000 &&
+          ![...this.running.values()].some((run) => run.commissionId === id)
+        ) {
+          this.markBudgetPaused(s);
+          paused = true;
+        }
+        this.store.save(s);
+        return s;
+      });
+      this.syncClock(s);
+      if (paused) this.emit(s);
+    }
+  }
+  private reserveStep(id: string, callId: string, taskId?: string): boolean {
+    let reserved = false;
+    const s = this.store.transaction(() => {
+      const s = this.store.get(id);
+      this.settleTime(s);
+      if (s.commission.status === 'active') {
+        if (!budgetExhausted(s.commission)) {
+          this.store.startCall(callId, id, taskId, { kind: taskId ? 'model' : 'plan' });
+          s.commission.stepsUsed++;
+          this.event(
+            s,
+            'model_step',
+            taskId ? 'Agent requested next action' : 'Requested a project plan',
+          );
+          reserved = true;
+        }
+      }
+      this.store.save(s);
+      return s;
+    });
+    this.syncClock(s);
+    this.emit(s);
+    return reserved;
   }
   private event(
     s: ProjectSnapshot,
@@ -239,6 +313,7 @@ class Runtime implements RuntimeService {
   ): ProjectSnapshot {
     const s = this.store.transaction(() => {
       const s = this.store.get(id);
+      this.settleTime(s);
       mutate(s);
       this.event(
         s,
@@ -250,6 +325,7 @@ class Runtime implements RuntimeService {
       this.store.save(s);
       return s;
     });
+    this.syncClock(s);
     this.emit(s);
     return s;
   }
@@ -291,11 +367,7 @@ class Runtime implements RuntimeService {
       !Array.isArray(input.criteria) ||
       !input.criteria.length ||
       input.criteria.some((c) => !c.trim()) ||
-      !Number.isInteger(input.budget.maxSteps) ||
-      input.budget.maxSteps < 1 ||
-      !Number.isFinite(input.budget.maxMinutes) ||
-      input.budget.maxMinutes <= 0 ||
-      input.budget.maxRework < 0
+      !validBudget(input.budget)
     )
       return result(false, 'Goal, criteria and a positive budget are required', 'invalid_input');
     if (this.store.busy(workspace.id))
@@ -316,13 +388,12 @@ class Runtime implements RuntimeService {
           description,
         })),
         scope: structuredClone(input.scope),
-        budget: {
-          ...input.budget,
-          maxRework: Math.min(3, input.budget.maxRework),
-        },
+        budget: structuredClone(input.budget),
         revision: 1,
         planningMode: input.planningMode,
         stepsUsed: 0,
+        activeMilliseconds: 0,
+        budgetRevision: 0,
         createdAt: time,
         updatedAt: time,
         acceptedArtifactIds: [],
@@ -346,18 +417,22 @@ class Runtime implements RuntimeService {
       this.store.save(snapshot);
       this.store.addReceipt(input.requestId, payload, answer);
     });
+    this.syncClock(snapshot);
     this.emit(snapshot);
     this.kick(id);
     return answer;
   }
   async snapshot(id: string): Promise<ProjectSnapshot> {
-    return this.store.get(id);
+    const s = this.store.get(id);
+    if (this.activeSince.has(id)) s.commission.activeMilliseconds = this.elapsed(s);
+    return s;
   }
   subscribe(listener: (snapshot: ProjectSnapshot) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
   async control(id: string, action: 'pause' | 'resume' | 'cancel'): Promise<CommandResult> {
+    if (this.closing) return result(false, 'Runtime is closing', 'closing');
     const current = this.store.get(id);
     if (['accepted', 'cancelled'].includes(current.commission.status))
       return result(false, 'Commission is terminal', 'terminal');
@@ -370,6 +445,18 @@ class Runtime implements RuntimeService {
         'Resolve the unknown tool outcome before resuming or confirming cancellation',
         'outcome_unknown',
       );
+    if (action === 'resume') {
+      if (current.requests.some((r) => r.status === 'open' && r.title === 'Review proposed plan'))
+        return result(
+          false,
+          'Review and approve the proposed plan before continuing',
+          'approval_required',
+        );
+      if (budgetExhausted(current.commission, this.elapsed(current)))
+        return result(false, '预算已用尽，请先调整总额度再继续', 'budget_exhausted');
+      if (current.commission.status === 'cancelling')
+        return result(false, 'Wait for cancellation to finish', 'task_running');
+    }
     const active = [...this.running.values()].filter((r) => r.commissionId === id);
     this.change(id, `commission_${action}`, `User requested ${action}`, (s) => {
       s.commission.status =
@@ -387,7 +474,6 @@ class Runtime implements RuntimeService {
     });
     if (action !== 'resume') for (const run of active) run.controller.abort(new Error(action));
     else {
-      this.activeSince.set(id, Date.now());
       this.kick(id);
     }
     return result(
@@ -396,6 +482,59 @@ class Runtime implements RuntimeService {
         ? 'Cancellation requested; waiting for active calls to stop'
         : `Commission ${action}`,
     );
+  }
+  async updateBudget(
+    id: string,
+    budget: Budget,
+    expectedBudgetRevision: number,
+  ): Promise<CommandResult> {
+    if (this.closing) return result(false, 'Runtime is closing', 'closing');
+    if (
+      !validBudget(budget) ||
+      !Number.isSafeInteger(expectedBudgetRevision) ||
+      expectedBudgetRevision < 0
+    )
+      return result(false, '预算范围：1–10000 步、1–1440 分钟、0–20 轮返工', 'invalid_input');
+    let committed: ProjectSnapshot | undefined;
+    const response = this.store.transaction(() => {
+      const s = this.store.get(id);
+      if (['accepted', 'cancelled', 'failed'].includes(s.commission.status))
+        return result(false, '委托已结束', 'terminal');
+      if (s.commission.status !== 'paused')
+        return result(false, '请先暂停委托再调整预算', 'pause_required');
+      if ([...this.running.values()].some((r) => r.commissionId === id))
+        return result(false, '请等待当前动作完成后再调整预算', 'task_running');
+      if ((s.commission.budgetRevision ?? 0) !== expectedBudgetRevision)
+        return result(false, '预算已更新，请重新打开编辑', 'stale_revision');
+      if (
+        budget.maxSteps < s.commission.stepsUsed ||
+        budget.maxMinutes * 60000 < (s.commission.activeMilliseconds ?? 0) ||
+        budget.maxRework < s.events.filter((e) => e.type === 'rework_created').length
+      )
+        return result(false, '总额度不能小于已使用量', 'budget_below_usage');
+      s.commission.budget = structuredClone(budget);
+      s.commission.budgetRevision = expectedBudgetRevision + 1;
+      if (budget.maxRework > s.events.filter((e) => e.type === 'rework_created').length) {
+        for (const task of s.tasks) {
+          if (task.status === 'failed' && task.error === 'rework_budget_exhausted') {
+            task.status = 'queued';
+            task.step = 'Revisit the saved review with the updated rework limit';
+            delete task.error;
+            waitForTaskRequests(s, task);
+          }
+        }
+      }
+      this.event(
+        s,
+        'budget_updated',
+        `Total limits updated: ${budget.maxSteps} steps, ${budget.maxMinutes} minutes, ${budget.maxRework} reworks`,
+      );
+      this.store.save(s);
+      committed = s;
+      return result(true, '预算已保存；点击“继续”恢复任务');
+    });
+    if (committed) this.emit(committed);
+    return response;
   }
   async answer(requestId: string, answer: string, approve?: boolean): Promise<CommandResult> {
     const snapshot = this.store.projects().find((s) => s.requests.some((r) => r.id === requestId));
@@ -613,33 +752,12 @@ class Runtime implements RuntimeService {
         });
         s = this.store.get(id);
       }
-      if (!s.tasks.some((t) => t.status !== 'cancelled')) {
-        if (!this.planning.has(id)) this.startPlan(id);
-        return;
-      }
-      if (!this.activeSince.has(id)) this.activeSince.set(id, Date.now());
+      const finished = s.tasks.filter((t) => !['cancelled', 'rework_required'].includes(t.status));
       if (
-        s.commission.stepsUsed >= s.commission.budget.maxSteps ||
-        Date.now() - this.activeSince.get(id)! >= s.commission.budget.maxMinutes * 60000
-      ) {
-        this.change(id, 'budget_paused', 'Step or time budget reached', (s) => {
-          s.commission.status = 'paused';
-          s.commission.summary = 'Budget reached; review and revise the budget before continuing';
-        });
-        return;
-      }
-      for (const agent of agents) {
-        if (this.running.has(agent.id)) continue;
-        const task = s.tasks.find((t) => t.agentId === agent.id && ready(t, s));
-        if (task) this.startTask(id, task.id, agent.id);
-      }
-      const latest = this.store.get(id);
-      const live = latest.tasks.filter((t) => !['cancelled', 'rework_required'].includes(t.status));
-      if (
-        live.length &&
-        live.every((t) => t.status === 'passed') &&
+        finished.length &&
+        finished.every((t) => t.status === 'passed') &&
         ![...this.running.values()].some((r) => r.commissionId === id)
-      )
+      ) {
         this.change(
           id,
           'delivery_ready',
@@ -649,6 +767,26 @@ class Runtime implements RuntimeService {
             s.commission.summary = 'Verified results are ready for acceptance';
           },
         );
+        return;
+      }
+      if (budgetExhausted(s.commission, this.elapsed(s))) {
+        // Let already reserved work persist its outputs before pausing at the boundary.
+        if ([...this.running.values()].some((r) => r.commissionId === id)) return;
+        this.change(id, 'budget_paused', 'Step or time budget reached', (s) => {
+          s.commission.status = 'paused';
+          s.commission.summary = 'Budget reached; review and revise the budget before continuing';
+        });
+        return;
+      }
+      if (!s.tasks.some((t) => t.status !== 'cancelled')) {
+        if (!this.planning.has(id)) this.startPlan(id);
+        return;
+      }
+      for (const agent of agents) {
+        if (this.running.has(agent.id)) continue;
+        const task = s.tasks.find((t) => t.agentId === agent.id && ready(t, s));
+        if (task) this.startTask(id, task.id, agent.id);
+      }
     });
   }
   private launch(key: string, id: string, run: (signal: AbortSignal) => Promise<void>): void {
@@ -700,9 +838,8 @@ class Runtime implements RuntimeService {
         }
         const s = this.store.get(id),
           runId = randomUUID();
-        this.store.startCall(runId, id, undefined, {
-          kind: 'plan',
-        });
+        signal.throwIfAborted();
+        if (!this.reserveStep(id, runId)) return;
         let response;
         try {
           response = await complete(
@@ -767,7 +904,6 @@ class Runtime implements RuntimeService {
               updatedAt: time,
             })),
           );
-          s.commission.stepsUsed++;
           s.commission.summary = 'Plan ready';
           if (s.commission.planningMode === 'review_first') {
             s.commission.status = 'paused';
@@ -806,6 +942,12 @@ class Runtime implements RuntimeService {
     this.launch(agentId, id, async (signal) => {
       try {
         await this.runTask(id, taskId, signal);
+        if (this.store.get(id).tasks.find((t) => t.id === taskId)?.status === 'running')
+          this.change(id, 'task_waiting', 'Task paused at a model-turn boundary', (s) => {
+            const t = s.tasks.find((t) => t.id === taskId)!;
+            t.status = 'queued';
+            waitForTaskRequests(s, t);
+          });
       } catch (e) {
         if (
           e instanceof OutcomeUnknownError &&
@@ -906,26 +1048,11 @@ class Runtime implements RuntimeService {
       if (s.commission.status !== 'active') return;
       const current = s.tasks.find((t) => t.id === taskId)!;
       if (current.status !== 'running') return;
-      if (
-        s.commission.stepsUsed >= s.commission.budget.maxSteps ||
-        Date.now() - (this.activeSince.get(id) ?? Date.now()) >=
-          s.commission.budget.maxMinutes * 60000
-      ) {
-        this.change(id, 'budget_paused', 'Execution budget reached', (s) => {
-          s.commission.status = 'paused';
-          s.tasks.find((t) => t.id === taskId)!.status = 'queued';
-        });
-        return;
-      }
       const settings = await this.options.getCredentials();
       if (!settings) throw new Error('Provider is not configured');
       const callId = randomUUID();
-      this.store.startCall(callId, id, taskId, {
-        kind: 'model',
-      });
-      this.change(id, 'model_step', 'Agent requested next action', (s) => {
-        s.commission.stepsUsed++;
-      });
+      signal.throwIfAborted();
+      if (!this.reserveStep(id, callId, taskId)) return;
       let response;
       try {
         response = await complete(settings, messages, definitions, signal);
@@ -1424,6 +1551,7 @@ class Runtime implements RuntimeService {
           const previous = s.events.filter((e) => e.type === 'rework_created').length;
           if (previous >= s.commission.budget.maxRework) {
             t.status = 'failed';
+            t.error = 'rework_budget_exhausted';
             s.commission.status = 'paused';
             s.commission.summary = 'Rework limit reached';
             return;
@@ -1477,6 +1605,7 @@ class Runtime implements RuntimeService {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closing = true;
+    clearInterval(this.budgetTimer);
     for (const s of this.store.projects())
       if (s.commission.status === 'active')
         this.change(s.commission.id, 'runtime_closing', 'Runtime is stopping safely', (s) => {

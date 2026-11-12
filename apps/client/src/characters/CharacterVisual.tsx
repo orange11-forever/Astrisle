@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import type { CharacterProfile } from '@astrisle/contracts';
 import { createBlueWhaleGirl } from './blue-whale-girl';
 import { characterModelCache, disposeCharacterClone } from './model-cache';
+import { configureModelTextureSampling, useSceneQuality } from '../render-quality';
 
 export interface CharacterMotion {
   walking: boolean;
@@ -96,6 +97,9 @@ function DefaultCharacter({ profile, motionRef, reduced, accent }: Props) {
 
 function ImportedCharacter({ profile, motionRef, reduced }: Props) {
   const assetId = profile.model!.assetId;
+  const quality = useSceneQuality();
+  const gl = useThree((state) => state.gl);
+  const invalidate = useThree((state) => state.invalidate);
   const [loaded, setLoaded] = useState<{ root: THREE.Group; clips: THREE.AnimationClip[] }>();
   const [error, setError] = useState('');
   const mixer = useRef<THREE.AnimationMixer | undefined>(undefined);
@@ -126,6 +130,13 @@ function ImportedCharacter({ profile, motionRef, reduced }: Props) {
       lease.release();
     };
   }, [assetId]);
+  useLayoutEffect(() => {
+    if (
+      loaded &&
+      configureModelTextureSampling(loaded.root, quality, gl.capabilities.getMaxAnisotropy())
+    )
+      invalidate();
+  }, [loaded, quality, gl, invalidate]);
   useFrame((_state, delta) => {
     if (!loaded || !mixer.current) return;
     if (reduced) {

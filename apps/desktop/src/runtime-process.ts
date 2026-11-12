@@ -23,6 +23,7 @@ const permitted = new Set([
   'submit',
   'snapshot',
   'control',
+  'updateBudget',
   'answer',
   'revise',
   'accept',

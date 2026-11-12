@@ -21,6 +21,8 @@ import { CharacterVisual } from './characters/CharacterVisual';
 import type { CharacterMotion } from './characters/CharacterVisual';
 import { CosmicBackdrop } from './CosmicBackdrop';
 import { SceneFrameBudget, useSceneActivity } from './render-budget';
+import { SceneQualityContext, useScenePixelRatio } from './render-quality';
+import type { SceneQuality } from './render-quality';
 
 const c = {
   paper: '#e7eef0',
@@ -88,7 +90,14 @@ function Cylinder({
 }) {
   return (
     <mesh castShadow receiveShadow position={position}>
-      <cylinderGeometry args={[radius, radius, height, radius < 0.12 ? 8 : 24]} />
+      <cylinderGeometry
+        args={[
+          radius,
+          radius,
+          height,
+          radius < 0.12 ? 8 : radius > 4 ? 96 : radius >= 0.7 ? 48 : 24,
+        ]}
+      />
       <meshStandardMaterial color={color} roughness={0.7} />
     </mesh>
   );
@@ -663,9 +672,12 @@ export function StudioScene(props: {
   fixed: boolean;
   focus?: CharacterFocus;
   characters?: CharacterProfile[];
+  quality?: SceneQuality;
 }) {
   const portal = useRef<HTMLDivElement>(null!);
   const active = useSceneActivity();
+  const quality = props.quality ?? 'clear';
+  const dpr = useScenePixelRatio(quality, portal);
   return (
     <SceneBoundary>
       <div className="studio-canvas" style={{ position: 'absolute', inset: 0 }}>
@@ -675,17 +687,19 @@ export function StudioScene(props: {
           style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 2 }}
         />
         <Canvas
-          dpr={1}
+          dpr={dpr}
           frameloop="demand"
           camera={{ position: [12, 12, 17.5], fov: 38 }}
           gl={{ antialias: true, powerPreference: 'default' }}
         >
           <SceneFrameBudget reduced={props.reduced} active={active} />
-          <LabelPortal.Provider value={portal}>
-            <Suspense fallback={null}>
-              <World {...props} />
-            </Suspense>
-          </LabelPortal.Provider>
+          <SceneQualityContext.Provider value={quality}>
+            <LabelPortal.Provider value={portal}>
+              <Suspense fallback={null}>
+                <World {...props} />
+              </Suspense>
+            </LabelPortal.Provider>
+          </SceneQualityContext.Provider>
         </Canvas>
       </div>
     </SceneBoundary>

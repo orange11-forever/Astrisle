@@ -37,6 +37,13 @@ let closing = false;
 const preparedApplies = new Map<string, ApplyPreview>();
 const identifier = z.string().min(1).max(200);
 const bool = z.boolean();
+const budgetSchema = z
+  .object({
+    maxSteps: z.number().int().min(1).max(10000),
+    maxMinutes: z.number().min(1).max(1440),
+    maxRework: z.number().int().min(0).max(20),
+  })
+  .strict();
 const scope = z
   .object({
     readRoots: z.array(z.string().max(4096)).max(64),
@@ -53,13 +60,7 @@ const submitSchema = z
     goal: z.string().trim().min(1).max(32000),
     criteria: z.array(z.string().min(1).max(2000)).min(1).max(100),
     scope,
-    budget: z
-      .object({
-        maxSteps: z.number().int().min(1).max(10000),
-        maxMinutes: z.number().min(1).max(1440),
-        maxRework: z.number().int().min(0).max(20),
-      })
-      .strict(),
+    budget: budgetSchema,
     planningMode: z.enum(['auto', 'review_first']),
   })
   .strict();
@@ -136,6 +137,14 @@ async function start() {
   });
   register('submit', (input) => bridge.call('submit', submitSchema.parse(input)));
   register('snapshot', (id) => bridge.call('snapshot', identifier.parse(id)));
+  register('updateBudget', (id, budget, revision) =>
+    bridge.call(
+      'updateBudget',
+      identifier.parse(id),
+      budgetSchema.parse(budget),
+      z.number().int().nonnegative().parse(revision),
+    ),
+  );
   register('control', (id, action) =>
     bridge.call(
       'control',

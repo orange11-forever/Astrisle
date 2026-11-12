@@ -17,6 +17,8 @@ import { islandAppearance, islandPosition } from './islands';
 import { IslandTree, Pennant } from './IslandLandscape';
 import { CosmicBackdrop } from './CosmicBackdrop';
 import { SceneFrameBudget, useSceneActivity } from './render-budget';
+import { useScenePixelRatio } from './render-quality';
+import type { SceneQuality } from './render-quality';
 
 const LabelPortal = createContext<RefObject<HTMLElement> | undefined>(undefined);
 function MiniIsland({
@@ -176,14 +178,17 @@ export function Archipelago({
   selectedId,
   onSelect,
   reduced,
+  quality = 'clear',
 }: {
   workspaces: Workspace[];
   selectedId: string;
   onSelect: (id: string) => void;
   reduced: boolean;
+  quality?: SceneQuality;
 }) {
   const portal = useRef<HTMLDivElement>(null!);
   const active = useSceneActivity();
+  const dpr = useScenePixelRatio(quality, portal);
   const rows = Math.ceil(workspaces.length / 3);
   const distance = Math.max(17, rows * 4.6 + 9);
   return (
@@ -194,9 +199,10 @@ export function Archipelago({
           style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 2 }}
         />
         <Canvas
-          dpr={1}
+          dpr={dpr}
           frameloop="demand"
           camera={{ position: [distance * 0.4, distance * 0.75, distance], fov: 41 }}
+          gl={{ antialias: true, powerPreference: 'default' }}
         >
           <SceneFrameBudget reduced={reduced} active={active} />
           <LabelPortal.Provider value={portal}>

@@ -130,6 +130,10 @@ export interface Commission {
   revision: number;
   planningMode: 'auto' | 'review_first';
   stepsUsed: number;
+  /** Cumulative active wall time; absent on snapshots created before budget accounting. */
+  activeMilliseconds?: number;
+  /** Budget edits do not change the requirements revision. */
+  budgetRevision?: number;
   createdAt: string;
   updatedAt: string;
   acceptedArtifactIds: string[];
@@ -251,6 +255,11 @@ export interface HostAPI {
   submit(input: SubmitInput): Promise<CommandResult>;
   snapshot(commissionId: string): Promise<ProjectSnapshot>;
   control(commissionId: string, action: 'pause' | 'resume' | 'cancel'): Promise<CommandResult>;
+  updateBudget(
+    commissionId: string,
+    budget: Budget,
+    expectedBudgetRevision: number,
+  ): Promise<CommandResult>;
   answer(requestId: string, answer: string, approve?: boolean): Promise<CommandResult>;
   revise(
     commissionId: string,
