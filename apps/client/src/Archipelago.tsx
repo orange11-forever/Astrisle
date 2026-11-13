@@ -15,6 +15,10 @@ import * as THREE from 'three';
 import type { Workspace } from '@astrisle/contracts';
 import { islandAppearance, islandPosition } from './islands';
 import { IslandTree, Pennant } from './IslandLandscape';
+import { CosmicBackdrop } from './CosmicBackdrop';
+import { SceneFrameBudget, useSceneActivity } from './render-budget';
+import { useScenePixelRatio } from './render-quality';
+import type { SceneQuality } from './render-quality';
 
 const LabelPortal = createContext<RefObject<HTMLElement> | undefined>(undefined);
 function MiniIsland({
@@ -174,19 +178,17 @@ export function Archipelago({
   selectedId,
   onSelect,
   reduced,
+  quality = 'clear',
 }: {
   workspaces: Workspace[];
   selectedId: string;
   onSelect: (id: string) => void;
   reduced: boolean;
+  quality?: SceneQuality;
 }) {
   const portal = useRef<HTMLDivElement>(null!);
-  const [visible, setVisible] = useState(!document.hidden);
-  useEffect(() => {
-    const update = () => setVisible(!document.hidden);
-    document.addEventListener('visibilitychange', update);
-    return () => document.removeEventListener('visibilitychange', update);
-  }, []);
+  const active = useSceneActivity();
+  const dpr = useScenePixelRatio(quality, portal);
   const rows = Math.ceil(workspaces.length / 3);
   const distance = Math.max(17, rows * 4.6 + 9);
   return (
@@ -197,26 +199,18 @@ export function Archipelago({
           style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 2 }}
         />
         <Canvas
-          shadows
-          dpr={[1, 1.6]}
-          frameloop={visible ? 'always' : 'never'}
+          dpr={dpr}
+          frameloop="demand"
           camera={{ position: [distance * 0.4, distance * 0.75, distance], fov: 41 }}
+          gl={{ antialias: true, powerPreference: 'default' }}
         >
+          <SceneFrameBudget reduced={reduced} active={active} />
           <LabelPortal.Provider value={portal}>
             <Suspense fallback={null}>
-              <color attach="background" args={['#dce7ed']} />
-              <ambientLight intensity={1.4} />
-              <hemisphereLight args={['#ecf2ff', '#829a8c', 1.8]} />
-              <directionalLight
-                position={[-8, 14, 8]}
-                intensity={2.4}
-                castShadow
-                shadow-mapSize={[1024, 1024]}
-                shadow-camera-left={-15}
-                shadow-camera-right={15}
-                shadow-camera-top={15}
-                shadow-camera-bottom={-15}
-              />
+              <CosmicBackdrop reduced={reduced} />
+              <ambientLight intensity={0.9} />
+              <hemisphereLight args={['#cedaff', '#665575', 1.4]} />
+              <directionalLight position={[-8, 14, 8]} intensity={2.0} color="#ffe7c5" />
               <OrbitControls
                 makeDefault
                 enablePan
@@ -237,10 +231,6 @@ export function Archipelago({
                   onSelect={onSelect}
                 />
               ))}
-              <mesh position={[0, -2.6, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-                <planeGeometry args={[200, 200]} />
-                <meshStandardMaterial color="#d5e2e6" roughness={1} />
-              </mesh>
             </Suspense>
           </LabelPortal.Provider>
         </Canvas>

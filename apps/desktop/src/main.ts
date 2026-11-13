@@ -22,6 +22,7 @@ import type {
 import { CredentialStore } from './credentials';
 import { isTrustedSender, canOpenExternally } from './security';
 import { RuntimeBridge } from './runtime-bridge';
+import { CharacterStore } from './characters';
 
 app.setName('Astrisle');
 const projectRoot = app.getAppPath();
@@ -36,6 +37,13 @@ let closing = false;
 const preparedApplies = new Map<string, ApplyPreview>();
 const identifier = z.string().min(1).max(200);
 const bool = z.boolean();
+const budgetSchema = z
+  .object({
+    maxSteps: z.number().int().min(1).max(10000),
+    maxMinutes: z.number().min(1).max(1440),
+    maxRework: z.number().int().min(0).max(20),
+  })
+  .strict();
 const scope = z
   .object({
     readRoots: z.array(z.string().max(4096)).max(64),
@@ -52,19 +60,14 @@ const submitSchema = z
     goal: z.string().trim().min(1).max(32000),
     criteria: z.array(z.string().min(1).max(2000)).min(1).max(100),
     scope,
-    budget: z
-      .object({
-        maxSteps: z.number().int().min(1).max(10000),
-        maxMinutes: z.number().min(1).max(1440),
-        maxRework: z.number().int().min(0).max(20),
-      })
-      .strict(),
+    budget: budgetSchema,
     planningMode: z.enum(['auto', 'review_first']),
   })
   .strict();
 
 async function start() {
   await mkdir(dataRoot, { recursive: true });
+  const characters = new CharacterStore(dataRoot);
   const vault = new CredentialStore(join(dataRoot, 'provider.json'), {
     available: () => safeStorage.isEncryptionAvailable(),
     encrypt: (value) => safeStorage.encryptString(value),
@@ -98,7 +101,21 @@ async function start() {
   register('bootstrap', async () => ({
     ...(await bridge.call<Bootstrap>('bootstrap')),
     provider: await vault.publicSettings(),
+    characters: await characters.profiles(),
   }));
+  register('getCharacters', () => characters.profiles());
+  register('updateCharacter', (id, patch) => characters.update(id, patch));
+  register('loadCharacterModel', (assetId) => characters.loadModel(assetId));
+  register('importCharacter', async (rawId) => {
+    const id = z.enum(['mori', 'luma', 'user']).parse(rawId);
+    const result = await dialog.showOpenDialog(window!, {
+      title: '导入角色模型（GLB / 自包含 glTF 2）',
+      properties: ['openFile'],
+      filters: [{ name: 'GLB / glTF 2 模型', extensions: ['glb', 'gltf'] }],
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+    return characters.importFile(id, result.filePaths[0]);
+  });
   register('createWorkspace', (input) =>
     bridge.call(
       'createWorkspace',
@@ -120,6 +137,14 @@ async function start() {
   });
   register('submit', (input) => bridge.call('submit', submitSchema.parse(input)));
   register('snapshot', (id) => bridge.call('snapshot', identifier.parse(id)));
+  register('updateBudget', (id, budget, revision) =>
+    bridge.call(
+      'updateBudget',
+      identifier.parse(id),
+      budgetSchema.parse(budget),
+      z.number().int().nonnegative().parse(revision),
+    ),
+  );
   register('control', (id, action) =>
     bridge.call(
       'control',

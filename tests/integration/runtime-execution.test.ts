@@ -1,5 +1,5 @@
 /** A scripted loopback HTTP provider tests protocol and runtime state. It is not real-model validation. */
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { mkdtemp, realpath, readFile, rm, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -11,6 +11,7 @@ import type { ProjectSnapshot, ToolExecutor } from '../../packages/contracts/src
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close();
+  vi.restoreAllMocks();
 });
 const call = (name: string, args: unknown) => ({
   id: `${name}-${Math.random()}`,
@@ -22,6 +23,7 @@ async function fixture(
   overrides: {
     executor?: ToolExecutor;
     maxSteps?: number;
+    maxRework?: number;
     beforeReviewSubmit?: () => Promise<void>;
     seed?: Record<string, string>;
   } = {},
@@ -173,7 +175,11 @@ async function fixture(
       allowNetwork: false,
       allowedHosts: [],
     },
-    budget: { maxSteps: overrides.maxSteps ?? 30, maxMinutes: 1, maxRework: 3 },
+    budget: {
+      maxSteps: overrides.maxSteps ?? 30,
+      maxMinutes: 1,
+      maxRework: overrides.maxRework ?? 3,
+    },
   });
   return { runtime, workspace, id: response.commissionId!, dataRoot };
 }
@@ -198,6 +204,50 @@ async function until(
   ).toBe(true);
   return snapshot;
 }
+it('delivers verified results when the final review consumes the exact last model step', async () => {
+  const { runtime, id } = await fixture('normal', { maxSteps: 4 });
+  const snapshot = await until(runtime, id, (s) => s.commission.status === 'awaiting_acceptance');
+  expect(snapshot.commission.stepsUsed).toBe(4);
+  expect(snapshot.tasks.every((t) => t.status === 'passed')).toBe(true);
+});
+
+it('delivers verified results when active time expires while the reserved final review responds', async () => {
+  const start = Date.now();
+  let offset = 0;
+  vi.spyOn(Date, 'now').mockImplementation(() => start + offset);
+  const { runtime, id } = await fixture('normal', {
+    beforeReviewSubmit: async () => {
+      offset = 60001;
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+    },
+  });
+  await vi.waitFor(
+    async () => expect((await runtime.snapshot(id)).commission.status).toBe('awaiting_acceptance'),
+    { timeout: 5000 },
+  );
+  expect((await runtime.snapshot(id)).tasks.every((t) => t.status === 'passed')).toBe(true);
+});
+
+it('continues a review blocked by the rework cap after the user raises that cap', async () => {
+  const { runtime, id } = await fixture('rework', { maxRework: 0 });
+  const paused = await until(
+    runtime,
+    id,
+    (s) =>
+      s.commission.status === 'paused' &&
+      s.tasks.some((t) => t.kind === 'review' && t.status === 'failed'),
+  );
+  await vi.waitFor(async () =>
+    expect(
+      await runtime.updateBudget(id, { ...paused.commission.budget, maxRework: 2 }, 0),
+    ).toMatchObject({ ok: true }),
+  );
+  expect((await runtime.control(id, 'resume')).ok).toBe(true);
+  const finished = await until(runtime, id, (s) => s.commission.status === 'awaiting_acceptance');
+  expect(finished.events.some((e) => e.type === 'rework_created')).toBe(true);
+  expect(finished.evidence.some((e) => e.kind === 'review' && e.status === 'failed')).toBe(true);
+});
+
 it('executes real file tools, unblocks artifact review before author pass, verifies immutable bytes, and accepts delivery', async () => {
   const { runtime, id, workspace } = await fixture();
   const snapshot = await until(runtime, id, (s) => s.commission.status === 'awaiting_acceptance');

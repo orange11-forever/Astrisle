@@ -5,11 +5,16 @@ const invoke = <T>(method: string, ...args: unknown[]): Promise<T> =>
   ipcRenderer.invoke(`astrisle:${method}`, ...args);
 const api: HostAPI = {
   bootstrap: () => invoke('bootstrap'),
+  getCharacters: () => invoke('getCharacters'),
+  updateCharacter: (id, patch) => invoke('updateCharacter', id, patch),
+  importCharacter: (id) => invoke('importCharacter', id),
+  loadCharacterModel: (assetId) => invoke('loadCharacterModel', assetId),
   createWorkspace: (input) => invoke('createWorkspace', input),
   chooseDirectory: () => invoke('chooseDirectory'),
   submit: (input) => invoke('submit', input),
   snapshot: (id) => invoke('snapshot', id),
   control: (id, action) => invoke('control', id, action),
+  updateBudget: (id, budget, revision) => invoke('updateBudget', id, budget, revision),
   answer: (id, answer, approve) => invoke('answer', id, answer, approve),
   revise: (id, instruction, revision) => invoke('revise', id, instruction, revision),
   accept: (id, artifacts) => invoke('accept', id, artifacts),

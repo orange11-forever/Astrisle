@@ -34,14 +34,18 @@ import type {
   ApplyPreview,
   ArtifactPreview,
   Bootstrap,
+  CharacterProfile,
   CommandResult,
   ProjectSnapshot,
   ProviderInput,
   Workspace,
 } from '@astrisle/contracts';
+import { DEFAULT_CHARACTERS } from '@astrisle/contracts';
 import { StudioScene } from './Scene';
 import { Archipelago } from './Archipelago';
-import type { Panel } from './Scene';
+import { BudgetPanel } from './BudgetPanel';
+import { SceneQualitySelect, type SceneQuality } from './render-quality';
+import type { CharacterFocus, Panel } from './Scene';
 
 const labels: Record<string, string> = {
   draft: '草稿',
@@ -156,7 +160,23 @@ export function App() {
   const [navOpen, setNavOpen] = useState(false);
   const [flat, setFlat] = useState(false);
   const [fixed, setFixed] = useState(false);
+  const [sceneQuality, setSceneQuality] = useState<SceneQuality>(() => {
+    try {
+      return localStorage.getItem('astrisle-scene-quality') === 'balanced' ? 'balanced' : 'clear';
+    } catch {
+      return 'clear';
+    }
+  });
+  const changeSceneQuality = (quality: SceneQuality) => {
+    setSceneQuality(quality);
+    try {
+      localStorage.setItem('astrisle-scene-quality', quality);
+    } catch {
+      /* Session preference still applies. */
+    }
+  };
   const [reset, setReset] = useState(0);
+  const [characterFocus, setCharacterFocus] = useState<CharacterFocus>();
   const [reduced, setReduced] = useState(
     () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || false,
   );
@@ -216,6 +236,9 @@ export function App() {
   const openRequests = snapshot?.requests.filter((r) => r.status === 'open') || [];
   const task = snapshot?.tasks.find((t) => t.id === taskId);
   const provider = bootstrap?.provider;
+  const characters = bootstrap?.characters || [...DEFAULT_CHARACTERS];
+  const characterName = (id: string) =>
+    characters.find((profile) => profile.id === id)?.displayName || id;
   const currentArtifacts = snapshot?.artifacts.filter((a) => a.validity === 'current') || [];
   const openPanel = (next: Panel) => {
     setPanel(next);
@@ -415,26 +438,35 @@ export function App() {
           <span>云海之上，好好工作</span>
         </div>
       </aside>
-      <main className="stage" data-testid="island-stage">
+      <main
+        className={`stage ${!flat && !characterFocus ? 'stage-cosmic' : ''}`}
+        data-testid="island-stage"
+      >
         <div className="stage-title">
           <div>
             <h1>
               {overview
                 ? '你的群岛'
-                : snapshot?.commission.title || workspace?.name || '给想法，一座小岛。'}
+                : characterFocus && !flat
+                  ? `${characterName(characterFocus)}的角色特写`
+                  : snapshot?.commission.title || workspace?.name || '给想法，一座小岛。'}
             </h1>
             <p>
               {overview
                 ? '每座岛屿对应一个独立项目；选择小岛，再进入工作室。'
-                : snapshot
-                  ? '伙伴的动作对应实际工作，细节随时可查。'
-                  : '和 Mori、Luma 一起，把想法整理成可检验的成果。'}
+                : characterFocus && !flat
+                  ? characters.find((profile) => profile.id === characterFocus)?.model?.filename ||
+                    '蓝色大肥鱼娘 · Q 版鲸鱼伙伴'
+                  : snapshot
+                    ? '伙伴的动作对应实际工作，细节随时可查。'
+                    : `和 ${characterName('mori')}、${characterName('luma')} 一起，把想法整理成可检验的成果。`}
             </p>
           </div>
           {snapshot && <Status value={snapshot.commission.status} />}
         </div>
         {overview && !flat ? (
           <Archipelago
+            quality={sceneQuality}
             workspaces={bootstrap?.workspaces || []}
             selectedId={workspaceId}
             onSelect={switchWorkspace}
@@ -442,6 +474,7 @@ export function App() {
           />
         ) : !flat ? (
           <StudioScene
+            quality={sceneQuality}
             key={workspaceId || 'preview'}
             workspaceId={workspaceId || 'preview'}
             snapshot={snapshot}
@@ -449,6 +482,8 @@ export function App() {
             reduced={reduced}
             reset={reset}
             fixed={fixed}
+            focus={characterFocus}
+            characters={characters}
           />
         ) : (
           <div className="flat-world">
@@ -491,14 +526,40 @@ export function App() {
           <span>
             {overview
               ? `${bootstrap?.workspaces.length || 0} 座持久岛屿 · 每座对应一个项目`
-              : '悬浮星岛 · 程序化角色'}
+              : characterFocus && !flat
+                ? `${characterName(characterFocus)} · 拖动旋转，滚轮缩放`
+                : '宇宙中的悬浮星岛'}
           </span>
         </div>
         <div className="view-controls">
-          <button aria-label="回到全景" title="回到全景" onClick={() => setReset((r) => r + 1)}>
+          <button
+            aria-label="回到全景"
+            title="回到全景"
+            onClick={() => {
+              setCharacterFocus(undefined);
+              setReset((r) => r + 1);
+            }}
+          >
             <Maximize2 size={16} />
           </button>
           <span />
+          {!flat && !overview && (
+            <select
+              aria-label="角色特写"
+              value={characterFocus ?? ''}
+              onChange={(event) => {
+                setCharacterFocus((event.target.value || undefined) as CharacterFocus | undefined);
+                setFixed(false);
+              }}
+            >
+              <option value="">角色特写</option>
+              {characters.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.displayName}
+                </option>
+              ))}
+            </select>
+          )}
           <button
             className={fixed ? 'selected' : ''}
             title="固定镜头"
@@ -592,8 +653,11 @@ export function App() {
               busy={busy}
               reduced={reduced}
               onReduced={setReduced}
+              quality={sceneQuality}
+              onQuality={changeSceneQuality}
               run={run}
               host={host}
+              characters={characters}
             />
           ) : !snapshot ? (
             <>
@@ -612,16 +676,16 @@ export function App() {
                 </button>
               )}
               <div className="partner-note">
-                <span className="partner-initial mori">M</span>
+                <span className="partner-initial mori">{[...characterName('mori')][0]}</span>
                 <div>
-                  <b>Mori</b>
+                  <b>{characterName('mori')}</b>
                   <p>铺开线索，探索解决方案。</p>
                 </div>
               </div>
               <div className="partner-note">
-                <span className="partner-initial luma">L</span>
+                <span className="partner-initial luma">{[...characterName('luma')][0]}</span>
                 <div>
-                  <b>Luma</b>
+                  <b>{characterName('luma')}</b>
                   <p>理清脉络，逐项核对细节。</p>
                 </div>
               </div>
@@ -657,12 +721,18 @@ export function App() {
                     <dd>{snapshot.commission.scope.allowProcess ? '允许' : '不允许'}</dd>
                     <dt>网络访问</dt>
                     <dd>{snapshot.commission.scope.allowNetwork ? '允许' : '不允许'}</dd>
-                    <dt>预算</dt>
-                    <dd>
-                      {snapshot.commission.stepsUsed} / {snapshot.commission.budget.maxSteps} 步 ·{' '}
-                      {snapshot.commission.budget.maxMinutes} 分钟
-                    </dd>
                   </dl>
+                  <BudgetPanel
+                    key={commissionId}
+                    commission={snapshot.commission}
+                    reworks={
+                      snapshot.events.filter((event) => event.type === 'rework_created').length
+                    }
+                    busy={busy}
+                    onSave={(budget, revision) =>
+                      run(() => host!.updateBudget(commissionId, budget, revision))
+                    }
+                  />
                   <div className="button-row">
                     {snapshot.commission.status === 'paused' ? (
                       <button
@@ -735,12 +805,12 @@ export function App() {
                         onClick={() => setTaskId(t.id)}
                       >
                         <span className={`partner-small ${t.agentId === 'mori' ? 'mori' : 'luma'}`}>
-                          {t.agentId === 'mori' ? 'M' : 'L'}
+                          {[...characterName(t.agentId)][0]}
                         </span>
                         <span>
                           <b>{t.title}</b>
                           <small>
-                            {t.agentId === 'mori' ? 'Mori' : 'Luma'} · {t.kind}
+                            {characterName(t.agentId)} · {t.kind}
                           </small>
                           <Status value={t.status} />
                         </span>
@@ -1287,15 +1357,21 @@ function SettingsPanel({
   busy,
   reduced,
   onReduced,
+  quality,
+  onQuality,
   run,
   host,
+  characters,
 }: {
   provider?: Bootstrap['provider'];
   busy: boolean;
   reduced: boolean;
   onReduced: (v: boolean) => void;
+  quality: SceneQuality;
+  onQuality: (quality: SceneQuality) => void;
   run: (fn: () => Promise<unknown>, message?: string) => Promise<unknown>;
   host: Window['astrisle'];
+  characters: CharacterProfile[];
 }) {
   const [kind, setKind] = useState<ProviderInput['kind']>(provider?.kind || 'openai-compatible');
   const [baseUrl, setBaseUrl] = useState(provider?.baseUrl || protocolPresets[kind].baseUrl);
@@ -1385,7 +1461,16 @@ function SettingsPanel({
           </button>
         </div>
       </form>
+      <h4>角色外观与名称</h4>
+      <p className="quiet">
+        角色名称和外观适用于所有岛屿。可导入 100 MB 以内的 GLB 或自包含 glTF
+        2；缓冲区和贴图须内嵌，不支持 Draco、Meshopt 或 KTX2 压缩。
+      </p>
+      {characters.map((profile) => (
+        <CharacterSettings key={profile.id} profile={profile} busy={busy} host={host} run={run} />
+      ))}
       <h4>场景偏好</h4>
+      <SceneQualitySelect value={quality} onChange={onQuality} />
       <label className="check-label">
         <input type="checkbox" checked={reduced} onChange={(e) => onReduced(e.target.checked)} />
         减少角色动作
@@ -1394,5 +1479,130 @@ function SettingsPanel({
       <h4>工具能力</h4>
       <p className="quiet">运行权限由每一份委托单独决定。</p>
     </>
+  );
+}
+
+function CharacterSettings({
+  profile,
+  busy,
+  host,
+  run,
+}: {
+  profile: CharacterProfile;
+  busy: boolean;
+  host: Window['astrisle'];
+  run: (fn: () => Promise<unknown>, message?: string) => Promise<unknown>;
+}) {
+  const [name, setName] = useState(profile.displayName);
+  useEffect(() => setName(profile.displayName), [profile.displayName]);
+  const validName =
+    [...name.trim()].length >= 1 && [...name.trim()].length <= 40 && !/[\p{Cc}\p{Cf}]/u.test(name);
+  return (
+    <section className="character-settings" aria-label={`${profile.displayName} 的角色设置`}>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (validName && host?.updateCharacter)
+            run(
+              () => host.updateCharacter!(profile.id, { displayName: name.trim() }),
+              '角色名称已保存',
+            );
+        }}
+      >
+        <label htmlFor={`character-name-${profile.id}`}>{profile.displayName} 的显示名称</label>
+        <input
+          id={`character-name-${profile.id}`}
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          required
+          maxLength={80}
+        />
+        <div className="button-row">
+          <button
+            type="submit"
+            disabled={busy || !host?.updateCharacter || !validName}
+            aria-label={`保存 ${profile.displayName} 的名称`}
+          >
+            保存名称
+          </button>
+          <button
+            type="button"
+            disabled={busy || !host?.importCharacter}
+            aria-label={`为${profile.displayName}导入模型`}
+            onClick={() =>
+              run(async () => {
+                const imported = await host!.importCharacter!(profile.id);
+                return {
+                  ok: true,
+                  message: imported ? '角色模型已保存，场景正在加载' : '已取消导入，角色保持不变',
+                };
+              })
+            }
+          >
+            {profile.model ? '替换模型' : '导入模型'}
+          </button>
+        </div>
+      </form>
+      {profile.model ? (
+        <>
+          <p className="field-hint">
+            {profile.model.filename} · {(profile.model.byteLength / 1024 / 1024).toFixed(1)} MB ·{' '}
+            {profile.model.triangleCount.toLocaleString()} 个三角形
+          </p>
+          <p className="quiet">
+            {profile.model.animationCount > 0
+              ? `包含 ${profile.model.animationCount} 个动画片段。`
+              : profile.model.hasSkins
+                ? '包含骨骼，没有动画片段；角色整体移动。'
+                : '静态模型：角色整体移动，不包含骨骼动画。'}
+          </p>
+          {profile.model.triangleCount > 200_000 && (
+            <p className="field-hint">
+              模型面数较高；多个角色共用网格和贴图。若仍卡顿，可导出面数更低的模型替换。
+            </p>
+          )}
+          <label htmlFor={`character-orientation-${profile.id}`}>
+            {profile.displayName} 的模型朝向
+          </label>
+          <select
+            id={`character-orientation-${profile.id}`}
+            value={profile.rotationY ?? 0}
+            disabled={busy || !host?.updateCharacter}
+            onChange={(event) =>
+              run(
+                () =>
+                  host!.updateCharacter!(profile.id, {
+                    rotationY: Number(event.target.value) as NonNullable<
+                      CharacterProfile['rotationY']
+                    >,
+                  }),
+                '角色朝向已保存',
+              )
+            }
+          >
+            <option value={0}>原始朝向</option>
+            <option value={90}>右转90°</option>
+            <option value={180}>转180°</option>
+            <option value={270}>左转90°</option>
+          </select>
+          <button
+            type="button"
+            className="text-button"
+            disabled={busy || !host?.updateCharacter}
+            aria-label={`重置${profile.displayName}的模型`}
+            onClick={() =>
+              run(
+                () => host!.updateCharacter!(profile.id, { resetModel: true }),
+                '已恢复默认角色模型',
+              )
+            }
+          >
+            恢复默认模型
+          </button>
+        </>
+      ) : (
+        <p className="field-hint">使用默认角色模型。</p>
+      )}
+    </section>
   );
 }
