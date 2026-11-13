@@ -1,10 +1,5 @@
 import { createRuntime, type RuntimeService } from '../../../packages/runtime/src/index';
 import { createExecutor } from '../../../packages/executor/src/index';
-import {
-  exportWorkspace,
-  prepareWorkspaceApply,
-  applyWorkspace,
-} from '../../../packages/workspace/src/index';
 import type { ProviderInput, ProjectSnapshot } from '@astrisle/contracts';
 import { join } from 'node:path';
 
@@ -29,6 +24,9 @@ const permitted = new Set([
   'accept',
   'artifact',
   'resolveArtifactPath',
+  'exportWorkspace',
+  'prepareApply',
+  'apply',
   'testProvider',
   'close',
 ]);
@@ -68,15 +66,6 @@ port.on('message', async ({ data: request }) => {
           ...args: unknown[]
         ) => unknown;
         value = await method.apply(service, request.args);
-      } else if (request.method === 'exportWorkspace') {
-        const snapshot = await service.snapshot(request.args[0] as string);
-        await exportWorkspace(snapshot.workspace, request.args[1] as string);
-        value = { ok: true, message: '项目候选版本已导出到新目录' };
-      } else if (request.method === 'prepareApply') {
-        const snapshot = await service.snapshot(request.args[0] as string);
-        value = await prepareWorkspaceApply(snapshot.workspace);
-      } else if (request.method === 'apply') {
-        value = await applyWorkspace(request.args[0] as string);
       } else throw new Error('Unknown runtime method');
     }
     port.postMessage({ id: request.id, value });

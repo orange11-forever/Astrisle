@@ -163,6 +163,7 @@ it('bounds large historical results while retaining completion identity and read
     workspace.workPath,
     Array.from({ length: 24 }, (_, i) => ({
       id: String(i),
+      runtimeEpoch: 0,
       projectId: 'project',
       taskId: 'author',
       state: 'finished',

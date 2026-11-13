@@ -4,6 +4,7 @@ import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import type {
   Artifact,
   ArtifactPreview,
+  ApplyPreview,
   Bootstrap,
   Budget,
   CommandResult,
@@ -22,12 +23,16 @@ import {
   createTaskWorkspace,
   integrateTaskWorkspace,
   previewTaskWorkspaceChanges,
+  exportWorkspace as exportWorkspaceStorage,
+  prepareWorkspaceApply,
+  applyWorkspace,
 } from '../../workspace/src/index';
 import { assertPlainPath } from '../../executor/src/path-guard';
 import { complete, validateArguments, type Call, type Message } from './provider';
 import { planTool, runtimeTools } from './tools';
 import { buildTaskContinuation, summarizeTaskEvidence } from './task-context';
 import { budgetExhausted, validBudget } from './budget';
+import { RuntimeOwnership } from './ownership';
 export interface RuntimeService {
   bootstrap(): Promise<Bootstrap>;
   createWorkspace(input: NewWorkspaceInput): Promise<Workspace>;
@@ -40,6 +45,9 @@ export interface RuntimeService {
   accept(id: string, artifactIds: string[]): Promise<CommandResult>;
   artifact(id: string): Promise<ArtifactPreview>;
   resolveArtifactPath(id: string): Promise<string>;
+  exportWorkspace(id: string, destination: string): Promise<CommandResult>;
+  prepareApply(id: string): Promise<ApplyPreview>;
+  apply(operationId: string): Promise<CommandResult>;
   subscribe(listener: (snapshot: ProjectSnapshot) => void): () => void;
   testProvider(): Promise<CommandResult>;
   close(): Promise<void>;
@@ -64,7 +72,64 @@ function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 export function createRuntime(options: RuntimeOptions): RuntimeService {
-  return new Runtime(options);
+  const runtime = new Runtime(options);
+  const pending = new Set<Promise<unknown>>();
+  let closing: Promise<void> | undefined;
+  const closingError = () =>
+    Object.assign(new Error('工作运行时正在关闭，无法受理新操作'), { code: 'runtime_closing' });
+  function deferred<T>() {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    let reject!: (reason: unknown) => void;
+    const promise = new Promise<T>((accept, decline) => {
+      resolve = accept;
+      reject = decline;
+    });
+    return { promise, resolve, reject };
+  }
+  function command<A extends unknown[], T>(method: (...args: A) => Promise<T>) {
+    return (...args: A): Promise<T> => {
+      if (closing) return Promise.reject(closingError());
+      const { promise, resolve, reject } = deferred<T>();
+      // Register before invoking callbacks, which may synchronously initiate shutdown.
+      pending.add(promise);
+      void promise.then(
+        () => pending.delete(promise),
+        () => pending.delete(promise),
+      );
+      void method.apply(runtime, args).then(resolve, reject);
+      return promise;
+    };
+  }
+  return {
+    bootstrap: command(runtime.bootstrap),
+    createWorkspace: command(runtime.createWorkspace),
+    submit: command(runtime.submit),
+    snapshot: command(runtime.snapshot),
+    control: command(runtime.control),
+    updateBudget: command(runtime.updateBudget),
+    answer: command(runtime.answer),
+    revise: command(runtime.revise),
+    accept: command(runtime.accept),
+    artifact: command(runtime.artifact),
+    resolveArtifactPath: command(runtime.resolveArtifactPath),
+    exportWorkspace: command(runtime.exportWorkspace),
+    prepareApply: command(runtime.prepareApply),
+    apply: command(runtime.apply),
+    testProvider: command(runtime.testProvider),
+    subscribe: (listener) => {
+      if (closing) throw closingError();
+      return runtime.subscribe(listener);
+    },
+    close: () => {
+      if (!closing) {
+        const completion = deferred<void>();
+        // Abort listeners can call close again before runtime.close returns its Promise.
+        closing = completion.promise;
+        void runtime.close([...pending]).then(completion.resolve, completion.reject);
+      }
+      return closing;
+    },
+  };
 }
 class OutcomeUnknownError extends Error {}
 const interruptedTitle = 'Inspect interrupted task';
@@ -81,6 +146,7 @@ function waitForTaskRequests(snapshot: ProjectSnapshot, task: Task): boolean {
 }
 class Runtime implements RuntimeService {
   private store: RuntimeStore;
+  private ownership: RuntimeOwnership;
   private listeners = new Set<(snapshot: ProjectSnapshot) => void>();
   private running = new Map<
     string,
@@ -96,7 +162,24 @@ class Runtime implements RuntimeService {
   private activeSince = new Map<string, number>();
   private budgetTimer: ReturnType<typeof setInterval>;
   constructor(private options: RuntimeOptions) {
-    this.store = new RuntimeStore(options.dataRoot);
+    this.ownership = new RuntimeOwnership(options.dataRoot);
+    let store: RuntimeStore | undefined;
+    try {
+      this.store = store = new RuntimeStore(options.dataRoot);
+      this.store.beginRuntime();
+      this.recover();
+      this.budgetTimer = setInterval(() => this.checkpointBudgets(), 1000);
+      this.budgetTimer.unref();
+    } catch (error) {
+      try {
+        store?.close();
+      } finally {
+        this.ownership.release();
+      }
+      throw error;
+    }
+  }
+  private recover(): void {
     const unknown = this.store.unknownCalls();
     for (const snapshot of this.store.projects()) {
       const calls = unknown.filter((call) => call.projectId === snapshot.commission.id);
@@ -186,23 +269,12 @@ class Runtime implements RuntimeService {
           this.store.save(snapshot);
           for (const call of calls) {
             if (['model', 'plan'].includes(call.request.kind ?? ''))
-              this.store.endCall(call.id, {
-                ok: false,
-                code: 'interrupted',
-                output: 'Model request interrupted; no returned actions were dispatched.',
-              });
-            else if (call.state === 'running')
-              this.store.endCall(call.id, {
-                ok: false,
-                code: 'outcome_unknown',
-                output: 'Runtime stopped before a durable tool receipt.',
-              });
+              this.store.interruptCall(call.id, 'interrupted');
+            else if (call.state === 'running') this.store.interruptCall(call.id, 'outcome_unknown');
           }
         });
       }
     }
-    this.budgetTimer = setInterval(() => this.checkpointBudgets(), 1000);
-    this.budgetTimer.unref();
   }
   private elapsed(s: ProjectSnapshot): number {
     const since = this.activeSince.get(s.commission.id);
@@ -350,6 +422,16 @@ class Runtime implements RuntimeService {
     const workspace = await createWorkspaceStorage(input, this.options.dataRoot);
     this.store.addWorkspace(workspace);
     return workspace;
+  }
+  async exportWorkspace(id: string, destination: string): Promise<CommandResult> {
+    await exportWorkspaceStorage(this.store.get(id).workspace, destination);
+    return result(true, '项目候选版本已导出到新目录');
+  }
+  async prepareApply(id: string): Promise<ApplyPreview> {
+    return prepareWorkspaceApply(this.store.get(id).workspace);
+  }
+  async apply(operationId: string): Promise<CommandResult> {
+    return applyWorkspace(operationId);
   }
   async submit(input: SubmitInput): Promise<CommandResult> {
     if (this.closing) return result(false, 'Runtime is closing', 'closing');
@@ -1602,19 +1684,21 @@ class Runtime implements RuntimeService {
       verdict,
     };
   }
-  async close(): Promise<void> {
+  async close(pendingCommands: Promise<unknown>[] = []): Promise<void> {
     if (this.closed) return;
     this.closing = true;
     clearInterval(this.budgetTimer);
+    for (const run of this.running.values()) run.controller.abort(new Error('Runtime closing'));
+    await Promise.allSettled(pendingCommands);
     for (const s of this.store.projects())
       if (s.commission.status === 'active')
         this.change(s.commission.id, 'runtime_closing', 'Runtime is stopping safely', (s) => {
           s.commission.status = 'paused';
         });
-    for (const run of this.running.values()) run.controller.abort(new Error('Runtime closing'));
     await Promise.allSettled([...this.running.values()].map((r) => r.promise));
     this.closed = true;
     this.listeners.clear();
     this.store.close();
+    this.ownership.release();
   }
 }
