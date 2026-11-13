@@ -4,9 +4,22 @@
 
 把真实项目交给伙伴，在一座可以走进的工作室里观察、决策和验收。
 
+[![Electron](https://img.shields.io/badge/Electron-47848F?style=flat-square&logo=electron&logoColor=white)](https://www.electronjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![React](https://img.shields.io/badge/React-20232A?style=flat-square&logo=react&logoColor=61DAFB)](https://react.dev/)
+[![Three.js](https://img.shields.io/badge/Three.js-000000?style=flat-square&logo=threedotjs&logoColor=white)](https://threejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-417E38?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![SQLite](https://img.shields.io/badge/SQLite-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
+[![Python](https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![Vite](https://img.shields.io/badge/Vite-646CFF?style=flat-square&logo=vite&logoColor=white)](https://vite.dev/)
+[![pnpm](https://img.shields.io/badge/pnpm-4A4A4A?style=flat-square&logo=pnpm&logoColor=F69220)](https://pnpm.io/)
+[![Vitest](https://img.shields.io/badge/Vitest-6E9F18?style=flat-square&logo=vitest&logoColor=white)](https://vitest.dev/)
+
 Astrisle 是一个面向 Windows 的多 Agent 桌面工作台。目标是让伙伴从零创建项目、修改已有代码、处理办公资料，并通过自动分工、交接、复核与返工推进工作。3D 场景呈现协作关系，普通面板提供文件、证据、权限和进度的具体信息。
 
 **当前状态：第五阶段开发预览。** 在预算续跑与场景清晰度的基础上，增加运行时独占保护、调用代次校验和关闭等待；尚未完成完整 v0.1 验收，也未用真实供应商凭据验收开放式项目任务。
+
+第二至第五阶段的变更已提交至 [PR #2：任务续跑、运行时保护与星岛角色配置](https://github.com/orange11-forever/Astrisle/pull/2)。本地自动化验证共 155 项通过；各阶段范围和剩余限制见[最新开发记录](docs/development/stage-5.md)。
 
 ![宇宙中的悬浮工作室，使用默认角色的开发预览](docs/development/screenshots/studio-preview.png)
 
@@ -147,4 +160,4 @@ docs/                 产品设计、概念图、计划和阶段记录
 - [最新阶段与下次交接](docs/development/stage-5.md)
 - README Logo 沿用软件现有标志，内侧星形使用 Lucide Sparkles；[许可说明](docs/assets/LICENSE-lucide.txt)。
 
-从 `main` 创建功能分支，在分支内实现、验证和提交，再推送并通过 PR 审查。第一阶段已合并；本轮在 `feat/runtime-continuity` 开发，阶段结果不自动合并或发布。
+从 `main` 创建功能分支，在分支内实现、验证和提交，再推送并通过 PR 审查。第一阶段已合并；第二至第五阶段由 `feat/runtime-continuity` 的 [PR #2](https://github.com/orange11-forever/Astrisle/pull/2) 跟踪，合并状态以 PR 页面为准。开发预览不等于正式发布。
