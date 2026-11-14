@@ -23,6 +23,8 @@ import { CosmicBackdrop } from './CosmicBackdrop';
 import { SceneFrameBudget, useSceneActivity } from './render-budget';
 import { SceneQualityContext, useScenePixelRatio } from './render-quality';
 import type { SceneQuality } from './render-quality';
+import { advanceWalker, createWalker } from './island-motion';
+import { Confetti } from './Confetti';
 
 const c = {
   paper: '#e7eef0',
@@ -273,9 +275,9 @@ function StarTable({ active, onClick }: { active: boolean; onClick: () => void }
 }
 const anchors: Record<string, V3> = {
   table: [-1.65, 0, 1.4],
-  compare: [0.8, 0, -2.5],
-  dock: [3.2, 0, 2.7],
-  mail: [-3.2, 0, 2.7],
+  compare: [1.8, 0, -2.5],
+  dock: [2.5, 0, 2.7],
+  mail: [-3.0, 0, 3.0],
 };
 /** One tiny draw instead of rendering the whole island into a shadow framebuffer. */
 function GroundShadow() {
@@ -313,6 +315,8 @@ function Avatar({
   profile?: CharacterProfile;
 }) {
   const root = useRef<THREE.Group>(null);
+  const activity = useSceneActivity();
+  const walker = useRef(createWalker(id, [home[0], home[2]]));
   const motion = useRef<CharacterMotion>({
     walking: false,
     working: false,
@@ -321,29 +325,31 @@ function Avatar({
   });
   const character = profile ?? DEFAULT_CHARACTERS.find((entry) => entry.id === id)!;
   const target = intent && !intent.stationary ? anchors[intent.anchor] || home : home;
-  const targetVector = useMemo(() => new THREE.Vector3(...target), [target]);
+  const roaming = !preview && !intent && (!task || ['passed', 'cancelled'].includes(task.status));
   useFrame(({ clock }, delta) => {
     if (!root.current) return;
-    const distance = root.current.position.distanceTo(targetVector);
-    if (reduced) root.current.position.copy(targetVector);
-    else root.current.position.lerp(targetVector, 1 - Math.exp(-Math.min(delta, 0.05) * 1.8));
-    const walking = distance > 0.15 && !reduced;
+    const state = advanceWalker(walker.current, delta, {
+      roaming,
+      target: [target[0], target[2]],
+      reduced,
+      active: activity,
+      preview,
+    });
+    root.current.position.set(state.position[0], home[1], state.position[1]);
+    const walking = state.speed > 0.025 && !reduced && activity;
     const working = task?.status === 'running' && !/model|response|等待/i.test(task.step);
     motion.current.walking = walking;
     motion.current.working = working;
     motion.current.carrying = !!intent;
     motion.current.time = clock.elapsedTime + (id === 'mori' ? 0 : id === 'luma' ? 2.4 : 4.8);
-    root.current.rotation.y = walking
-      ? Math.atan2(target[0] - root.current.position.x, target[2] - root.current.position.z)
-      : preview
-        ? 0
-        : working
-          ? Math.PI * 0.85
-          : 0.28;
+    motion.current.phase = state.phase;
+    motion.current.strength = state.strength;
+    root.current.rotation.y = preview ? 0 : state.yaw;
   });
   return (
     <group
       ref={root}
+      name={`avatar-${id}`}
       position={home}
       onClick={(event) => {
         event.stopPropagation();
@@ -364,9 +370,9 @@ function Avatar({
                   : task.status === 'waiting_approval'
                     ? '等待审批'
                     : '待命'
-              : id === 'mori'
-                ? '探索伙伴'
-                : '整理伙伴'}
+              : reduced
+                ? '空闲'
+                : '散步'}
           </span>
         </Label>
       )}
@@ -390,7 +396,7 @@ function CameraRig({
       ? new THREE.Vector3(homes[focus][0], 0.95, homes[focus][2])
       : new THREE.Vector3(0, 0.35, 0);
     if (focus) camera.position.set(target.x, target.y + 0.12, target.z + 4.05 * Math.sqrt(fit));
-    else camera.position.set(12 * fit, 12 * fit, 17.5 * fit);
+    else camera.position.set(13.5 * fit, 13.5 * fit, 20.3 * fit);
     camera.lookAt(target);
     if (controls.current) {
       controls.current.target.copy(target);
@@ -422,6 +428,7 @@ function World({
   fixed,
   focus,
   characters,
+  celebration,
 }: {
   workspaceId: string;
   snapshot?: ProjectSnapshot;
@@ -431,6 +438,7 @@ function World({
   fixed: boolean;
   focus?: CharacterFocus;
   characters?: CharacterProfile[];
+  celebration?: number | null;
 }) {
   const director = useRef(emptyDirector());
   const [intents, setIntents] = useState<SceneIntent[]>([]);
@@ -498,6 +506,7 @@ function World({
       <directionalLight position={[6, 3, -8]} intensity={1.1} color="#98a9ed" />
       <CameraRig reset={reset} fixed={fixed} focus={focus} />
       <IslandLandscape workspaceId={workspaceId} reduced={reduced} />
+      {celebration != null && !reduced && <Confetti key={celebration} burst={celebration} />}
       <group position={[0, -0.38, 0]}>
         <mesh receiveShadow>
           <cylinderGeometry args={[6.1, 5.4, 0.55, 80]} />
@@ -673,6 +682,7 @@ export function StudioScene(props: {
   focus?: CharacterFocus;
   characters?: CharacterProfile[];
   quality?: SceneQuality;
+  celebration?: number | null;
 }) {
   const portal = useRef<HTMLDivElement>(null!);
   const active = useSceneActivity();
@@ -689,7 +699,7 @@ export function StudioScene(props: {
         <Canvas
           dpr={dpr}
           frameloop="demand"
-          camera={{ position: [12, 12, 17.5], fov: 38 }}
+          camera={{ position: [13.5, 13.5, 20.3], fov: 38 }}
           gl={{ antialias: true, powerPreference: 'default' }}
         >
           <SceneFrameBudget reduced={props.reduced} active={active} />

@@ -29,6 +29,7 @@ import {
   Map,
   PanelRightOpen,
   ListTodo,
+  PartyPopper,
 } from 'lucide-react';
 import type {
   ApplyPreview,
@@ -46,6 +47,7 @@ import { Archipelago } from './Archipelago';
 import { BudgetPanel } from './BudgetPanel';
 import { SceneQualitySelect, type SceneQuality } from './render-quality';
 import type { CharacterFocus, Panel } from './Scene';
+import { useCompletionCelebration } from './celebration';
 
 const labels: Record<string, string> = {
   draft: '草稿',
@@ -147,6 +149,7 @@ export function App() {
   const [commissionId, setCommissionId] = useState('');
   const selected = useRef('');
   const [workspaceId, setWorkspaceId] = useState('');
+  const celebration = useCompletionCelebration(snapshot?.commission, workspaceId);
   const [panel, setPanel] = useState<Panel>('goal');
   const [modal, setModal] = useState<'workspace' | 'commission' | null>(null);
   const [notice, setNotice] = useState('');
@@ -435,7 +438,7 @@ export function App() {
         </nav>
         <div className="navigator-foot">
           <Moon size={15} />
-          <span>云海之上，好好工作</span>
+          <span>本地工作室</span>
         </div>
       </aside>
       <main
@@ -449,7 +452,7 @@ export function App() {
                 ? '你的群岛'
                 : characterFocus && !flat
                   ? `${characterName(characterFocus)}的角色特写`
-                  : snapshot?.commission.title || workspace?.name || '给想法，一座小岛。'}
+                  : snapshot?.commission.title || workspace?.name || '星岛工作室'}
             </h1>
             <p>
               {overview
@@ -458,12 +461,27 @@ export function App() {
                   ? characters.find((profile) => profile.id === characterFocus)?.model?.filename ||
                     '蓝色大肥鱼娘 · Q 版鲸鱼伙伴'
                   : snapshot
-                    ? '伙伴的动作对应实际工作，细节随时可查。'
-                    : `和 ${characterName('mori')}、${characterName('luma')} 一起，把想法整理成可检验的成果。`}
+                    ? '查看任务、检查成果，或回复伙伴的问题。'
+                    : `${characterName('mori')} 和 ${characterName('luma')} 正在岛上散步。新建委托即可开始工作。`}
             </p>
           </div>
-          {snapshot && <Status value={snapshot.commission.status} />}
+          {snapshot && (
+            <div className="stage-actions">
+              {snapshot.commission.status === 'accepted' && !overview && !characterFocus && (
+                <button className="celebration-action" onClick={celebration.celebrate}>
+                  <PartyPopper size={16} />
+                  庆祝一下
+                </button>
+              )}
+              <Status value={snapshot.commission.status} />
+            </div>
+          )}
         </div>
+        {celebration.burst !== null && (
+          <div className="completion-note" role="status">
+            委托已完成
+          </div>
+        )}
         {overview && !flat ? (
           <Archipelago
             quality={sceneQuality}
@@ -484,6 +502,7 @@ export function App() {
             fixed={fixed}
             focus={characterFocus}
             characters={characters}
+            celebration={celebration.burst}
           />
         ) : (
           <div className="flat-world">
@@ -521,16 +540,18 @@ export function App() {
             </div>
           </div>
         )}
-        <div className="scene-caption">
-          <span className="caption-line" />
-          <span>
-            {overview
-              ? `${bootstrap?.workspaces.length || 0} 座持久岛屿 · 每座对应一个项目`
-              : characterFocus && !flat
-                ? `${characterName(characterFocus)} · 拖动旋转，滚轮缩放`
-                : '宇宙中的悬浮星岛'}
-          </span>
-        </div>
+        {(overview || characterFocus) && (
+          <div className="scene-caption">
+            <span className="caption-line" />
+            <span>
+              {overview
+                ? `${bootstrap?.workspaces.length || 0} 座持久岛屿 · 每座对应一个项目`
+                : characterFocus && !flat
+                  ? `${characterName(characterFocus)} · 拖动旋转，滚轮缩放`
+                  : '宇宙中的悬浮星岛'}
+            </span>
+          </div>
+        )}
         <div className="view-controls">
           <button
             aria-label="回到全景"
@@ -603,14 +624,14 @@ export function App() {
         ) : (
           <div className="commission-dock">
             <div className="dock-star">
-              <Sparkles size={24} strokeWidth={1.2} />
+              <ListTodo size={24} strokeWidth={1.4} />
             </div>
             <div>
-              <strong>{snapshot ? '把下一步说清楚' : '今天，想一起完成什么？'}</strong>
+              <strong>{snapshot ? '当前委托' : '开始一项工作'}</strong>
               <p>
                 {snapshot
-                  ? `${snapshot.tasks.filter((t) => t.status === 'passed').length} 项任务通过 · ${openRequests.length} 项需要你回复`
-                  : '创建项目、修改代码、整理资料，或完成一份办公文档。'}
+                  ? `${snapshot.tasks.filter((t) => t.status === 'passed').length} 项任务通过，${openRequests.length} 项待回复`
+                  : '填写目标和验收要求，交给伙伴处理。'}
               </p>
             </div>
             <button
@@ -1554,7 +1575,7 @@ function CharacterSettings({
               ? `包含 ${profile.model.animationCount} 个动画片段。`
               : profile.model.hasSkins
                 ? '包含骨骼，没有动画片段；角色整体移动。'
-                : '静态模型：角色整体移动，不包含骨骼动画。'}
+                : '没有内置动画；适合的直立模型会尝试基础步态。'}
           </p>
           {profile.model.triangleCount > 200_000 && (
             <p className="field-hint">

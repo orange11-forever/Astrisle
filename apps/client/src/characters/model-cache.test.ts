@@ -1,9 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { createCharacterModelCache } from './model-cache';
+import { createCharacterModelCache, disposeCharacterClone } from './model-cache';
+import { humanoidGlb } from '../../../../tests/fixtures/island-life';
 import { characterDocument, makeGlb } from '../../../../tests/fixtures/character-model';
 
 describe('shared custom character resources', () => {
+  it('shares inferred skin geometry but owns separate bones and retires the template once', async () => {
+    const cache = createCharacterModelCache(async () => humanoidGlb());
+    const lease = cache.acquire('humanoid'),
+      model = await lease.ready;
+    const a = model.instantiate({ procedural: true }),
+      b = model.instantiate({ procedural: true });
+    const first = a.getObjectByProperty('isSkinnedMesh', true) as THREE.SkinnedMesh;
+    const second = b.getObjectByProperty('isSkinnedMesh', true) as THREE.SkinnedMesh;
+    expect(first.geometry).toBe(second.geometry);
+    expect(first.skeleton.bones[0]).not.toBe(second.skeleton.bones[0]);
+    let disposals = 0;
+    first.geometry.addEventListener('dispose', () => disposals++);
+    disposeCharacterClone(a);
+    expect(disposals).toBe(0);
+    disposeCharacterClone(b);
+    lease.release();
+    await new Promise((done) => setTimeout(done, 5));
+    expect(disposals).toBe(1);
+  });
   it('parses once for simultaneous clones, grounds and fits them, then releases GPU resources once', async () => {
     let reads = 0;
     const cache = createCharacterModelCache(async () => {

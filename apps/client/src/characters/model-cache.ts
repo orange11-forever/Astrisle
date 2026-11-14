@@ -2,10 +2,12 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { clone } from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { createProceduralGaitTemplate, disposeProceduralTemplate } from './procedural-gait';
 
 export interface SharedCharacterModel {
   animations: THREE.AnimationClip[];
-  instantiate(): THREE.Group;
+  instantiate(options?: { procedural?: boolean; rotationY?: number }): THREE.Group;
+  disposeTemplates?(): void;
 }
 type Entry = {
   references: number;
@@ -78,9 +80,17 @@ function prepare(gltf: GLTF): SharedCharacterModel {
   }
   const center = bounds.getCenter(new THREE.Vector3());
   const scale = 1.85 / size.y;
-  return {
+  const templates = new Map<number, THREE.Group | null>();
+  const model: SharedCharacterModel = {
     animations: gltf.animations,
-    instantiate() {
+    instantiate(options = {}) {
+      if (options.procedural && !gltf.animations.length) {
+        const angle = options.rotationY ?? 0;
+        if (!templates.has(angle))
+          templates.set(angle, createProceduralGaitTemplate(model.instantiate(), angle));
+        const template = templates.get(angle);
+        if (template) return clone(template) as THREE.Group;
+      }
       // SkeletonUtils gives each avatar independent bones while sharing geometry and textures.
       const scene = clone(gltf.scene);
       const remove: THREE.Object3D[] = [];
@@ -103,14 +113,21 @@ function prepare(gltf: GLTF): SharedCharacterModel {
       root.add(normalized);
       return root;
     },
+    disposeTemplates() {
+      for (const template of templates.values()) if (template) disposeProceduralTemplate(template);
+      templates.clear();
+    },
   };
+  return model;
 }
 
 /** GPU resources are owned by the cache; avatar clones own only their skeleton state. */
 export function disposeCharacterClone(root: THREE.Object3D) {
+  const skeletons = new Set<THREE.Skeleton>();
   root.traverse((object) => {
-    if (object instanceof THREE.SkinnedMesh) object.skeleton.dispose();
+    if (object instanceof THREE.SkinnedMesh) skeletons.add(object.skeleton);
   });
+  skeletons.forEach((skeleton) => skeleton.dispose());
 }
 
 export function createCharacterModelCache(loadBytes: (assetId: string) => Promise<Uint8Array>) {
@@ -135,7 +152,10 @@ export function createCharacterModelCache(loadBytes: (assetId: string) => Promis
           .then((gltf) => {
             try {
               const model = prepare(gltf);
-              created.dispose = () => disposeResources(gltf.scenes);
+              created.dispose = () => {
+                model.disposeTemplates?.();
+                disposeResources(gltf.scenes);
+              };
               retire(assetId, created);
               return model;
             } catch (error) {
