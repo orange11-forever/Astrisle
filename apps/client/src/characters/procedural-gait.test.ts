@@ -2,7 +2,11 @@ import { expect, it } from 'vitest';
 import * as THREE from 'three';
 import { clone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { createProceduralGaitTemplate, poseProceduralGait } from './procedural-gait';
+import {
+  createProceduralGaitTemplate,
+  poseProceduralGait,
+  sampleGaitHand,
+} from './procedural-gait';
 
 function figure(skirt = false) {
   const parts: THREE.BufferGeometry[] = [
@@ -116,4 +120,110 @@ it('leaves non-humanoid static geometry unchanged rather than inventing a skelet
   expect(createProceduralGaitTemplate(root, 0)).toBeNull();
   expect(root.children[0]).toBeInstanceOf(THREE.Mesh);
   expect((root.children[0] as THREE.Mesh).geometry.attributes.skinWeight).toBeUndefined();
+});
+
+it('bends both knees to sit, raises the tea arm, and restores the imported rig before walking', () => {
+  const rig = createProceduralGaitTemplate(figure(), 0)!;
+  const restHip = rig.getObjectByName('gait-hips')!.position.y;
+  poseProceduralGait(rig, {
+    phase: 0,
+    strength: 0,
+    time: 2,
+    working: false,
+    leisure: { activity: 'tea', blend: 1, time: 2, seatHeight: 0.55 },
+  });
+  expect(rig.getObjectByName('gait-left-thigh')!.rotation.x).toBeLessThan(-1);
+  expect(rig.getObjectByName('gait-right-knee')!.rotation.x).toBeGreaterThan(1);
+  expect(rig.getObjectByName('gait-right-arm')!.rotation.x).toBeLessThan(-0.4);
+  poseProceduralGait(rig, { phase: 0, strength: 0, time: 0, working: false });
+  expect(rig.getObjectByName('gait-hips')!.position.y).toBe(restHip);
+  expect(rig.getObjectByName('gait-left-thigh')!.rotation.x).toBeCloseTo(0);
+  expect(rig.getObjectByName('gait-right-knee')!.rotation.x).toBe(0);
+  expect(rig.getObjectByName('gait-right-arm')!.rotation.z).toBe(0);
+});
+
+it('keeps the seated long garment above the cushion instead of passing a seat through the dress', () => {
+  const rig = createProceduralGaitTemplate(figure(true), 0)!;
+  poseProceduralGait(rig, {
+    phase: 0,
+    strength: 0,
+    time: 0,
+    working: false,
+    leisure: { activity: 'sit', blend: 1, time: 0, seatHeight: 0.55 },
+  });
+  rig.updateMatrixWorld(true);
+  const mesh = rig.getObjectByProperty('isSkinnedMesh', true) as THREE.SkinnedMesh;
+  const p = mesh.geometry.attributes.position;
+  let points = 0;
+  for (let i = 0; i < p.count; i++) {
+    if (
+      p.getY(i) < 0.6 &&
+      p.getY(i) > 0.07 &&
+      Math.abs(p.getX(i)) > 0.25 &&
+      Math.abs(p.getX(i)) < 0.42 &&
+      Math.abs(p.getZ(i)) < 0.26
+    ) {
+      const moved = mesh.getVertexPosition(i, new THREE.Vector3());
+      expect(moved.y).toBeGreaterThanOrEqual(0.545);
+      points++;
+    }
+  }
+  expect(points).toBeGreaterThan(10);
+});
+
+it('samples the actual deformed lower hand for prop contact throughout a sip, including rotated models', () => {
+  for (const rotation of [0, 270]) {
+    const source = figure();
+    source.rotation.y = rotation === 270 ? Math.PI / 2 : 0;
+    const rig = createProceduralGaitTemplate(source, rotation)!;
+    const mesh = rig.getObjectByProperty('isSkinnedMesh', true) as THREE.SkinnedMesh;
+    const p = mesh.geometry.attributes.position;
+    for (const time of [0, Math.PI / 1.6, 4]) {
+      poseProceduralGait(rig, {
+        phase: 0,
+        strength: 0,
+        time,
+        working: false,
+        leisure: { activity: 'tea', blend: 1, time, seatHeight: 0.55 },
+      });
+      const hand = new THREE.Vector3();
+      expect(sampleGaitHand(rig, hand)).toBe(true);
+      let nearest = Infinity;
+      for (let i = 0; i < p.count; i++)
+        if (p.getX(i) > 0.25 && p.getY(i) >= 0.6 && p.getY(i) < 0.7) {
+          nearest = Math.min(
+            nearest,
+            mesh.getVertexPosition(i, new THREE.Vector3()).distanceTo(hand),
+          );
+        }
+      expect(nearest).toBeLessThan(1e-4);
+    }
+  }
+});
+
+it('uses visible lower hand landmarks for a short-bodied figure instead of raising a point in its hair', () => {
+  const source = figure(true);
+  for (const side of [-1, 1]) {
+    const hand = new THREE.Mesh(
+      new THREE.SphereGeometry(0.045, 12, 8),
+      new THREE.MeshStandardMaterial({ color: '#f4cbb2' }),
+    );
+    hand.position.set(side * 0.34, 0.42, 0.15);
+    source.add(hand);
+  }
+  const rig = createProceduralGaitTemplate(source, 0)!;
+  const before = new THREE.Vector3(),
+    after = new THREE.Vector3();
+  expect(sampleGaitHand(rig, before)).toBe(true);
+  expect(before.y).toBeLessThan(0.48);
+  poseProceduralGait(rig, {
+    phase: 0,
+    strength: 0,
+    time: 2,
+    working: false,
+    leisure: { activity: 'tea', blend: 1, time: 2, seatHeight: 0.55 },
+  });
+  expect(sampleGaitHand(rig, after)).toBe(true);
+  const lift = rig.getObjectByName('gait-hips')!.position.y - Number(rig.userData.gaitRestHipY);
+  expect(after.y - before.y - lift).toBeGreaterThan(0.06);
 });

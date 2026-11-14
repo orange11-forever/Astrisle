@@ -2184,3 +2184,30 @@ details > p {
     font-size: 12px;
   }
 }
+.scene-caption.camera-hint {
+  display: flex;
+  max-width: 260px;
+  padding: 6px 8px;
+  border: 1px solid #9daec22e;
+  border-radius: 6px;
+  background: #0a142bcc;
+  color: #dfe8f5;
+  font-size: 10px;
+  line-height: 1.5;
+  pointer-events: none;
+}
+.camera-hint .caption-line {
+  display: none;
+}
+@media (max-width: 1050px) {
+  .scene-caption.camera-hint {
+    bottom: 175px;
+  }
+}
+@media (max-width: 700px) {
+  .scene-caption.camera-hint {
+    left: 16px;
+    bottom: 145px;
+    max-width: calc(100% - 32px);
+  }
+}

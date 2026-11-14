@@ -1,7 +1,36 @@
 import * as THREE from 'three';
+import { teaSip, type LeisurePose } from './character-pose';
+import { inferHandLandmarks } from './hand-landmarks';
 
 const smooth = (a: number, b: number, value: number) => THREE.MathUtils.smoothstep(value, a, b);
 const rigs = new WeakMap<THREE.Object3D, Record<string, THREE.Bone>>();
+
+const handSamples = new WeakMap<
+  THREE.Object3D,
+  { mesh: THREE.SkinnedMesh; vertex: number } | null
+>();
+/** Samples the rendered hand, including its blended weights, in the normalized body's space. */
+export function sampleGaitHand(root: THREE.Object3D, target: THREE.Vector3): boolean {
+  let sample = handSamples.get(root);
+  if (sample === undefined) {
+    sample = null;
+    root.traverse((object) => {
+      if (
+        object instanceof THREE.SkinnedMesh &&
+        Number.isInteger(object.userData.gaitRightHandVertex)
+      )
+        sample = { mesh: object, vertex: object.userData.gaitRightHandVertex };
+    });
+    handSamples.set(root, sample);
+  }
+  if (!sample) return false;
+  root.updateWorldMatrix(true, true);
+  const { mesh, vertex } = sample;
+  mesh.getVertexPosition(vertex, target);
+  mesh.localToWorld(target);
+  root.getObjectByName('Imported_character_normalized')!.worldToLocal(target);
+  return true;
+}
 
 /** Conservative display-only skinning for upright, two-footed static figures. */
 export function createProceduralGaitTemplate(
@@ -72,6 +101,7 @@ export function createProceduralGaitTemplate(
     foot.z /= foot.count;
   });
   if (feet[1].x - feet[0].x < h * 0.08) return null;
+  const { hands, probes } = inferHandLandmarks(meshes, transforms, bounds);
 
   const root = new THREE.Group(),
     body = new THREE.Group();
@@ -80,6 +110,7 @@ export function createProceduralGaitTemplate(
   root.userData.gaitHeight = h;
   const longGarment = garmentWidth > soleWidth * 1.45;
   root.userData.gaitLongGarment = longGarment;
+  root.userData.gaitHandLandmarks = hands.map((hand) => hand?.toArray() ?? null);
   root.add(body);
   const bones: THREE.Bone[] = [];
   const absolute = new Map<THREE.Bone, THREE.Vector3>();
@@ -105,16 +136,33 @@ export function createProceduralGaitTemplate(
     const thigh = joint(`${side}-thigh`, hip, [foot.x, y(0.34), center.z]);
     const knee = joint(`${side}-knee`, thigh, [foot.x, y(0.18), center.z]);
     joint(`${side}-ankle`, knee, [foot.x, y(0.045), center.z]);
-    const arm = joint(`${side}-arm`, spine, [center.x + sign * h * 0.18, y(0.51), center.z]);
-    joint(`${side}-forearm`, arm, [center.x + sign * h * 0.2, y(0.4), center.z]);
+    const hand = hands[index];
+    const arm = joint(
+      `${side}-arm`,
+      spine,
+      hand
+        ? [hand.x - sign * h * 0.035, hand.y + h * 0.18, hand.z - h * 0.025]
+        : [center.x + sign * h * 0.18, y(0.51), center.z],
+    );
+    joint(
+      `${side}-forearm`,
+      arm,
+      hand
+        ? [hand.x - sign * h * 0.015, hand.y + h * 0.09, hand.z]
+        : [center.x + sign * h * 0.2, y(0.4), center.z],
+    );
   }
   const skeleton = new THREE.Skeleton(bones);
   const indices = Object.fromEntries(bones.map((bone, index) => [bone.name.slice(5), index]));
+  let seatBase = Infinity;
+  let hand: { mesh: THREE.SkinnedMesh; vertex: number; score: number } | undefined;
   meshes.forEach((original, meshIndex) => {
     const geometry = original.geometry.clone().applyMatrix4(transforms[meshIndex]);
     const position = geometry.attributes.position;
     const skinIndex = new Uint16Array(position.count * 4),
       skinWeight = new Float32Array(position.count * 4);
+    let handVertex = -1,
+      handScore = Infinity;
     for (let i = 0; i < position.count; i++) {
       const x = (position.getX(i) - center.x) / h,
         height = (position.getY(i) - bounds.min.y) / h;
@@ -128,6 +176,17 @@ export function createProceduralGaitTemplate(
       const leg = longGarment
         ? (1 - smooth(0.055, 0.1, height)) * footprint
         : 1 - smooth(0.24, 0.37, height);
+      // Rigid long cloth rests on the cushion; it cannot drape around a seat.
+      if (
+        longGarment &&
+        leg < 0.05 &&
+        height > 0.035 &&
+        height < 0.35 &&
+        Math.abs(x) > 0.14 &&
+        Math.abs(x) < 0.25 &&
+        Math.abs(z) < 0.16
+      )
+        seatBase = Math.min(seatBase, position.getY(i));
       const lower = 1 - smooth(0.14, 0.21, height),
         ankle = 1 - smooth(0.035, 0.075, height);
       const weights: [number, number][] = [
@@ -144,14 +203,51 @@ export function createProceduralGaitTemplate(
         weights.push([indices[`${side}-ankle`], leg * blend * ankle]);
       }
       // Conservative arm weights keep adjacent long hair and sleeves from tearing.
-      const arm =
+      let arm =
         smooth(0.15, 0.24, Math.abs(x)) *
         smooth(0.31, 0.39, height) *
         (1 - smooth(0.5, 0.57, height)) *
         0.45;
+      const handLandmark = hands[x < 0 ? 0 : 1];
+      if (handLandmark) {
+        const py = position.getY(i),
+          sign = x < 0 ? -1 : 1;
+        const along = THREE.MathUtils.clamp((py - handLandmark.y) / (h * 0.18), 0, 1);
+        const dx = position.getX(i) - (handLandmark.x - sign * h * 0.035 * along);
+        const dz = position.getZ(i) - (handLandmark.z - h * 0.025 * along);
+        const radial = Math.hypot(dx, dz) / h;
+        const sleeve =
+          smooth(handLandmark.y - h * 0.06, handLandmark.y - h * 0.02, py) *
+          (1 - smooth(handLandmark.y + h * 0.13, handLandmark.y + h * 0.22, py)) *
+          (1 - smooth(0.025, 0.085, radial));
+        arm = Math.max(arm * 0.2, sleeve * 0.35);
+        if (radial < 0.04 && Math.abs(py - handLandmark.y) < h * 0.04 && probes[meshIndex]?.(i))
+          arm = 0.45;
+      }
       if (arm > 0) {
         weights.forEach((entry) => (entry[1] *= 1 - arm));
         weights.push([indices[`${x < 0 ? 'left' : 'right'}-arm`], arm]);
+      }
+      const rightHand = hands[1];
+      const nearRightHand =
+        rightHand &&
+        x > 0 &&
+        Math.abs(position.getY(i) - rightHand.y) < h * 0.075 &&
+        probes[meshIndex]?.(i);
+      if (
+        rightHand
+          ? nearRightHand
+          : arm > 0.035 && x > 0.14 && height > 0.3 && height < 0.46 && z > -0.02
+      ) {
+        const score = rightHand
+          ? (position.getX(i) - rightHand.x) ** 2 +
+            (position.getY(i) - rightHand.y) ** 2 +
+            (position.getZ(i) - rightHand.z) ** 2
+          : (x - 0.22) ** 2 + (height - 0.36) ** 2 + (z - 0.08) ** 2;
+        if (score < handScore) {
+          handVertex = i;
+          handScore = score;
+        }
       }
       const selected = weights.sort((a, b) => b[1] - a[1]).slice(0, 4),
         total = selected.reduce((sum, entry) => sum + entry[1], 0);
@@ -167,7 +263,11 @@ export function createProceduralGaitTemplate(
     mesh.frustumCulled = false;
     mesh.raycast = () => {};
     body.add(mesh);
+    if (handVertex >= 0 && (!hand || handScore < hand.score))
+      hand = { mesh, vertex: handVertex, score: handScore };
   });
+  if (hand) hand.mesh.userData.gaitRightHandVertex = hand.vertex;
+  root.userData.gaitSeatBaseY = Number.isFinite(seatBase) ? seatBase : bounds.min.y + h * 0.1;
   root.updateMatrixWorld(true);
   root.traverse((object) => {
     if (object instanceof THREE.SkinnedMesh) object.bind(skeleton);
@@ -179,7 +279,13 @@ export function createProceduralGaitTemplate(
 
 export function poseProceduralGait(
   root: THREE.Object3D,
-  motion: { phase: number; strength: number; time: number; working: boolean },
+  motion: {
+    phase: number;
+    strength: number;
+    time: number;
+    working: boolean;
+    leisure?: LeisurePose;
+  },
 ) {
   let joints = rigs.get(root);
   if (!joints) {
@@ -216,11 +322,47 @@ export function poseProceduralGait(
     joints[`${side}-ankle`].rotation.x = (-thigh - knee) * strength;
     joints[`${side}-arm`].rotation.x = -swing * 0.14 * strength + (working ? -0.12 : 0);
     joints[`${side}-forearm`].rotation.x = -0.06 * strength;
+    joints[`${side}-arm`].rotation.z = 0;
   }
   joints.hips.rotation.z = 0;
   joints.spine.rotation.y = Math.sin(phase) * 0.025 * strength;
   joints.head.rotation.y = -Math.sin(phase) * 0.015 * strength;
   joints.head.rotation.z = Math.sin(time * 0.7) * 0.008 * strength;
+  joints.head.rotation.x = 0;
+  const leisure = motion.leisure;
+  if (!leisure || leisure.blend <= 0) return;
+  const weight = leisure.blend;
+  const draped = !!root.userData.gaitLongGarment;
+  const seatedHip = draped
+    ? Number(root.userData.gaitRestHipY) +
+      leisure.seatHeight -
+      Number(root.userData.gaitSeatBaseY) +
+      0.01
+    : leisure.seatHeight + h * 0.025;
+  joints.hips.position.y = THREE.MathUtils.lerp(joints.hips.position.y, seatedHip, weight);
+  const sip = leisure.activity === 'tea' ? teaSip(leisure.time) : 0;
+  for (const [index, side] of ['left', 'right'].entries()) {
+    const thigh = joints[`${side}-thigh`],
+      knee = joints[`${side}-knee`],
+      ankle = joints[`${side}-ankle`];
+    thigh.rotation.x = THREE.MathUtils.lerp(thigh.rotation.x, draped ? -0.18 : -1.4, weight);
+    knee.rotation.x = THREE.MathUtils.lerp(knee.rotation.x, draped ? 0.28 : 1.4, weight);
+    ankle.rotation.x *= 1 - weight;
+    const grip = leisure.activity === 'swing';
+    const arm = joints[`${side}-arm`];
+    arm.rotation.x = THREE.MathUtils.lerp(
+      arm.rotation.x,
+      grip ? -0.6 : side === 'right' && leisure.activity === 'tea' ? -0.65 - sip * 0.45 : -0.2,
+      weight,
+    );
+    arm.rotation.z = grip ? (index ? 0.35 : -0.35) * weight : 0;
+    joints[`${side}-forearm`].rotation.x = THREE.MathUtils.lerp(
+      joints[`${side}-forearm`].rotation.x,
+      -0.3,
+      weight,
+    );
+  }
+  joints.head.rotation.x = sip * 0.045 * weight;
 }
 
 export function disposeProceduralTemplate(root: THREE.Object3D) {
