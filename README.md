@@ -17,9 +17,9 @@
 
 Astrisle 是一个面向 Windows 的多 Agent 桌面工作台。目标是让伙伴从零创建项目、修改已有代码、处理办公资料，并通过自动分工、交接、复核与返工推进工作。3D 场景呈现协作关系，普通面板提供文件、证据、权限和进度的具体信息。
 
-**当前状态：第五阶段开发预览。** 在预算续跑与场景清晰度的基础上，增加运行时独占保护、调用代次校验和关闭等待；尚未完成完整 v0.1 验收，也未用真实供应商凭据验收开放式项目任务。
+**当前状态：第六阶段开发预览。** 在运行时独占保护、调用代次校验和关闭等待的基础上，增加 Windows 进程树监督、停止确认与持久化回执；尚未完成完整 v0.1 验收，也未用真实供应商凭据验收开放式项目任务。
 
-第二至第五阶段的变更已提交至 [PR #2：任务续跑、运行时保护与星岛角色配置](https://github.com/orange11-forever/Astrisle/pull/2)。自动化验证覆盖 136 项 JS、10 项 Office 和 11 项桌面/UI 测试；各阶段范围、CI 修复和剩余限制见[最新开发记录](docs/development/stage-5.md)。
+第二至第五阶段已由 [PR #2：任务续跑、运行时保护与星岛角色配置](https://github.com/orange11-forever/Astrisle/pull/2) 合并。第六阶段在本地功能分支验证，覆盖 158 项 JS、10 项 Office 和 11 项桌面/UI 测试；范围与剩余限制见[最新开发记录](docs/development/stage-6.md)。
 
 ![宇宙中的悬浮工作室，使用默认角色的开发预览](docs/development/screenshots/studio-preview.png)
 
@@ -31,7 +31,7 @@ Astrisle 是一个面向 Windows 的多 Agent 桌面工作台。目标是让伙�
 | 工作空间 | 创建或导入项目、独立工作副本、文件基线、候选变更整合、冲突检查、导出到新目录 |
 | 委托与协作 | SQLite 持久化、幂等派单、动态任务图、两位伙伴、版本化交接、复核与返工、持久化动作回执与重启续接、运行时独占与调用代次校验 |
 | 模型适配 | OpenAI-compatible Chat Completions、OpenAI Responses、Anthropic Messages、Gemini generateContent 四种协议 |
-| 工作工具 | 文件检索/读取/写入/局部修改、明确授权的本机进程、按域名授权的网页读取 |
+| 工作工具 | 文件检索/读取/写入/局部修改、明确授权的本机进程、Windows Job 进程树停止确认、按域名授权的网页读取 |
 | 办公 | DOCX、XLSX、PPTX 常用创建与局部修改；文件回读、来源记录和独立数值检查 |
 | 前端 | 宇宙中的悬浮工作室、群岛总览、岛屿创建/命名/切换、角色特写、按需渲染、2D 模式和减少动效 |
 | 角色配置 | 外部 GLB／自包含 glTF 导入、自动居中与尺寸归一化、四方向调整、伙伴显示名称修改、跨岛屿保存与资源共享 |
@@ -42,6 +42,8 @@ Astrisle 是一个面向 Windows 的多 Agent 桌面工作台。目标是让伙�
 ## 本地启动
 
 当前开发和验证环境是 Windows x64、Node.js 22.22、Python 3.12 和 pnpm 11.21。Node 至少需要 22.13，以提供本项目使用的 `node:sqlite`；Node 22 下出现 SQLite experimental 提示是已知现象。
+
+Windows 进程监督要求 Windows 10+ x64。测试和桌面构建会用系统 .NET Framework 4.x 的 C# 编译器生成 `dist/helpers/process-supervisor.exe`；缺少编译器会使构建失败，缺少 helper 时不会启动目标程序。
 
 先准备 Node.js、Python、pnpm 和 Git，在 PowerShell 中执行：
 
@@ -104,6 +106,8 @@ pnpm.cmd dev
 
 **本机程序执行属于可信宿主模式，不是安全沙箱。** 允许后，程序可能访问宿主文件和网络；文件工具、网页工具的作用域不能限制任意子程序。当前版本只适合明确授权的可信项目。
 
+Windows 下，进程工具和 Office worker 从创建时就属于受监督的 Job。取消、超时、输出超限或主进程退出会清理剩余普通后代，活动进程数归零才确认停止。监督程序崩溃或回执丢失时保留未知结果。停止进程不会回滚已发生的文件或网络操作，也不限制外部服务代理的工作。
+
 关闭窗口会进入托盘，工作运行时继续存在；从托盘选择“退出 Astrisle”才执行关闭流程。开发数据位于 `.astrisle-dev/`，其中包括项目副本、SQLite 状态、产物、加密配置、`characters.json` 和 `character-assets/`，已从 Git 忽略。不要把该目录当成可随意删除的构建缓存。
 
 ## 验证
@@ -125,7 +129,7 @@ UI 测试当前使用 Microsoft Edge；桌面测试使用真实 Electron 和独�
 - 原项目安全写回尚未完成，界面会返回不可用原因；当前使用新目录导出。没有验证 Windows 独占写入与中断恢复前不会开放写回。
 - 尚未用真实模型 API 完成编程与办公全流程验收，无法据此承诺所有开放式委托都能成功。
 - Office 验证目前覆盖结构回读和数值核对；没有完成 Microsoft Office/LibreOffice 打开、公式引擎重算及版式验收。复杂对象、宏和外部链接可能被拒绝。
-- 当前任务隔离采用独立文件副本与基线清单，尚未采用内部 Git worktree。已实现本机数据目录的运行时独占与调用代次校验；逐任务 worker 租约、严格进程树隔离、完整恢复及长期资源控制仍需完善。独占保护不替代不可信代码隔离，也不支持跨机器共享数据目录。
+- 当前任务隔离采用独立文件副本与基线清单，尚未采用内部 Git worktree。已实现本机运行时独占、调用代次校验与 Windows 普通后代进程树停止确认；逐任务 worker 租约、完整恢复及长期资源控制仍需完善。上述机制不替代不可信代码隔离，也不支持跨机器共享数据目录。
 - 外部模型的外观和骨骼能力取决于文件本身；当前没有自动绑骨、动作生成或跨骨骼重定向。默认程序化角色和场景仍为开发资产。
 - 3D 绘制开销已经降低，但短时后台测量不等于完整桌面性能验收；启动包体、长期内存与不同硬件仍需后续检查。
 - 当前提供源码开发启动方式，尚无正式签名安装包、自动更新服务或公开发行验收。
@@ -157,7 +161,7 @@ docs/                 产品设计、概念图、计划和阶段记录
 - [完整 v0.1 开发计划](docs/superpowers/plans/2026-11-11-astrisle-v0.1.md)
 - [概念图生成说明](docs/concepts/astrisle-star-island-prompt.md)
 - [鲸鱼角色参考、署名与使用条件](docs/concepts/blue-whale-girl-references.md)：角色视觉资产保留上游 CC BY-NC-SA 4.0 的署名、非商业与相同方式共享条件，具体范围见该文档。
-- [最新阶段与下次交接](docs/development/stage-5.md)
+- [最新阶段与下次交接](docs/development/stage-6.md)
 - README Logo 沿用软件现有标志，内侧星形使用 Lucide Sparkles；[许可说明](docs/assets/LICENSE-lucide.txt)。
 
-从 `main` 创建功能分支，在分支内实现、验证和提交，再推送并通过 PR 审查。第一阶段已合并；第二至第五阶段由 `feat/runtime-continuity` 的 [PR #2](https://github.com/orange11-forever/Astrisle/pull/2) 跟踪，合并状态以 PR 页面为准。开发预览不等于正式发布。
+从 `main` 创建功能分支，在分支内实现、验证和提交，再推送并通过 PR 审查。前五阶段已合并，第六阶段保留在本地功能分支。开发预览不等于正式发布。
