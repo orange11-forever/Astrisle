@@ -19,7 +19,7 @@ Astrisle 是一个面向 Windows 的多 Agent 桌面工作台。目标是让伙�
 
 **当前状态：第七阶段开发预览。** 已有 Windows 进程树监督、停止确认与持久化回执；本轮增加岛上散步、静态角色基础步态、更大的花园岛屿和验收庆祝。尚未完成完整 v0.1 验收，也未用真实供应商凭据验收开放式项目任务。
 
-第二至第五阶段已由 [PR #2：任务续跑、运行时保护与星岛角色配置](https://github.com/orange11-forever/Astrisle/pull/2) 合并。第六、七阶段保留在本地功能分支；运行保障见[第六阶段](docs/development/stage-6.md)，散步、角色动作和庆祝见[最新开发记录](docs/development/stage-7.md)。
+第二至第五阶段已由 [PR #2：任务续跑、运行时保护与星岛角色配置](https://github.com/orange11-forever/Astrisle/pull/2) 合并。第六、七阶段已提交至 [PR #3：Windows 进程监督、岛屿散步与验收庆祝](https://github.com/orange11-forever/Astrisle/pull/3)，合并与 CI 状态以 PR 页面为准。运行保障见[第六阶段](docs/development/stage-6.md)，散步、角色动作和庆祝见[最新开发记录](docs/development/stage-7.md)。
 
 本轮本地验证通过 176 项 JS、10 项 Office 和 15 项桌面/UI 测试，共 201 项；构建、类型与格式检查通过。
 
@@ -173,4 +173,4 @@ docs/                 产品设计、概念图、计划和阶段记录
 - [最新阶段与下次交接](docs/development/stage-7.md)
 - README Logo 沿用软件现有标志，内侧星形使用 Lucide Sparkles；[许可说明](docs/assets/LICENSE-lucide.txt)。
 
-从 `main` 创建功能分支，在分支内实现、验证和提交，再推送并通过 PR 审查。前五阶段已合并，第六、七阶段保留在本地功能分支。开发预览不等于正式发布。
+从 `main` 创建功能分支，在分支内实现、验证和提交，再推送并通过 PR 审查。前五阶段已合并，第六、七阶段由 `feat/executor-process-supervision` 的 [PR #3](https://github.com/orange11-forever/Astrisle/pull/3) 跟踪。开发预览不等于正式发布。
