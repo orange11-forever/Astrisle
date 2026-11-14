@@ -1,4 +1,5 @@
 import { build } from 'esbuild';
+import './build-process-supervisor.mjs';
 await build({
   entryPoints: {
     main: 'apps/desktop/src/main.ts',

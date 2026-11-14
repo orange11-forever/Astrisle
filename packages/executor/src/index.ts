@@ -318,6 +318,7 @@ export function createExecutor(options: {
             throw new ToolError('INVALID_ARGUMENT', 'args must be a string array');
           const result = await runProcess(str(args, 'command'), (args.args || []) as string[], {
             cwd,
+            supervisorPath: path.join(options.projectRoot, 'dist/helpers/process-supervisor.exe'),
             signal: context.signal,
             timeoutMs: Math.max(100, numeric(args.timeoutMs, 30000, 120000)),
           });
@@ -348,6 +349,7 @@ export function createExecutor(options: {
             [path.join(options.projectRoot, 'workers/office/worker.py')],
             {
               cwd: context.workPath,
+              supervisorPath: path.join(options.projectRoot, 'dist/helpers/process-supervisor.exe'),
               signal: context.signal,
               timeoutMs: 60000,
               input: JSON.stringify(request),

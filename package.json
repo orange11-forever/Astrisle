@@ -13,7 +13,7 @@
     "build:desktop": "node scripts/build-desktop.mjs",
     "start": "electron .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "node scripts/build-process-supervisor.mjs && vitest run",
     "test:ui": "playwright test",
     "test:office": ".venv/Scripts/python.exe -m pytest workers/office/tests -q --basetemp=workers/office/.test-tmp",
     "format": "prettier --write apps packages scripts tests *.ts *.json",

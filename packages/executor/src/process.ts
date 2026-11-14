@@ -1,12 +1,29 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { ToolError } from './path-guard';
+import { runWindowsProcess } from './windows-process';
 
 export type ProcessResult = {
   output: string;
   exitCode: number | null;
   stopStatus: 'not_requested' | 'stopped' | 'outcome_unknown';
   reason?: string;
+  termination?: {
+    mechanism: 'windows_job';
+    supervisorPid?: number;
+    rootPid?: number;
+    activeProcesses?: number;
+    confirmed: boolean;
+    confirmedAt?: string;
+  };
+};
+export type ProcessOptions = {
+  cwd: string;
+  signal: AbortSignal;
+  timeoutMs: number;
+  input?: string;
+  outputLimit?: number;
+  supervisorPath?: string;
 };
 export function minimalEnvironment(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
@@ -33,13 +50,7 @@ export function redact(text: string): string {
 export async function runProcess(
   command: string,
   args: string[],
-  options: {
-    cwd: string;
-    signal: AbortSignal;
-    timeoutMs: number;
-    input?: string;
-    outputLimit?: number;
-  },
+  options: ProcessOptions,
 ): Promise<ProcessResult> {
   if (options.signal.aborted)
     throw new ToolError('ABORTED', 'Operation cancelled before process start');
@@ -51,7 +62,20 @@ export async function runProcess(
     args.some((a) => a.length > 32768 || a.includes('\0'))
   )
     throw new ToolError('INVALID_ARGUMENT', 'Invalid executable or argument size');
-  const limit = options.outputLimit || 128 * 1024;
+  const limit = options.outputLimit ?? 128 * 1024;
+  if (
+    !Number.isSafeInteger(limit) ||
+    limit < 1 ||
+    limit > 4 * 1024 * 1024 ||
+    !Number.isSafeInteger(options.timeoutMs) ||
+    options.timeoutMs < 1 ||
+    Buffer.byteLength(options.input ?? '') > 4 * 1024 * 1024
+  )
+    throw new ToolError('INVALID_ARGUMENT', 'Invalid process limits');
+  if (process.platform === 'win32') {
+    const result = await runWindowsProcess(command, args, options, minimalEnvironment());
+    return { ...result, output: redact(result.output) };
+  }
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
@@ -79,21 +103,10 @@ export async function runProcess(
       reason = why;
       stopStatus = 'outcome_unknown';
       if (child.pid) {
-        if (process.platform === 'win32') {
-          // /T terminates the child tree while its parent still exists. A successful taskkill
-          // receipt alone is not independent proof every descendant exited.
-          const killer = spawn(
-            path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'),
-            ['/PID', String(child.pid), '/T', '/F'],
-            { windowsHide: true, env: minimalEnvironment(), stdio: 'ignore' },
-          );
-          killer.on('error', () => {});
-        } else {
-          try {
-            process.kill(-child.pid, 'SIGKILL');
-          } catch {
-            /* disappearance is checked after close */
-          }
+        try {
+          process.kill(-child.pid, 'SIGKILL');
+        } catch {
+          /* disappearance is checked after close */
         }
       }
       killTimer = setTimeout(() => finish(null), 4000);
