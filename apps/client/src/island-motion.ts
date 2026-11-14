@@ -1,3 +1,5 @@
+import { FACILITY_OBSTACLES } from './island-facilities';
+
 export type GroundPoint = [number, number];
 export const ISLAND_RADIUS = 9;
 export const PROMENADE_RADIUS = 7.1;
@@ -26,7 +28,7 @@ const obstacles: [number, number, number][] = [
   [4.2, -6.9, 0.6],
   [-7.9, -0.7, 0.5],
   [6.75, 5, 0.85],
-  [-2.4, 7.9, 0.65],
+  ...FACILITY_OBSTACLES,
 ];
 const distance = (a: GroundPoint, b: GroundPoint) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 export function isWalkable([x, z]: GroundPoint) {

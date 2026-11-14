@@ -7,16 +7,10 @@ import type { CharacterProfile } from '@astrisle/contracts';
 import { createBlueWhaleGirl } from './blue-whale-girl';
 import { characterModelCache, disposeCharacterClone } from './model-cache';
 import { configureModelTextureSampling, useSceneQuality } from '../render-quality';
-import { poseProceduralGait } from './procedural-gait';
-
-export interface CharacterMotion {
-  walking: boolean;
-  working: boolean;
-  carrying: boolean;
-  time: number;
-  phase?: number;
-  strength?: number;
-}
+import { poseProceduralGait, sampleGaitHand } from './procedural-gait';
+import { poseDefaultCharacter, teaSip, type CharacterMotion } from './character-pose';
+import { createTeaCup, disposeTeaCup, placeTeaCup } from './tea-cup';
+export type { CharacterMotion } from './character-pose';
 type Props = {
   profile: CharacterProfile;
   motionRef: RefObject<CharacterMotion>;
@@ -39,6 +33,9 @@ function DefaultCharacter({ profile, motionRef, reduced, accent }: Props) {
   const color =
     accent || (profile.id === 'mori' ? '#497a75' : profile.id === 'luma' ? '#818ba9' : '#ceb8a1');
   const model = useMemo(() => createBlueWhaleGirl({ accent: color }), [color]);
+  const cup = useMemo(createTeaCup, [model]);
+  const handPoint = useMemo(() => new THREE.Vector3(), []);
+  const hand = useMemo(() => model.joints.rightArm.getObjectByName('Right_hand')!, [model]);
   const retirement = useRef<
     { model: typeof model; timer: ReturnType<typeof setTimeout> } | undefined
   >(undefined);
@@ -58,50 +55,33 @@ function DefaultCharacter({ profile, motionRef, reduced, accent }: Props) {
       retirement.current = undefined;
     }
     model.joints.rightArm.add(parcel);
+    model.root.add(cup);
+    motionRef.current.leisureCapable = true;
     return () => {
       model.joints.rightArm.remove(parcel);
+      cup.removeFromParent();
+      motionRef.current.leisureCapable = false;
       const timer = setTimeout(() => {
         model.dispose();
+        disposeTeaCup(cup);
         parcel.geometry.dispose();
         parcel.material.dispose();
         if (retirement.current?.timer === timer) retirement.current = undefined;
       }, 0);
       retirement.current = { model, timer };
     };
-  }, [model, parcel]);
+  }, [model, parcel, cup, motionRef]);
   useFrame(() => {
-    const {
-      walking,
-      working,
-      carrying,
-      time: t,
-      phase = t * 7,
-      strength = walking ? 1 : 0,
-    } = motionRef.current;
-    const motion = reduced ? 0 : 1;
-    const joints = model.joints;
-    model.root.position.y =
-      (Math.sin(t * 1.7) * 0.007 + Math.abs(Math.sin(phase)) * 0.014 * strength) * motion;
-    joints.head.rotation.z = Math.sin(t * 0.7) * 0.035 * motion;
-    joints.hair.rotation.z = Math.sin(t * 0.9 + 0.8) * 0.018 * motion;
-    const swing = !reduced ? Math.sin(phase) * 0.3 * strength : 0;
-    joints.leftLeg.rotation.x = swing;
-    joints.rightLeg.rotation.x = -swing;
-    joints.leftArm.rotation.x = walking
-      ? -swing
-      : working
-        ? -0.65 + Math.sin(t * 5) * 0.07 * motion
-        : carrying
-          ? -0.65
-          : Math.sin(t * 0.9) * 0.05 * motion;
-    joints.rightArm.rotation.x = walking
-      ? swing
-      : working
-        ? -0.65 + Math.cos(t * 5) * 0.07 * motion
-        : carrying
-          ? -0.6
-          : Math.sin(t * 0.9 + 1) * 0.05 * motion;
-    parcel.visible = carrying;
+    poseDefaultCharacter(model, motionRef.current, reduced);
+    const { leisure, carrying } = motionRef.current;
+    parcel.visible = carrying && !leisure;
+    cup.visible = !reduced && leisure?.activity === 'tea' && leisure.blend > 0.45;
+    if (cup.visible) {
+      model.root.updateWorldMatrix(true, true);
+      hand.getWorldPosition(handPoint);
+      model.root.worldToLocal(handPoint);
+      placeTeaCup(cup, handPoint, -1, teaSip(leisure?.time ?? 0));
+    }
   });
   return <primitive object={model.root} dispose={null} />;
 }
@@ -115,7 +95,10 @@ function ImportedCharacter({ profile, motionRef, reduced }: Props) {
   const [error, setError] = useState('');
   const mixer = useRef<THREE.AnimationMixer | undefined>(undefined);
   const active = useRef<THREE.AnimationAction | undefined>(undefined);
+  const heldCup = useRef<THREE.Group | undefined>(undefined);
+  const handPoint = useMemo(() => new THREE.Vector3(), []);
   useEffect(() => {
+    motionRef.current.leisureCapable = false;
     let alive = true;
     let instance: THREE.Group | undefined;
     const lease = characterModelCache.acquire(assetId);
@@ -138,9 +121,26 @@ function ImportedCharacter({ profile, motionRef, reduced }: Props) {
       }
       mixer.current = undefined;
       active.current = undefined;
+      motionRef.current.leisureCapable = false;
       lease.release();
     };
   }, [assetId, profile.rotationY]);
+  useEffect(() => {
+    const capable =
+      !!loaded?.root.userData.proceduralGait && sampleGaitHand(loaded.root, handPoint);
+    motionRef.current.leisureCapable = capable;
+    if (!capable || !loaded) return;
+    const body = loaded.root.getObjectByName('Imported_character_normalized');
+    if (!body) return;
+    const cup = createTeaCup();
+    body.add(cup);
+    heldCup.current = cup;
+    return () => {
+      disposeTeaCup(cup);
+      heldCup.current = undefined;
+      motionRef.current.leisureCapable = false;
+    };
+  }, [loaded, motionRef, handPoint]);
   useLayoutEffect(() => {
     if (
       loaded &&
@@ -151,13 +151,21 @@ function ImportedCharacter({ profile, motionRef, reduced }: Props) {
   useFrame((_state, delta) => {
     if (!loaded) return;
     if (loaded.root.userData.proceduralGait) {
-      const { phase = 0, strength = 0, time, working } = motionRef.current;
+      const { phase = 0, strength = 0, time, working, leisure } = motionRef.current;
       poseProceduralGait(loaded.root, {
         phase,
         strength: reduced ? 0 : strength,
         time: reduced ? 0 : time,
         working: !reduced && working,
+        leisure: reduced ? undefined : leisure,
       });
+      if (heldCup.current) {
+        heldCup.current.visible = !reduced && leisure?.activity === 'tea' && leisure.blend > 0.45;
+        if (heldCup.current.visible) {
+          heldCup.current.visible = sampleGaitHand(loaded.root, handPoint);
+          placeTeaCup(heldCup.current, handPoint, 1, teaSip(leisure?.time ?? 0));
+        }
+      }
       return;
     }
     if (!mixer.current) return;

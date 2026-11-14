@@ -183,6 +183,13 @@ export function App() {
   const [reduced, setReduced] = useState(
     () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || false,
   );
+  useEffect(() => {
+    const preference = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+    if (!preference) return;
+    const changed = (event: MediaQueryListEvent) => setReduced(event.matches);
+    preference.addEventListener('change', changed);
+    return () => preference.removeEventListener('change', changed);
+  }, []);
   const refresh = useCallback(async () => {
     if (!host) return;
     const next = await host.bootstrap();
@@ -462,7 +469,7 @@ export function App() {
                     '蓝色大肥鱼娘 · Q 版鲸鱼伙伴'
                   : snapshot
                     ? '查看任务、检查成果，或回复伙伴的问题。'
-                    : `${characterName('mori')} 和 ${characterName('luma')} 正在岛上散步。新建委托即可开始工作。`}
+                    : `${characterName('mori')} 和 ${characterName('luma')} 正在岛上自由活动。新建委托即可开始工作。`}
             </p>
           </div>
           {snapshot && (
@@ -540,15 +547,19 @@ export function App() {
             </div>
           </div>
         )}
-        {(overview || characterFocus) && (
-          <div className="scene-caption">
+        {(overview || !flat) && (
+          <div
+            className={`scene-caption${!overview && !flat && !characterFocus ? ' camera-hint' : ''}`}
+          >
             <span className="caption-line" />
             <span>
               {overview
                 ? `${bootstrap?.workspaces.length || 0} 座持久岛屿 · 每座对应一个项目`
                 : characterFocus && !flat
                   ? `${characterName(characterFocus)} · 拖动旋转，滚轮缩放`
-                  : '宇宙中的悬浮星岛'}
+                  : fixed
+                    ? '镜头已固定'
+                    : '拖动环绕 · 右键平移 · 滚轮缩放 / 单指环绕 · 双指平移缩放'}
             </span>
           </div>
         )}

@@ -9,8 +9,8 @@ import {
   useState,
 } from 'react';
 import type { ReactNode, RefObject } from 'react';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Html, OrbitControls } from '@react-three/drei';
+import { Canvas, useFrame } from '@react-three/fiber';
+import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { DEFAULT_CHARACTERS } from '@astrisle/contracts';
 import type { CharacterProfile, ProjectSnapshot, Task } from '@astrisle/contracts';
@@ -25,6 +25,16 @@ import { SceneQualityContext, useScenePixelRatio } from './render-quality';
 import type { SceneQuality } from './render-quality';
 import { advanceWalker, createWalker, STATION_POINTS } from './island-motion';
 import { Confetti } from './Confetti';
+import { IslandLeisure } from './IslandLeisure';
+import {
+  advanceLeisure,
+  createLeisure,
+  releaseLeisure,
+  swingAngle,
+  type LeisureWorld,
+} from './island-activities';
+import { FACILITIES, SWING_ROPE_LENGTH } from './island-facilities';
+import { CameraRig } from './StudioCamera';
 
 const c = {
   paper: '#e7eef0',
@@ -136,7 +146,7 @@ function Label({
 }) {
   const portal = useContext(LabelPortal);
   return (
-    <Html portal={portal} position={position} center distanceFactor={18} zIndexRange={[4, 0]}>
+    <Html portal={portal} position={position} center zIndexRange={[4, 0]}>
       <button className="scene-label" onClick={onClick}>
         {children}
       </button>
@@ -300,6 +310,7 @@ function Avatar({
   onClick,
   preview = false,
   profile,
+  life,
 }: {
   id: CharacterFocus;
   home: V3;
@@ -310,10 +321,24 @@ function Avatar({
   onClick?: () => void;
   preview?: boolean;
   profile?: CharacterProfile;
+  life: LeisureWorld;
 }) {
   const root = useRef<THREE.Group>(null);
+  const seatPivot = useRef<THREE.Group>(null);
+  const seatOffset = useRef<THREE.Group>(null);
+  const labelRoot = useRef<THREE.Group>(null);
   const activity = useSceneActivity();
   const walker = useRef(createWalker(id, [home[0], home[2]]));
+  const leisure = useMemo(() => createLeisure(id), [id]);
+  const [leisureLabel, setLeisureLabel] = useState('散步');
+  const label = useRef('散步');
+  useEffect(() => {
+    life.states.set(id, leisure);
+    return () => {
+      releaseLeisure(leisure, life.reservations);
+      life.states.delete(id);
+    };
+  }, [id, life, leisure]);
   const motion = useRef<CharacterMotion>({
     walking: false,
     working: false,
@@ -323,26 +348,88 @@ function Avatar({
   const character = profile ?? DEFAULT_CHARACTERS.find((entry) => entry.id === id)!;
   const target = intent && !intent.stationary ? anchors[intent.anchor] || home : home;
   const roaming = !preview && !intent && (!task || ['passed', 'cancelled'].includes(task.status));
-  useFrame(({ clock }, delta) => {
+  useFrame((_, delta) => {
     if (!root.current) return;
+    advanceLeisure(leisure, delta, {
+      position: walker.current.position,
+      idle: roaming,
+      reduced: reduced || preview,
+      active: activity,
+      capable: motion.current.leisureCapable ?? false,
+      reservations: life.reservations,
+    });
+    const facility = leisure.facility ? FACILITIES[leisure.facility] : undefined;
     const state = advanceWalker(walker.current, delta, {
-      roaming,
-      target: [target[0], target[2]],
+      roaming: roaming && !facility,
+      target: facility?.approach ?? [target[0], target[2]],
       reduced,
       active: activity,
       preview,
     });
-    root.current.position.set(state.position[0], home[1], state.position[1]);
-    const walking = state.speed > 0.025 && !reduced && activity;
+    const weight = leisure.blend;
+    const angle = swingAngle(leisure);
+    const sway = -SWING_ROPE_LENGTH * Math.sin(angle);
+    const lift = SWING_ROPE_LENGTH * (1 - Math.cos(angle));
+    root.current.position.set(
+      THREE.MathUtils.lerp(state.position[0], facility?.position[0] ?? state.position[0], weight) +
+        Math.sin(facility?.yaw ?? 0) * sway,
+      home[1] + lift,
+      THREE.MathUtils.lerp(state.position[1], facility?.position[1] ?? state.position[1], weight) +
+        Math.cos(facility?.yaw ?? 0) * sway,
+    );
+    const walking = state.speed > 0.025 && !reduced && activity && weight === 0;
     const working = task?.status === 'running' && !/model|response|等待/i.test(task.step);
     motion.current.walking = walking;
     motion.current.working = working;
     motion.current.carrying = !!intent;
-    motion.current.time = clock.elapsedTime + (id === 'mori' ? 0 : id === 'luma' ? 2.4 : 4.8);
+    if (activity && !reduced) motion.current.time += Math.min(Math.max(delta, 0), 0.05);
     motion.current.phase = state.phase;
     motion.current.strength = state.strength;
-    root.current.rotation.y = preview ? 0 : state.yaw;
-  });
+    motion.current.leisure =
+      facility && weight > 0
+        ? {
+            activity: facility.activity,
+            blend: weight,
+            time: leisure.time,
+            seatHeight: facility.seatHeight,
+          }
+        : undefined;
+    const turn = facility
+      ? Math.atan2(Math.sin(facility.yaw - state.yaw), Math.cos(facility.yaw - state.yaw))
+      : 0;
+    root.current.rotation.y = preview ? 0 : state.yaw + turn * weight;
+    if (seatPivot.current && seatOffset.current) {
+      seatPivot.current.position.y = (facility?.seatHeight ?? 0) * weight;
+      seatPivot.current.rotation.x = angle;
+      seatOffset.current.position.y = -seatPivot.current.position.y;
+    }
+    if (labelRoot.current)
+      labelRoot.current.position.y =
+        2.12 + Math.max(0, (facility?.seatHeight ?? 0) - 0.18) * weight;
+    root.current.userData.activity = facility?.activity ?? 'walk';
+    root.current.userData.activityStage = leisure.stage;
+    root.current.userData.activityBlend = weight;
+    const description =
+      leisure.stage === 'approaching'
+        ? `走向${facility!.name}`
+        : leisure.stage === 'settling'
+          ? '坐下休息'
+          : leisure.stage === 'leaving'
+            ? '起身'
+            : leisure.stage === 'enjoying'
+              ? facility!.activity === 'tea'
+                ? '喝茶'
+                : facility!.activity === 'swing'
+                  ? '荡秋千'
+                  : '小憩'
+              : reduced
+                ? '空闲'
+                : '散步';
+    if (label.current !== description) {
+      label.current = description;
+      setLeisureLabel(description);
+    }
+  }, -1);
   return (
     <group
       ref={root}
@@ -353,67 +440,36 @@ function Avatar({
         onClick?.();
       }}
     >
-      <CharacterVisual profile={character} motionRef={motion} reduced={reduced} accent={color} />
+      <group ref={seatPivot}>
+        <group ref={seatOffset}>
+          <CharacterVisual
+            profile={character}
+            motionRef={motion}
+            reduced={reduced}
+            accent={color}
+          />
+        </group>
+      </group>
       <GroundShadow />
       {!preview && id !== 'user' && (
-        <Label position={[0, 2.12, 0]} onClick={onClick}>
-          <b>{character.displayName}</b>
-          <span>
-            {task
-              ? task.status === 'running'
-                ? '工作中'
-                : task.status === 'waiting_input'
-                  ? '等待输入'
-                  : task.status === 'waiting_approval'
-                    ? '等待审批'
-                    : '待命'
-              : reduced
-                ? '空闲'
-                : '散步'}
-          </span>
-        </Label>
+        <group ref={labelRoot} position={[0, 2.12, 0]}>
+          <Label position={[0, 0, 0]} onClick={onClick}>
+            <b>{character.displayName}</b>
+            <span>
+              {task
+                ? task.status === 'running'
+                  ? '工作中'
+                  : task.status === 'waiting_input'
+                    ? '等待输入'
+                    : task.status === 'waiting_approval'
+                      ? '等待审批'
+                      : '待命'
+                : leisureLabel}
+            </span>
+          </Label>
+        </group>
       )}
     </group>
-  );
-}
-function CameraRig({
-  reset,
-  fixed,
-  focus,
-}: {
-  reset: number;
-  fixed: boolean;
-  focus?: CharacterFocus;
-}) {
-  const { camera, size } = useThree();
-  const controls = useRef<any>(null);
-  useEffect(() => {
-    const fit = Math.max(1, 1.05 / (size.width / size.height));
-    const target = focus
-      ? new THREE.Vector3(homes[focus][0], 0.95, homes[focus][2])
-      : new THREE.Vector3(0, 0.35, 0);
-    if (focus) camera.position.set(target.x, target.y + 0.12, target.z + 4.05 * Math.sqrt(fit));
-    else camera.position.set(13.5 * fit, 13.5 * fit, 20.3 * fit);
-    camera.lookAt(target);
-    if (controls.current) {
-      controls.current.target.copy(target);
-      controls.current.update();
-    }
-  }, [reset, focus, camera, size.width, size.height]);
-  return (
-    <OrbitControls
-      ref={controls}
-      makeDefault
-      enablePan={false}
-      enableRotate={!fixed}
-      minDistance={focus ? 2.3 : 12}
-      maxDistance={focus ? 9 : 70}
-      minPolarAngle={focus ? 0.2 : 0.48}
-      maxPolarAngle={focus ? 1.65 : 1.2}
-      minAzimuthAngle={focus ? -Infinity : -0.75}
-      maxAzimuthAngle={focus ? Infinity : 0.9}
-      target={[0, 0.35, 0]}
-    />
   );
 }
 function World({
@@ -438,6 +494,10 @@ function World({
   celebration?: number | null;
 }) {
   const director = useRef(emptyDirector());
+  const life = useMemo<LeisureWorld>(
+    () => ({ states: new Map(), reservations: new Map() }),
+    [workspaceId],
+  );
   const [intents, setIntents] = useState<SceneIntent[]>([]);
   useEffect(() => {
     if (snapshot) {
@@ -483,6 +543,7 @@ function World({
           key={focus}
           id={focus}
           profile={profileFor(focus)}
+          life={life}
           home={home}
           color={focus === 'mori' ? '#497a75' : focus === 'luma' ? '#818ba9' : '#ceb8a1'}
           reduced={reduced}
@@ -504,6 +565,7 @@ function World({
       <directionalLight position={[6, 3, -8]} intensity={1.1} color="#98a9ed" />
       <CameraRig reset={reset} fixed={fixed} focus={focus} />
       <IslandLandscape workspaceId={workspaceId} reduced={reduced} />
+      <IslandLeisure life={life} />
       {celebration != null && !reduced && <Confetti key={celebration} burst={celebration} />}
       <group position={[0, -0.38, 0]}>
         <mesh receiveShadow>
@@ -622,6 +684,7 @@ function World({
       </group>
       <Avatar
         id="mori"
+        life={life}
         profile={profileFor('mori')}
         home={homes.mori}
         color="#497a75"
@@ -634,6 +697,7 @@ function World({
       />
       <Avatar
         id="luma"
+        life={life}
         profile={profileFor('luma')}
         home={homes.luma}
         color="#818ba9"
@@ -646,6 +710,7 @@ function World({
       />
       <Avatar
         id="user"
+        life={life}
         profile={profileFor('user')}
         home={homes.user}
         color="#ceb8a1"
@@ -704,7 +769,7 @@ export function StudioScene(props: {
           <SceneQualityContext.Provider value={quality}>
             <LabelPortal.Provider value={portal}>
               <Suspense fallback={null}>
-                <World {...props} />
+                <World key={props.workspaceId} {...props} />
               </Suspense>
             </LabelPortal.Provider>
           </SceneQualityContext.Provider>
