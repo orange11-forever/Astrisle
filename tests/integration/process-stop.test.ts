@@ -13,6 +13,52 @@ const windows = it.skipIf(process.platform !== 'win32');
 const roots: string[] = [];
 const hosts: ChildProcess[] = [];
 const tree = resolve('tests/fixtures/process-tree.cjs');
+windows.each([false, true])(
+  'rejects an inconsistent confirmed receipt with no exit code (cancel=%s)',
+  async (cancel) => {
+    const cwd = await fixture(),
+      stub = join(cwd, 'inconsistent-receipt.cjs'),
+      controller = new AbortController();
+    const stream =
+      [
+        { version: 1, type: 'started', pid: 5 },
+        {
+          version: 1,
+          type: 'receipt',
+          pid: 5,
+          confirmed: true,
+          activeProcesses: 0,
+          exitCode: null,
+          reason: null,
+        },
+      ]
+        .map((message) => JSON.stringify(message))
+        .join('\n') + '\n';
+    await writeFile(
+      stub,
+      `require('fs').writeFileSync(${JSON.stringify(join(cwd, 'stub-ran'))},'ran');process.stdout.write(${JSON.stringify(stream)},()=>process.exit(0));`,
+    );
+    const pending = runWindowsProcess(
+      process.execPath,
+      [],
+      {
+        cwd,
+        signal: controller.signal,
+        timeoutMs: 5000,
+        supervisorPath: process.execPath,
+      },
+      { ...minimalEnvironment(), NODE_OPTIONS: `--require="${stub.replaceAll('\\', '/')}"` },
+    );
+    if (cancel) controller.abort();
+    const receipt = await pending;
+    expect(await readFile(join(cwd, 'stub-ran'), 'utf8')).toBe('ran');
+    expect(receipt.termination?.rootPid, receipt.output).toBe(5);
+    expect(receipt).toMatchObject({
+      stopStatus: 'outcome_unknown',
+      termination: { confirmed: false },
+    });
+  },
+);
 const wait = (ms: number) => new Promise((done) => setTimeout(done, ms));
 async function fixture() {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'astrisle-job-')));
@@ -163,7 +209,7 @@ windows.each([
       timeoutMs: 5000,
       supervisorPath: process.execPath,
     },
-    { ...minimalEnvironment(), NODE_OPTIONS: `--require="${stub}"` },
+    { ...minimalEnvironment(), NODE_OPTIONS: `--require="${stub.replaceAll('\\', '/')}"` },
   );
   expect(receipt).toMatchObject({
     stopStatus: 'outcome_unknown',

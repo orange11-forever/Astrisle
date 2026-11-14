@@ -19,7 +19,7 @@ Astrisle 是一个面向 Windows 的多 Agent 桌面工作台。目标是让伙�
 
 **当前状态：第六阶段开发预览。** 在运行时独占保护、调用代次校验和关闭等待的基础上，增加 Windows 进程树监督、停止确认与持久化回执；尚未完成完整 v0.1 验收，也未用真实供应商凭据验收开放式项目任务。
 
-第二至第五阶段已由 [PR #2：任务续跑、运行时保护与星岛角色配置](https://github.com/orange11-forever/Astrisle/pull/2) 合并。第六阶段在本地功能分支验证，覆盖 158 项 JS、10 项 Office 和 11 项桌面/UI 测试；范围与剩余限制见[最新开发记录](docs/development/stage-6.md)。
+第二至第五阶段已由 [PR #2：任务续跑、运行时保护与星岛角色配置](https://github.com/orange11-forever/Astrisle/pull/2) 合并。第六阶段在本地功能分支验证，覆盖 160 项 JS、10 项 Office 和 11 项桌面/UI 测试；范围与剩余限制见[最新开发记录](docs/development/stage-6.md)。
 
 ![宇宙中的悬浮工作室，使用默认角色的开发预览](docs/development/screenshots/studio-preview.png)
 

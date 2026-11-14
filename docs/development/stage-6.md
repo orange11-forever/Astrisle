@@ -18,15 +18,17 @@
 
 | 检查 | 结果 |
 |---|---|
-| `pnpm.cmd test` | 22 文件、158 项通过 |
+| `pnpm.cmd test` | 22 文件、160 项通过 |
 | `pnpm.cmd test:office` | 10 项通过 |
 | `pnpm.cmd build` | 类型、前端和桌面构建通过；生成 Windows helper |
 | `pnpm.cmd test:ui` | 11 项真实 Electron/Edge 回归通过 |
 | `pnpm.cmd typecheck`、`format:check`、`git diff --check` | 通过 |
 
-共 179 项自动化测试。真实进程测试覆盖三代后代、detached、父进程先退出、取消、超时、输出超限、阻塞 stdin、监督程序强杀、Node 宿主强杀、Unicode/空参数/引号/工作目录/输入、最小环境与脱敏。协议异常使用监督边界替身；运行时测试使用脚本化 HTTP 模型，真实进程和真实 SQLite。没有真实供应商验收。
+共 181 项自动化测试。真实进程测试覆盖三代后代、detached、父进程先退出、取消、超时、输出超限、阻塞 stdin、监督程序强杀、Node 宿主强杀、Unicode/空参数/引号/工作目录/输入、最小环境与脱敏。协议异常使用监督边界替身；运行时测试使用脚本化 HTTP 模型，真实进程和真实 SQLite。没有真实供应商验收。
 
-实现检查点：`bf49b44`、`91bb270`。独立审查结果在收尾时补充。构建仍有既有的大 chunk 提示和 Node SQLite experimental 提示。
+实现检查点：`bf49b44`、`91bb270`。独立审查发现 1 项 Important：缺少退出码的矛盾回执可能被确认为停止；用普通/取消两种故障注入测试复现后修复，确认结果必须携带合法 Windows 退出码。纠正了故障注入夹具中的 Windows 路径转义，并在协议故障时等待 helper 关闭（有界兜底），避免提前返回仍占用目录。修复后全套 JS 160 项通过，无遗留审查 Minor。
+
+审查明确保留的范围：恶意程序或外部服务代理逃逸不属于可信宿主保证；调用者按既有契约提供绝对可执行路径；非 Windows 和签名发行仍另行验收。构建仍有既有的大 chunk 提示和 Node SQLite experimental 提示。
 
 ## 边界与后续
 

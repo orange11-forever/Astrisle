@@ -64,11 +64,18 @@ export function runWindowsProcess(
       });
     };
     const forceUnknown = () => {
+      if (settled) return;
       failed = true;
       // Closing the supervisor's last job handle stops members, but is not a receipt.
       helper.kill();
-      helper.unref();
-      finish(null);
+      if (settled) return;
+      clearTimeout(drainTimer);
+      // Normally close arrives promptly. Do not return while a terminated helper still
+      // holds the working directory; retain a bounded unknown fallback if it cannot exit.
+      drainTimer = setTimeout(() => {
+        helper.unref();
+        finish(null);
+      }, 1000);
     };
     const stop = (why: string) => {
       if (settled || reason) return;
@@ -116,7 +123,12 @@ export function runWindowsProcess(
             typeof message.confirmed === 'boolean' &&
             Number.isSafeInteger(message.activeProcesses) &&
             message.activeProcesses >= 0 &&
-            (message.exitCode === null || Number.isSafeInteger(message.exitCode)) &&
+            (message.confirmed
+              ? message.activeProcesses === 0 &&
+                Number.isSafeInteger(message.exitCode) &&
+                message.exitCode >= 0 &&
+                message.exitCode <= 0xffffffff
+              : message.exitCode === null) &&
             (message.reason === null ||
               ['aborted', 'timeout', 'output_limit'].includes(message.reason))
           ) {
