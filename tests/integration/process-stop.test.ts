@@ -1,13 +1,17 @@
 import { afterEach, expect, it } from 'vitest';
-import { execFile } from 'node:child_process';
+import { build } from 'esbuild';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import { once } from 'node:events';
 import { promisify } from 'node:util';
-import { mkdtemp, realpath, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, realpath, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { runProcess } from '../../packages/executor/src/process';
+import { minimalEnvironment, runProcess } from '../../packages/executor/src/process';
+import { runWindowsProcess } from '../../packages/executor/src/windows-process';
 
 const windows = it.skipIf(process.platform !== 'win32');
 const roots: string[] = [];
+const hosts: ChildProcess[] = [];
 const tree = resolve('tests/fixtures/process-tree.cjs');
 const wait = (ms: number) => new Promise((done) => setTimeout(done, ms));
 async function fixture() {
@@ -52,6 +56,13 @@ async function expectTreeStopped(root: string) {
   expect(await readFile(join(root, 'heartbeat'), 'utf8')).toBe(before);
 }
 afterEach(async () => {
+  for (const host of hosts.splice(0)) {
+    if (host.exitCode === null && host.signalCode === null) {
+      const exited = once(host, 'exit');
+      host.kill('SIGKILL');
+      await exited;
+    }
+  }
   for (const root of roots.splice(0)) {
     for (const pid of await pids(root)) {
       if (alive(pid))
@@ -61,6 +72,103 @@ afterEach(async () => {
     }
     await rm(root, { recursive: true, force: true });
   }
+});
+async function waitForTreeStop(root: string) {
+  for (let attempt = 0; attempt < 250; attempt++) {
+    if (!(await pids(root)).some(alive)) return;
+    await wait(20);
+  }
+  throw new Error('Process tree remained alive');
+}
+windows(
+  'kills the job if the supervisor crashes but keeps its missing receipt unknown',
+  async () => {
+    const cwd = await fixture();
+    const pending = runProcess(process.execPath, [tree, 'parent', cwd], {
+      cwd,
+      signal: new AbortController().signal,
+      timeoutMs: 10000,
+    });
+    await ready(cwd);
+    process.kill(Number(await readFile(join(cwd, 'supervisor.pid'), 'utf8')), 'SIGKILL');
+    const receipt = await pending;
+    expect(receipt).toMatchObject({
+      stopStatus: 'outcome_unknown',
+      termination: { confirmed: false },
+    });
+    await waitForTreeStop(cwd);
+    await expectTreeStopped(cwd);
+  },
+);
+windows('stops the job when its owning Node runtime dies and closes the control pipe', async () => {
+  const cwd = await fixture(),
+    hostFile = join(cwd, 'host.mjs');
+  await build({
+    entryPoints: ['tests/fixtures/process-supervisor-host.ts'],
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node22',
+    outfile: hostFile,
+    logLevel: 'silent',
+  });
+  const host = spawn(
+    process.execPath,
+    [hostFile, cwd, tree, resolve('dist/helpers/process-supervisor.exe')],
+    { windowsHide: true, stdio: 'ignore' },
+  );
+  hosts.push(host);
+  await ready(cwd);
+  const exited = once(host, 'exit');
+  host.kill('SIGKILL');
+  await exited;
+  await waitForTreeStop(cwd);
+  await expectTreeStopped(cwd);
+  await expect(stat(join(cwd, 'host-receipt.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+});
+windows.each([
+  '',
+  'not json\n',
+  JSON.stringify({
+    version: 1,
+    type: 'receipt',
+    pid: 5,
+    confirmed: true,
+    activeProcesses: 0,
+    exitCode: 0,
+    reason: null,
+  }) + '\n',
+  JSON.stringify({ version: 1, type: 'started', pid: 5 }) +
+    '\n' +
+    JSON.stringify({
+      version: 1,
+      type: 'receipt',
+      pid: 6,
+      confirmed: true,
+      activeProcesses: 0,
+      exitCode: 0,
+      reason: null,
+    }) +
+    '\n',
+])('does not trust a missing or invalid supervisor stream (%#)', async (stream) => {
+  const cwd = await fixture(),
+    stub = join(cwd, 'protocol-stub.cjs');
+  await writeFile(stub, `process.stdout.write(${JSON.stringify(stream)},()=>process.exit(0));`);
+  const receipt = await runWindowsProcess(
+    process.execPath,
+    [],
+    {
+      cwd,
+      signal: new AbortController().signal,
+      timeoutMs: 5000,
+      supervisorPath: process.execPath,
+    },
+    { ...minimalEnvironment(), NODE_OPTIONS: `--require="${stub}"` },
+  );
+  expect(receipt).toMatchObject({
+    stopStatus: 'outcome_unknown',
+    termination: { confirmed: false },
+  });
 });
 windows(
   'confirms zero active job processes after cancelling a real detached three-generation tree',
@@ -101,6 +209,55 @@ windows('cleans up descendants even when the original process exits successfully
     confirmed: true,
   });
   await expectTreeStopped(cwd);
+});
+windows(
+  'can cancel a process tree even while the target never consumes its piped input',
+  async () => {
+    const cwd = await fixture(),
+      controller = new AbortController();
+    const pending = runProcess(process.execPath, [tree, 'parent', cwd], {
+      cwd,
+      signal: controller.signal,
+      timeoutMs: 10000,
+      input: 'x'.repeat(512 * 1024),
+    });
+    await ready(cwd);
+    controller.abort();
+    expect(await pending).toMatchObject({
+      reason: 'aborted',
+      stopStatus: 'stopped',
+      termination: { confirmed: true, activeProcesses: 0 },
+    });
+    await expectTreeStopped(cwd);
+  },
+);
+windows('treats receipt-shaped target output as data instead of termination evidence', async () => {
+  const cwd = await fixture();
+  const text = JSON.stringify({
+    version: 1,
+    type: 'receipt',
+    pid: 5,
+    confirmed: true,
+    activeProcesses: 0,
+    exitCode: 0,
+    reason: null,
+  });
+  const receipt = await runProcess(
+    process.execPath,
+    ['-e', `console.log(${JSON.stringify(text)});setInterval(()=>{},1000)`],
+    {
+      cwd,
+      signal: new AbortController().signal,
+      timeoutMs: 1500,
+    },
+  );
+  expect(receipt).toMatchObject({
+    reason: 'timeout',
+    stopStatus: 'stopped',
+    termination: { confirmed: true },
+  });
+  expect(receipt.output).toContain(text);
+  expect(receipt.termination?.rootPid).not.toBe(5);
 });
 windows.each(['timeout', 'output_limit'] as const)(
   'confirms tree termination on %s',

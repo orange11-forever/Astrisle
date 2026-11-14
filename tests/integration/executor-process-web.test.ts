@@ -31,6 +31,15 @@ async function fixture() {
   };
   return { context, executor: createExecutor({ projectRoot: process.cwd() }) };
 }
+it.skipIf(process.platform !== 'win32')(
+  'does not advertise process or Office capability without the Windows supervisor',
+  async () => {
+    const { context } = await fixture();
+    const capabilities = await createExecutor({ projectRoot: context.workPath }).capabilities();
+    expect(capabilities.find((c) => c.id === 'process')?.available).toBe(false);
+    expect(capabilities.find((c) => c.id === 'office')?.available).toBe(false);
+  },
+);
 it('executes a real host process with minimal environment and redacted output', async () => {
   const { context, executor } = await fixture();
   process.env.ASTRISLE_TEST_SECRET = 'should-not-be-inherited';

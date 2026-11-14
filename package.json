@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node scripts/build-process-supervisor.mjs && vitest run",
     "test:ui": "playwright test",
-    "test:office": ".venv/Scripts/python.exe -m pytest workers/office/tests -q --basetemp=workers/office/.test-tmp",
+    "test:office": "node scripts/test-office.mjs",
     "format": "prettier --write apps packages scripts tests *.ts *.json",
     "format:check": "prettier --check apps packages scripts tests *.ts *.json"
   },

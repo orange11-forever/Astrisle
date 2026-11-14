@@ -66,9 +66,9 @@
 - Existing runtime `StoredCall.result` and tool evidence retain the complete `metadata.termination` receipt.
 - Office stopped results propagate the same termination evidence and distinguish aborted, timeout and output-limit reasons.
 
-- [ ] Write and run failing tests for supervisor loss, owner-process death, real runtime cancel-to-persisted-receipt, and Office receipt propagation. Missing receipts must remain unknown after restart, without dispatch.
-- [ ] Implement only necessary integration changes. Keep existing unknown-outcome reconciliation and generation checks.
-- [ ] Run the focused executor/runtime/Office integration tests, then the full JS suite; commit.
+- [x] Exercise supervisor loss, owner-process death, malformed receipts and real runtime cancel-to-persisted-receipt. Office evidence/capability gaps first failed 3 tests; invalid Office exit/response handling failed another 3 tests. Unknown outcomes survive restart and block dispatch.
+- [x] Preserve Office termination evidence and reject nonzero exits or malformed responses. Keep existing unknown-outcome reconciliation and generation checks unchanged.
+- [x] Run the focused executor/runtime/Office integration tests, full JS suite and blocked-input/forged-output cases; commit. Final counts are recorded in `docs/development/stage-6.md`.
 
 ## Task 3: Delivery verification and handoff
 

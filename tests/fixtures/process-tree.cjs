@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const [role, root, mode = 'hold'] = process.argv.slice(2);
 fs.writeFileSync(path.join(root, `${role}.pid`), String(process.pid));
+if (role === 'parent') fs.writeFileSync(path.join(root, 'supervisor.pid'), String(process.ppid));
 if (role !== 'grandchild') {
   const child = spawn(
     process.execPath,
