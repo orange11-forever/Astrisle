@@ -119,12 +119,14 @@ Windows 下，进程工具和 Office worker 从创建时就属于受监督的 Jo
 ```powershell
 pnpm.cmd typecheck
 pnpm.cmd test
-.venv\Scripts\python.exe -m pytest workers\office\tests -q --basetemp=workers\office\.test-tmp
+pnpm.cmd test:office
 pnpm.cmd build
 pnpm.cmd test:ui
 ```
 
-UI 测试当前使用 Microsoft Edge；桌面测试使用真实 Electron 和独立测试数据，验证工作区、预算、角色配置、模型副本的持久化及渲染进程权限。测试结果见[第一阶段](docs/development/stage-1.md)、[第二阶段](docs/development/stage-2.md)、[第三阶段](docs/development/stage-3.md)、[第四阶段](docs/development/stage-4.md)和[第五阶段记录](docs/development/stage-5.md)。
+UI 测试当前使用 Microsoft Edge；桌面测试使用真实 Electron 和独立测试数据，验证工作区、预算、角色配置、模型副本的持久化及渲染进程权限。新增场景测试覆盖实际散步、任务打断、特写切换和验收礼炮；执行器测试使用真实子进程和 SQLite 核对停止回执与重启行为。
+
+最近的验证范围、审查修复与边界见[第六阶段](docs/development/stage-6.md)和[第七阶段](docs/development/stage-7.md)。历史记录：[第一阶段](docs/development/stage-1.md)、[第二阶段](docs/development/stage-2.md)、[第三阶段](docs/development/stage-3.md)、[第四阶段](docs/development/stage-4.md)、[第五阶段](docs/development/stage-5.md)。
 
 运行时集成测试使用本地脚本化 HTTP 模型替身，文件和数据库操作是真实的。这类测试验证协议与状态转换，不能替代真实模型能力验收。
 
@@ -153,6 +155,7 @@ packages/artifacts/   不可变产物与哈希核验
 packages/executor/    文件、进程、网络和办公工具
 packages/workspace/   副本、基线、整合与导出
 workers/office/       Python 文档、表格和演示稿处理
+workers/process/      Windows Job Object 进程监督辅助程序
 tests/                集成与桌面端到端测试
 docs/                 产品设计、概念图、计划和阶段记录
 ```
@@ -163,6 +166,8 @@ docs/                 产品设计、概念图、计划和阶段记录
 - [总体规划与系统设计](docs/superpowers/specs/2026-11-11-astrisle-system-design.md)
 - [场景与角色动作设计](docs/superpowers/specs/2026-11-11-astrisle-spatial-design.md)
 - [完整 v0.1 开发计划](docs/superpowers/plans/2026-11-11-astrisle-v0.1.md)
+- [Windows 进程监督计划](docs/superpowers/plans/2026-11-14-process-supervision.md)
+- [岛屿散步与角色动作设计](docs/superpowers/specs/2026-11-14-island-life-design.md)
 - [概念图生成说明](docs/concepts/astrisle-star-island-prompt.md)
 - [鲸鱼角色参考、署名与使用条件](docs/concepts/blue-whale-girl-references.md)：角色视觉资产保留上游 CC BY-NC-SA 4.0 的署名、非商业与相同方式共享条件，具体范围见该文档。
 - [最新阶段与下次交接](docs/development/stage-7.md)
