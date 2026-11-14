@@ -89,7 +89,14 @@ function prepare(gltf: GLTF): SharedCharacterModel {
         if (!templates.has(angle))
           templates.set(angle, createProceduralGaitTemplate(model.instantiate(), angle));
         const template = templates.get(angle);
-        if (template) return clone(template) as THREE.Group;
+        if (template) {
+          const instance = clone(template) as THREE.Group;
+          // Object3D cloning does not copy instance method overrides.
+          instance.traverse((object) => {
+            if (object instanceof THREE.Mesh) object.raycast = () => {};
+          });
+          return instance;
+        }
       }
       // SkeletonUtils gives each avatar independent bones while sharing geometry and textures.
       const scene = clone(gltf.scene);

@@ -23,7 +23,7 @@ import { CosmicBackdrop } from './CosmicBackdrop';
 import { SceneFrameBudget, useSceneActivity } from './render-budget';
 import { SceneQualityContext, useScenePixelRatio } from './render-quality';
 import type { SceneQuality } from './render-quality';
-import { advanceWalker, createWalker } from './island-motion';
+import { advanceWalker, createWalker, STATION_POINTS } from './island-motion';
 import { Confetti } from './Confetti';
 
 const c = {
@@ -273,12 +273,9 @@ function StarTable({ active, onClick }: { active: boolean; onClick: () => void }
     </group>
   );
 }
-const anchors: Record<string, V3> = {
-  table: [-1.65, 0, 1.4],
-  compare: [1.8, 0, -2.5],
-  dock: [2.5, 0, 2.7],
-  mail: [-3.0, 0, 3.0],
-};
+const anchors: Record<string, V3> = Object.fromEntries(
+  Object.entries(STATION_POINTS).map(([name, [x, z]]) => [name, [x, 0, z] as V3]),
+);
 /** One tiny draw instead of rendering the whole island into a shadow framebuffer. */
 function GroundShadow() {
   return (
@@ -483,6 +480,7 @@ function World({
         />
         <CameraRig reset={reset} fixed={fixed} focus={focus} />
         <Avatar
+          key={focus}
           id={focus}
           profile={profileFor(focus)}
           home={home}

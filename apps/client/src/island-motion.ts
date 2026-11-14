@@ -1,6 +1,12 @@
 export type GroundPoint = [number, number];
 export const ISLAND_RADIUS = 9;
 export const PROMENADE_RADIUS = 7.1;
+export const STATION_POINTS: Record<string, GroundPoint> = {
+  table: [-1.65, 1.4],
+  compare: [0, -5.3],
+  dock: [2.5, 2.7],
+  mail: [-3, 3],
+};
 // Furniture footprints, expanded by a companion's clearance in isWalkable.
 const obstacles: [number, number, number][] = [
   [0, -0.65, 1.72],
@@ -133,7 +139,11 @@ export function advanceWalker(
   if (options.active === false || options.preview || options.reduced) {
     state.speed = 0;
     state.strength = 0;
-    if (options.reduced && options.target && !options.roaming) state.position = [...options.target];
+    if (options.reduced && options.target && !options.roaming) {
+      if (isWalkable(options.target)) state.position = [...options.target];
+      state.route = [];
+      state.key = '';
+    }
     return state;
   }
   const key = options.roaming ? 'roam' : (options.target?.join(',') ?? 'stay');

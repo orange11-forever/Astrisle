@@ -1,11 +1,34 @@
 import { expect, it } from 'vitest';
 import {
+  STATION_POINTS,
   findIslandRoute,
   isWalkable,
   segmentIsWalkable,
   createWalker,
   advanceWalker,
 } from './island-motion';
+it('keeps every real collaboration station reachable from both companion homes', () => {
+  for (const target of Object.values(STATION_POINTS))
+    for (const home of [
+      [-3.45, 1.2],
+      [3.45, 1.2],
+    ] as [number, number][]) {
+      expect(isWalkable(target), `unwalkable station ${target}`).toBe(true);
+      const route = findIslandRoute(home, target);
+      expect(route.length, `unreachable station ${target}`).toBeGreaterThan(0);
+    }
+});
+it('drops the old path when reduced motion snaps to a station before resuming', () => {
+  const state = createWalker('mori', [7.1, 0]),
+    target: [number, number] = [2.5, 2.7];
+  advanceWalker(state, 1 / 30, { roaming: false, target });
+  advanceWalker(state, 1 / 30, { roaming: false, target, reduced: true });
+  for (let i = 0; i < 120; i++) {
+    advanceWalker(state, 1 / 30, { roaming: false, target });
+    expect(isWalkable(state.position)).toBe(true);
+  }
+  expect(state.position).toEqual(target);
+});
 
 it('routes around the central table and desks while remaining on the island', () => {
   const from: [number, number] = [-3.45, 1.2],

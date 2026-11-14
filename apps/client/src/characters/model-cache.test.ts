@@ -14,6 +14,9 @@ describe('shared custom character resources', () => {
     const first = a.getObjectByProperty('isSkinnedMesh', true) as THREE.SkinnedMesh;
     const second = b.getObjectByProperty('isSkinnedMesh', true) as THREE.SkinnedMesh;
     expect(first.geometry).toBe(second.geometry);
+    a.updateMatrixWorld(true);
+    const ray = new THREE.Raycaster(new THREE.Vector3(0, 1, 5), new THREE.Vector3(0, 0, -1));
+    expect(ray.intersectObject(a, true).length).toBe(0);
     expect(first.skeleton.bones[0]).not.toBe(second.skeleton.bones[0]);
     let disposals = 0;
     first.geometry.addEventListener('dispose', () => disposals++);

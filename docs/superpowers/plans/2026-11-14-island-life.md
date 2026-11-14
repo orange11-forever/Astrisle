@@ -32,10 +32,10 @@
 
 **Interfaces:** `createProceduralGaitTemplate(root, rotationY)` returns a shared rig template or null; per-clone skeletons remain independent. `poseProceduralGait(root, motion)` consumes distance-driven phase/strength. Navigation uses a bounded island and obstacle footprints with pure route/step functions.
 
-- [ ] Write failing tests for rest-pose/UV preservation, real foot deformation with stable head, unsupported static geometry, independent clones and no leaked shared geometry.
-- [ ] Implement conservative rig inference and cache it per asset/orientation; inspect the current model in an isolated preview.
-- [ ] Write/run navigation tests for obstacle avoidance, island boundary, smooth turns/stops and stationary reduced/preview states; implement and connect ambient walking with real task priority.
-- [ ] Run focused tests and type checks, then commit.
+- [x] Test rest-pose/UV preservation, real foot deformation with stable head, unsupported static geometry, independent clones and shared-resource retirement; foot and garment defects reproduced before correction.
+- [x] Implement conservative rig inference and cache it per asset/orientation; inspect the current model in an isolated preview.
+- [x] Test navigation, island boundary, turns/stops and stationary reduced/preview states; connect ambient walking with real task priority.
+- [x] Run focused tests and type checks; implementation checkpoint `4230416`.
 
 ## Task 2: Expanded island and completion celebration
 
@@ -43,14 +43,14 @@
 
 **Interfaces:** completion transition checks commission ID/revision/status; confetti uses a bounded burst token and self-expires. App exposes manual celebration only for accepted work.
 
-- [ ] Write failing transition tests (live acceptance once; partial/history/switch/reload never automatic), then implement controller and bounded particles.
-- [ ] Expand the island/paths and add restrained garden/rest/stargazing details; keep routes clear and interactive work stations accessible.
-- [ ] Connect celebration control, reduced-motion feedback and concise functional labels.
-- [ ] Verify actual roaming, skeletal motion, task interruption, reduced motion, button/particle cleanup and narrow layout in browser tests; commit.
+- [x] Test live acceptance once and no automatic historical/partial/switch replay; implement controller and bounded particles.
+- [x] Expand the island/paths and add restrained garden/rest/stargazing details; keep routes clear and interactive work stations accessible.
+- [x] Connect celebration control, reduced-motion feedback and concise functional labels.
+- [x] Verify actual roaming, skeletal motion, task interruption, reduced motion, button/particle cleanup and narrow layout in browser tests; commit.
 
 ## Task 3: Visual inspection, review and delivery
 
-- [ ] Batch desktop/narrow/private-model screenshots and inspect walking frames. Fix material issues in one pass and confirm once.
-- [ ] Run the Impeccable detector on changed UI targets; use project context to judge findings rather than changing unrelated surfaces.
-- [ ] Run full JS, Office, build, UI and formatting checks; obtain independent review and fix material findings with regression tests.
-- [ ] Update README and stage handoff with actual results and model limitations; commit locally and leave the branch ready for review.
+- [x] Inspect desktop/narrow/private-model frames; fix stance/garment/navigation defects. An extra unobstructed model-only confirmation was needed for a material garment defect, documented in the stage record.
+- [x] Run the Impeccable detector once on changed UI targets; no findings.
+- [x] Verify 176 JS, 10 Office and 15 desktop/UI tests; build/type/format/diff pass. Independent review's four Important findings reproduced and fixed; no deferred Minor findings.
+- [x] Update README and stage handoff with actual results and model limitations; commit locally and retain the branch for review.
