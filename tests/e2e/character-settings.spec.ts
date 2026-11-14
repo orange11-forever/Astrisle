@@ -75,7 +75,7 @@ test('character names update current labels and survive reload; imports expose s
   await expect(page.getByRole('heading', { name: '小蓝的角色特写' })).toBeVisible();
   await page.getByRole('button', { name: '为小蓝导入模型', exact: true }).click();
   await expect(page.getByText('embedded-avatar.glb', { exact: false }).first()).toBeVisible();
-  await expect(page.getByText('静态模型：角色整体移动，不包含骨骼动画。')).toBeVisible();
+  await expect(page.getByText('没有内置动画；适合的直立模型会尝试基础步态。')).toBeVisible();
   await expect(page.getByText(/角色加载失败/)).toHaveCount(0);
   for (const [rotationY, radians] of [
     ['90', Math.PI / 2],

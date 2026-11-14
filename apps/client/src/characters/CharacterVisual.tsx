@@ -7,12 +7,15 @@ import type { CharacterProfile } from '@astrisle/contracts';
 import { createBlueWhaleGirl } from './blue-whale-girl';
 import { characterModelCache, disposeCharacterClone } from './model-cache';
 import { configureModelTextureSampling, useSceneQuality } from '../render-quality';
+import { poseProceduralGait } from './procedural-gait';
 
 export interface CharacterMotion {
   walking: boolean;
   working: boolean;
   carrying: boolean;
   time: number;
+  phase?: number;
+  strength?: number;
 }
 type Props = {
   profile: CharacterProfile;
@@ -67,13 +70,21 @@ function DefaultCharacter({ profile, motionRef, reduced, accent }: Props) {
     };
   }, [model, parcel]);
   useFrame(() => {
-    const { walking, working, carrying, time: t } = motionRef.current;
+    const {
+      walking,
+      working,
+      carrying,
+      time: t,
+      phase = t * 7,
+      strength = walking ? 1 : 0,
+    } = motionRef.current;
     const motion = reduced ? 0 : 1;
     const joints = model.joints;
-    model.root.position.y = Math.sin(t * 1.7) * 0.012 * motion;
+    model.root.position.y =
+      (Math.sin(t * 1.7) * 0.007 + Math.abs(Math.sin(phase)) * 0.014 * strength) * motion;
     joints.head.rotation.z = Math.sin(t * 0.7) * 0.035 * motion;
     joints.hair.rotation.z = Math.sin(t * 0.9 + 0.8) * 0.018 * motion;
-    const swing = walking && !reduced ? Math.sin(t * 8) * 0.38 : 0;
+    const swing = !reduced ? Math.sin(phase) * 0.3 * strength : 0;
     joints.leftLeg.rotation.x = swing;
     joints.rightLeg.rotation.x = -swing;
     joints.leftArm.rotation.x = walking
@@ -111,7 +122,7 @@ function ImportedCharacter({ profile, motionRef, reduced }: Props) {
     lease.ready
       .then((asset) => {
         if (!alive) return;
-        instance = asset.instantiate();
+        instance = asset.instantiate({ procedural: true, rotationY: profile.rotationY ?? 0 });
         mixer.current = asset.animations.length ? new THREE.AnimationMixer(instance) : undefined;
         setLoaded({ root: instance, clips: asset.animations });
       })
@@ -129,7 +140,7 @@ function ImportedCharacter({ profile, motionRef, reduced }: Props) {
       active.current = undefined;
       lease.release();
     };
-  }, [assetId]);
+  }, [assetId, profile.rotationY]);
   useLayoutEffect(() => {
     if (
       loaded &&
@@ -138,7 +149,18 @@ function ImportedCharacter({ profile, motionRef, reduced }: Props) {
       invalidate();
   }, [loaded, quality, gl, invalidate]);
   useFrame((_state, delta) => {
-    if (!loaded || !mixer.current) return;
+    if (!loaded) return;
+    if (loaded.root.userData.proceduralGait) {
+      const { phase = 0, strength = 0, time, working } = motionRef.current;
+      poseProceduralGait(loaded.root, {
+        phase,
+        strength: reduced ? 0 : strength,
+        time: reduced ? 0 : time,
+        working: !reduced && working,
+      });
+      return;
+    }
+    if (!mixer.current) return;
     if (reduced) {
       if (active.current) {
         mixer.current.stopAllAction();

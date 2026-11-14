@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { islandAppearance } from './islands';
+import { ISLAND_RADIUS, PROMENADE_RADIUS } from './island-motion';
 
 type V3 = [number, number, number];
 type Palette = ReturnType<typeof islandAppearance>;
@@ -184,45 +185,56 @@ export function Pennant({
 
 function landscapeSurface(palette: Palette): Surface {
   const parts: THREE.BufferGeometry[] = [];
-  addPart(parts, new THREE.CylinderGeometry(7.35, 6.25, 1.05, 14), palette.stone, {
+  addPart(parts, new THREE.CylinderGeometry(ISLAND_RADIUS - 0.07, 7.6, 1.05, 18), palette.stone, {
     position: [0, -0.9, 0],
     rotation: [0, palette.rotation, 0],
   });
-  addPart(parts, new THREE.ConeGeometry(6.25, 3, 10), palette.stone, {
-    position: [0, -2.925, 0],
+  addPart(parts, new THREE.ConeGeometry(7.6, 3.5, 12), palette.stone, {
+    position: [0, -3.175, 0],
     rotation: [0, 0.22, Math.PI],
   });
-  addPart(parts, new THREE.CylinderGeometry(7.42, 7.3, 0.27, 64), palette.grass, {
-    position: [0, -0.26, 0],
-  });
+  addPart(
+    parts,
+    new THREE.CylinderGeometry(ISLAND_RADIUS, ISLAND_RADIUS - 0.12, 0.27, 80),
+    palette.grass,
+    {
+      position: [0, -0.16, 0],
+    },
+  );
   const path = new THREE.CatmullRomCurve3(
     Array.from({ length: 33 }, (_, i) => {
-      const angle = (i / 32) * Math.PI * 1.5 - 0.4;
-      return new THREE.Vector3(Math.cos(angle) * 6.43, 0, Math.sin(angle) * 6.43);
+      const angle = (i / 32) * Math.PI * 2;
+      return new THREE.Vector3(
+        Math.cos(angle) * PROMENADE_RADIUS,
+        0,
+        Math.sin(angle) * PROMENADE_RADIUS,
+      );
     }),
   );
-  addPart(parts, new THREE.TubeGeometry(path, 64, 0.24, 6, false), '#d8cbb0', {
-    position: [0, -0.07, 0],
-    scale: [1, 0.2, 1],
+  addPart(parts, new THREE.TubeGeometry(path, 96, 0.52, 8, true), '#d8cbb0', {
+    position: [0, -0.035, 0],
+    scale: [1, 0.08, 1],
   });
   [
-    [-5.8, -0.13, -3.9, 0.9],
-    [-2.2, -0.13, -6.3, 0.83],
-    [3.9, -0.13, -5.6, 0.85],
-    [-6.7, -0.13, 0.2, 0.7],
+    [-7.2, -0.02, -4.5, 1.0],
+    [-2.2, -0.02, -8.1, 0.9],
+    [1.2, -0.02, -8.3, 0.8],
+    [6.6, -0.02, -5.1, 1.05],
+    [-8.25, -0.02, 1.0, 0.82],
+    [-6.6, -0.02, 5.2, 0.7],
   ].forEach(([x, y, z, scale]) => addTree(parts, palette, [x!, y!, z!], scale!));
   for (let i = 0; i < 24; i++) {
     const angle = i * 0.65 + palette.rotation;
-    const radius = 6.8 + (i % 3) * 0.12;
+    const radius = 8.45 + (i % 3) * 0.12;
     addPart(parts, new THREE.DodecahedronGeometry(1, 0), palette.stone, {
       position: [Math.cos(angle) * radius, -0.1, Math.sin(angle) * radius],
       scale: [0.21 + (i % 3) * 0.06, 0.16, 0.25],
     });
     if (i % 2 === 0)
-      addFlowers(parts, [Math.cos(angle) * 6.78, -0.12, Math.sin(angle) * 6.78], palette, 7);
+      addFlowers(parts, [Math.cos(angle) * 8.35, -0.02, Math.sin(angle) * 8.35], palette, 7);
   }
   const pond = new THREE.Matrix4().compose(
-    new THREE.Vector3(5.55, -0.06, 3.45),
+    new THREE.Vector3(6.75, 0, 5.0),
     new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -0.7, 0)),
     new THREE.Vector3(1, 1, 1),
   );
@@ -234,7 +246,7 @@ function landscapeSurface(palette: Palette): Surface {
     });
   addFlowers(parts, [-0.6, -0.02, -0.54], palette, 5, pond);
   const bridge = new THREE.Matrix4().compose(
-    new THREE.Vector3(0, -0.1, 6.15),
+    new THREE.Vector3(0, -0.04, 6.45),
     new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0.08, 0)),
     new THREE.Vector3(1, 1, 1),
   );
@@ -248,6 +260,90 @@ function landscapeSurface(palette: Palette): Surface {
       position: [x, -0.1, 0.15],
       parent: bridge,
     });
+  const place = (x: number, z: number, angle = 0) =>
+    new THREE.Matrix4().compose(
+      new THREE.Vector3(x, 0, z),
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(0, angle, 0)),
+      new THREE.Vector3(1, 1, 1),
+    );
+  const bench = (parent: THREE.Matrix4) => {
+    for (const x of [-0.72, 0.72])
+      for (const z of [-0.22, 0.22])
+        addPart(parts, new THREE.BoxGeometry(0.09, 0.48, 0.09), '#637775', {
+          position: [x, 0.24, z],
+          parent,
+        });
+    for (let i = 0; i < 4; i++)
+      addPart(parts, new THREE.BoxGeometry(1.8, 0.075, 0.12), i % 2 ? '#b6a58b' : '#c4b397', {
+        position: [0, 0.51, (i - 1.5) * 0.15],
+        parent,
+      });
+    for (let i = 0; i < 3; i++)
+      addPart(parts, new THREE.BoxGeometry(1.8, 0.12, 0.07), '#b6a58b', {
+        position: [0, 0.72 + i * 0.15, -0.28],
+        parent,
+      });
+  };
+  bench(place(-2.4, 7.9, Math.PI));
+  const shelter = place(-5.5, -6.4, 0.35);
+  bench(shelter);
+  for (const x of [-1.05, 1.05])
+    for (const z of [-0.55, 0.55])
+      addPart(parts, new THREE.BoxGeometry(0.09, 2.05, 0.09), '#8c826f', {
+        position: [x, 1.025, z],
+        parent: shelter,
+      });
+  for (let i = 0; i < 7; i++)
+    addPart(parts, new THREE.BoxGeometry(0.12, 0.08, 1.5), '#b6a58b', {
+      position: [(i - 3) * 0.35, 2.08, 0],
+      parent: shelter,
+    });
+  for (const z of [-0.6, 0.6])
+    addPart(parts, new THREE.BoxGeometry(2.4, 0.12, 0.09), '#95866e', {
+      position: [0, 1.95, z],
+      parent: shelter,
+    });
+  addFlowers(parts, [-1.05, 1.94, 0], palette, 7, shelter);
+  const telescope = place(4.2, -6.9, -0.6);
+  for (let i = 0; i < 3; i++)
+    addPart(parts, new THREE.CylinderGeometry(0.025, 0.035, 1.1, 6), '#a08d67', {
+      position: [Math.cos(i * 2.1) * 0.2, 0.55, Math.sin(i * 2.1) * 0.2],
+      rotation: [Math.sin(i * 2.1) * 0.35, 0, Math.cos(i * 2.1) * 0.35],
+      parent: telescope,
+    });
+  addPart(parts, new THREE.CylinderGeometry(0.16, 0.13, 0.95, 16), '#4b7278', {
+    position: [0, 1.2, 0],
+    rotation: [0.9, 0, 0],
+    parent: telescope,
+  });
+  addPart(parts, new THREE.CylinderGeometry(0.18, 0.18, 0.08, 16), '#ba994f', {
+    position: [0, 1.5, 0.36],
+    rotation: [0.9, 0, 0],
+    parent: telescope,
+  });
+  const planter = place(-7.9, -0.7, 0.1);
+  addPart(parts, new THREE.BoxGeometry(0.65, 0.22, 1.35), '#ac987d', {
+    position: [0, 0.1, 0],
+    parent: planter,
+  });
+  addPart(parts, new THREE.BoxGeometry(0.56, 0.03, 1.24), '#6d7060', {
+    position: [0, 0.22, 0],
+    parent: planter,
+  });
+  addFlowers(parts, [0, 0.24, 0], palette, 12, planter);
+  for (let i = 0; i < 8; i++) {
+    const angle = (i * Math.PI) / 4 + 0.12,
+      x = Math.cos(angle) * 7.8,
+      z = Math.sin(angle) * 7.8;
+    addPart(parts, new THREE.CylinderGeometry(0.035, 0.045, 0.65, 7), '#6d7879', {
+      position: [x, 0.325, z],
+    });
+    addPart(parts, new THREE.BoxGeometry(0.16, 0.22, 0.16), '#e9d4a4', { position: [x, 0.73, z] });
+    addPart(parts, new THREE.ConeGeometry(0.16, 0.12, 4), '#657d7d', {
+      position: [x, 0.9, z],
+      rotation: [0, Math.PI / 4, 0],
+    });
+  }
   // Faceted outcrops break the underside's silhouette without floating cloud meshes.
   [
     [-3.7, -1.6, 2.6, 1.1],
@@ -307,7 +403,7 @@ export function IslandLandscape({
           flatShading
         />
       </mesh>
-      <group position={[5.55, -0.06, 3.45]} rotation={[0, -0.7, 0]}>
+      <group position={[6.75, 0, 5.0]} rotation={[0, -0.7, 0]}>
         <mesh scale={[1.2, 0.07, 0.68]} receiveShadow>
           <sphereGeometry args={[1, 24, 8]} />
           <meshStandardMaterial color={palette.water} metalness={0.22} roughness={0.15} />
@@ -317,7 +413,7 @@ export function IslandLandscape({
           <meshBasicMaterial color="#b9d0cc" />
         </mesh>
       </group>
-      <Pennant position={[-5.9, -0.06, 3.6]} palette={palette} reduced={reduced} />
+      <Pennant position={[-7.2, 0, 4.1]} palette={palette} reduced={reduced} />
     </group>
   );
 }

@@ -232,6 +232,7 @@ export function createExecutor(options: {
   projectRoot: string;
   pythonPath?: string;
 }): ToolExecutor {
+  const supervisorPath = path.join(options.projectRoot, 'dist/helpers/process-supervisor.exe');
   const python =
     options.pythonPath ||
     path.join(
@@ -243,10 +244,16 @@ export function createExecutor(options: {
     definitions: () => structuredClone(definitions),
     async capabilities(): Promise<Capability[]> {
       let office = false;
+      const supervised =
+        process.platform !== 'win32' ||
+        (await fs.stat(supervisorPath).then(
+          (stat) => stat.isFile(),
+          () => false,
+        ));
       try {
         await fs.access(python);
         await fs.access(path.join(options.projectRoot, 'workers/office/worker.py'));
-        office = true;
+        office = supervised;
       } catch {
         /* accurate unavailable report */
       }
@@ -261,9 +268,12 @@ export function createExecutor(options: {
         {
           id: 'process',
           name: 'Trusted host execution',
-          available: true,
-          detail:
-            'Requires explicit allowProcess. No OS sandbox; minimal environment, bounded logs, best-effort tree stop with unknown retained when unconfirmed.',
+          available: supervised,
+          detail: !supervised
+            ? 'Windows process supervisor is missing; build the desktop application before executing tools.'
+            : process.platform === 'win32'
+              ? 'Requires explicit allowProcess. No OS sandbox; Windows Job Object contains ordinary descendants and confirms zero active processes. Lost receipts remain unknown; stopping does not undo side effects.'
+              : 'Requires explicit allowProcess. No OS sandbox; minimal environment, bounded logs, process-group stop with unknown retained when unconfirmed.',
         },
         {
           id: 'office',
@@ -271,7 +281,7 @@ export function createExecutor(options: {
           available: office,
           detail: office
             ? 'Project-local Python; DOCX/XLSX/PPTX structural reread and independent numeric checks. Application rendering is a separate verification level.'
-            : 'Project-local Python or Office worker is missing.',
+            : 'Project-local Python, Office worker or Windows process supervisor is missing.',
         },
         {
           id: 'safe_apply',
@@ -318,6 +328,7 @@ export function createExecutor(options: {
             throw new ToolError('INVALID_ARGUMENT', 'args must be a string array');
           const result = await runProcess(str(args, 'command'), (args.args || []) as string[], {
             cwd,
+            supervisorPath,
             signal: context.signal,
             timeoutMs: Math.max(100, numeric(args.timeoutMs, 30000, 120000)),
           });
@@ -348,6 +359,7 @@ export function createExecutor(options: {
             [path.join(options.projectRoot, 'workers/office/worker.py')],
             {
               cwd: context.workPath,
+              supervisorPath,
               signal: context.signal,
               timeoutMs: 60000,
               input: JSON.stringify(request),
@@ -358,17 +370,31 @@ export function createExecutor(options: {
             return {
               ok: false,
               output: 'Office worker stopped; reconcile output before retry.',
-              code: result.stopStatus === 'outcome_unknown' ? 'OUTCOME_UNKNOWN' : 'ABORTED',
-              metadata: { stopStatus: result.stopStatus },
+              code:
+                result.stopStatus === 'outcome_unknown'
+                  ? 'OUTCOME_UNKNOWN'
+                  : result.reason.toUpperCase(),
+              metadata: { ...result, output: undefined },
             };
           let parsed: Record<string, unknown>;
           try {
             parsed = JSON.parse(result.output);
+            if (
+              result.exitCode !== 0 ||
+              !parsed ||
+              Array.isArray(parsed) ||
+              typeof parsed.ok !== 'boolean'
+            )
+              throw new Error(
+                'Worker did not return a successful process exit and structured response',
+              );
           } catch {
-            throw new ToolError(
-              'WORKER_FAILED',
-              `Invalid Office worker response: ${bounded(result.output)}`,
-            );
+            return {
+              ok: false,
+              code: 'WORKER_FAILED',
+              output: `Invalid Office worker response or process exit (${result.exitCode}): ${bounded(result.output)}`,
+              metadata: { ...result, output: undefined },
+            };
           }
           return {
             ok: parsed.ok === true,
@@ -378,7 +404,12 @@ export function createExecutor(options: {
                 ? [request.output as string]
                 : [],
             code: typeof parsed.code === 'string' ? parsed.code : undefined,
-            metadata: parsed,
+            metadata: {
+              ...parsed,
+              stopStatus: result.stopStatus,
+              termination: result.termination,
+              exitCode: result.exitCode,
+            },
           };
         }
         const writing = definition.effect === 'write',

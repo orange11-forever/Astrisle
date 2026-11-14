@@ -22,6 +22,38 @@ async function cameraAngle(page: Page) {
     return state?.gl.info.render.frame > 0 ? (state.controls?.getAzimuthalAngle() ?? null) : null;
   });
 }
+test('animated-mode closeups keep the selected character at its own home across switches', async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.goto('/');
+  await page.bringToFront();
+  for (const [id, x, z] of [
+    ['mori', -3.45, 1.2],
+    ['luma', 3.45, 1.2],
+    ['user', 0, 3.65],
+  ] as const) {
+    await page.getByLabel('角色特写').selectOption(id);
+    const read = () =>
+      page.evaluate(async (id) => {
+        const url = performance
+          .getEntriesByType('resource')
+          .find((entry) => entry.name.includes('/@react-three_fiber.js'))?.name;
+        if (!url) return null;
+        const { _roots } = await import(url),
+          state = _roots.get(document.querySelector('canvas'))?.store.getState();
+        return {
+          position: state?.scene.getObjectByName(`avatar-${id}`)?.position.toArray(),
+          frame: state?.gl.info.render.frame ?? 0,
+        };
+      }, id);
+    const first = await read();
+    await expect
+      .poll(async () => (await read())?.frame ?? 0)
+      .toBeGreaterThan((first?.frame ?? 0) + 1);
+    expect((await read())?.position).toEqual([x, 0.02, z]);
+  }
+});
 
 test('whale companions have selectable closeups and can return to the studio overview', async ({
   page,
@@ -37,10 +69,42 @@ test('whale companions have selectable closeups and can return to the studio ove
     await focus.selectOption(id);
     await expect(page.getByText(`${name} · 拖动旋转，滚轮缩放`, { exact: true })).toBeVisible();
     await expect(page.locator('.studio-canvas canvas')).toBeVisible();
+    const expected =
+      id === 'mori' ? [-3.45, 0.02, 1.2] : id === 'luma' ? [3.45, 0.02, 1.2] : [0, 0.02, 3.65];
+    await expect
+      .poll(() =>
+        page.evaluate(async (id) => {
+          const url = performance
+            .getEntriesByType('resource')
+            .find((entry) => entry.name.includes('/@react-three_fiber.js'))?.name;
+          if (!url) return null;
+          const { _roots } = await import(url);
+          return _roots
+            .get(document.querySelector('canvas'))
+            ?.store.getState()
+            .scene.getObjectByName(`avatar-${id}`)
+            ?.position.toArray();
+        }, id),
+      )
+      .toEqual(expected);
   }
   await page.getByRole('button', { name: '回到全景', exact: true }).click();
   await expect(focus).toHaveValue('');
-  await expect(page.getByText('宇宙中的悬浮星岛', { exact: true })).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const url = performance
+          .getEntriesByType('resource')
+          .find((entry) => entry.name.includes('/@react-three_fiber.js'))?.name;
+        if (!url) return false;
+        const { _roots } = await import(url);
+        return !!_roots
+          .get(document.querySelector('canvas'))
+          ?.store.getState()
+          .scene.getObjectByName('island-landscape');
+      }),
+    )
+    .toBe(true);
   await page.screenshot({ path: 'test-results/whale-girl-studio.png', fullPage: true });
   expect(errors).toEqual([]);
 });

@@ -31,6 +31,15 @@ async function fixture() {
   };
   return { context, executor: createExecutor({ projectRoot: process.cwd() }) };
 }
+it.skipIf(process.platform !== 'win32')(
+  'does not advertise process or Office capability without the Windows supervisor',
+  async () => {
+    const { context } = await fixture();
+    const capabilities = await createExecutor({ projectRoot: context.workPath }).capabilities();
+    expect(capabilities.find((c) => c.id === 'process')?.available).toBe(false);
+    expect(capabilities.find((c) => c.id === 'office')?.available).toBe(false);
+  },
+);
 it('executes a real host process with minimal environment and redacted output', async () => {
   const { context, executor } = await fixture();
   process.env.ASTRISLE_TEST_SECRET = 'should-not-be-inherited';
@@ -54,7 +63,7 @@ it('executes a real host process with minimal environment and redacted output', 
     delete process.env.ASTRISLE_TEST_SECRET;
   }
 });
-it('reports cancellation as unknown when a Windows process tree cannot be independently confirmed stopped', async () => {
+it('reports cancellation only after the process tree is confirmed stopped', async () => {
   const { context, executor } = await fixture(),
     controller = new AbortController();
   context.signal = controller.signal;
@@ -66,9 +75,7 @@ it('reports cancellation as unknown when a Windows process tree cannot be indepe
   setTimeout(() => controller.abort(), 150);
   const receipt = await result;
   expect(receipt.ok).toBe(false);
-  expect(receipt.metadata?.stopStatus).toBe(
-    process.platform === 'win32' ? 'outcome_unknown' : 'stopped',
-  );
+  expect(receipt.metadata?.stopStatus).toBe('stopped');
 });
 it('validates every redirect target before making a cross-host request', async () => {
   const { context, executor } = await fixture();

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createRuntime, type RuntimeService } from '../../packages/runtime/src/index';
 import { createExecutor } from '../../packages/executor/src/index';
+import { RuntimeStore } from '../../packages/persistence/src/index';
 import type { ProjectSnapshot, ToolExecutor } from '../../packages/contracts/src/index';
 
 const cleanup: Array<() => Promise<unknown>> = [];
@@ -19,13 +20,22 @@ const call = (name: string, args: unknown) => ({
   function: { name, arguments: JSON.stringify(args) },
 });
 async function fixture(
-  mode: 'normal' | 'rework' | 'weak' | 'mutate' | 'forge' | 'process' | 'extra' = 'normal',
+  mode:
+    | 'normal'
+    | 'rework'
+    | 'weak'
+    | 'mutate'
+    | 'forge'
+    | 'process'
+    | 'extra'
+    | 'process_tree' = 'normal',
   overrides: {
     executor?: ToolExecutor;
     maxSteps?: number;
     maxRework?: number;
     beforeReviewSubmit?: () => Promise<void>;
     seed?: Record<string, string>;
+    processArgs?: string[];
   } = {},
 ) {
   const server = createServer(async (req, res) => {
@@ -62,7 +72,12 @@ async function fixture(
         }),
       ];
     else if (first.task.kind !== 'review') {
-      if (['mutate', 'extra'].includes(mode) && messages.some((m: any) => m.role === 'tool')) {
+      if (mode === 'process_tree') {
+        calls = [call('process_run', { command: process.execPath, args: overrides.processArgs })];
+      } else if (
+        ['mutate', 'extra'].includes(mode) &&
+        messages.some((m: any) => m.role === 'tool')
+      ) {
         calls = [
           call('ask_input', {
             title: 'Published copy differs',
@@ -171,7 +186,7 @@ async function fixture(
     scope: {
       readRoots: [],
       writeRoots: [],
-      allowProcess: mode === 'process',
+      allowProcess: mode === 'process' || mode === 'process_tree',
       allowNetwork: false,
       allowedHosts: [],
     },
@@ -336,6 +351,62 @@ it('reports cancelling until an in-flight tool confirms it has returned stopped'
   const snapshot = await until(runtime, id, (s) => s.commission.status === 'cancelled');
   expect(snapshot.tasks.some((t) => t.status === 'passed')).toBe(false);
 });
+it.skipIf(process.platform !== 'win32').each([false, true])(
+  'persists real process-tree stop evidence across runtime restart (supervisor lost=%s)',
+  async (lost) => {
+    const processRoot = await realpath(await mkdtemp(join(tmpdir(), 'astrisle-runtime-tree-')));
+    cleanup.push(() => rm(processRoot, { recursive: true, force: true }));
+    const { runtime, id, dataRoot } = await fixture('process_tree', {
+      processArgs: [join(process.cwd(), 'tests/fixtures/process-tree.cjs'), 'parent', processRoot],
+    });
+    for (let i = 0; i < 250; i++) {
+      if (
+        await readFile(join(processRoot, 'heartbeat')).then(
+          () => true,
+          () => false,
+        )
+      )
+        break;
+      await new Promise((done) => setTimeout(done, 20));
+    }
+    expect((await readFile(join(processRoot, 'heartbeat'))).length).toBeGreaterThan(0);
+    if (lost)
+      process.kill(Number(await readFile(join(processRoot, 'supervisor.pid'), 'utf8')), 'SIGKILL');
+    else expect((await runtime.control(id, 'cancel')).ok).toBe(true);
+    const snapshot = await until(runtime, id, (s) =>
+      lost
+        ? s.tasks.some((task) => task.error === 'outcome_unknown')
+        : s.commission.status === 'cancelled',
+    );
+    expect(snapshot.commission.status).toBe(lost ? 'paused' : 'cancelled');
+    await runtime.close();
+    const store = new RuntimeStore(dataRoot);
+    const calls = store
+      .recentTaskCalls(id, snapshot.tasks.find((task) => task.kind === 'implement')!.id)
+      .filter((call) => call.request.name === 'process_run');
+    store.close();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      state: lost ? 'outcome_unknown' : 'finished',
+      result: {
+        code: lost ? 'OUTCOME_UNKNOWN' : 'ABORTED',
+        metadata: {
+          stopStatus: lost ? 'outcome_unknown' : 'stopped',
+          termination: { mechanism: 'windows_job', confirmed: !lost },
+        },
+      },
+    });
+    const restarted = createRuntime({
+      dataRoot,
+      executor: createExecutor({ projectRoot: process.cwd() }),
+      getCredentials: async () => null,
+    });
+    cleanup.push(() => restarted.close());
+    expect((await restarted.snapshot(id)).commission.status).toBe(lost ? 'paused' : 'cancelled');
+    if (lost) expect((await restarted.control(id, 'resume')).code).toBe('outcome_unknown');
+    expect(snapshot.tasks.some((task) => task.status === 'passed')).toBe(false);
+  },
+);
 it('rejects integrating bytes changed after immutable publication', async () => {
   const { runtime, id, workspace } = await fixture('mutate');
   const snapshot = await until(runtime, id, (s) =>

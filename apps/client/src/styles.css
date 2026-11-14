@@ -407,6 +407,63 @@ nav button.active {
   margin-top: 10px;
   flex-shrink: 0;
 }
+.stage-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: 0;
+  flex-shrink: 0;
+  pointer-events: auto;
+}
+.stage-actions .status {
+  margin-top: 0;
+}
+.celebration-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 11px;
+  border: 1px solid #c5d0cb;
+  border-radius: 7px;
+  background: #edf2ed;
+  color: #294b53;
+  font-size: 12px;
+}
+.celebration-action:hover {
+  background: #dae8df;
+}
+.celebration-action:focus-visible {
+  outline: 2px solid #739c8c;
+  outline-offset: 3px;
+}
+.completion-note {
+  position: absolute;
+  z-index: 4;
+  top: 104px;
+  right: 30px;
+  color: #294b53;
+  font-size: 13px;
+  pointer-events: none;
+}
+.stage-cosmic .completion-note {
+  color: #f1e6c7;
+}
+@media (max-width: 720px) {
+  .scene-caption {
+    display: none;
+  }
+  .stage-title {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .stage-actions {
+    margin-left: 0;
+  }
+  .completion-note {
+    top: 154px;
+    right: 20px;
+  }
+}
 .stage-cosmic .stage-title h1 {
   color: #f3edf8;
 }
@@ -527,9 +584,7 @@ nav button.active {
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  border-radius: 50%;
-  border: 1px solid #d5c7a5;
-  color: #a08751;
+  color: #516d73;
 }
 .commission-dock strong {
   font-size: 13px;
