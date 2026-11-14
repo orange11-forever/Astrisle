@@ -21,7 +21,7 @@ Astrisle 是一个面向 Windows 的多 Agent 桌面工作台。目标是让伙�
 
 第二至第五阶段已由 [PR #2：任务续跑、运行时保护与星岛角色配置](https://github.com/orange11-forever/Astrisle/pull/2) 合并。第六、七阶段已由 [PR #3：Windows 进程监督、岛屿散步与验收庆祝](https://github.com/orange11-forever/Astrisle/pull/3) 合并。运行保障见[第六阶段](docs/development/stage-6.md)，散步和验收庆祝见[第七阶段](docs/development/stage-7.md)，本轮自由视角与岛屿生活见[最新开发记录](docs/development/stage-8.md)。
 
-本轮本地验证通过 189 项 JS、10 项 Office 和 20 项桌面/UI 测试，共 219 项；构建、类型与格式检查通过。自由视角和自动休闲的实现、验证与适配边界见[第八阶段记录](docs/development/stage-8.md)。
+本轮本地验证通过 189 项 JS、10 项 Office 和 21 项桌面/UI 测试，共 220 项；构建、类型与格式检查通过，新增镜头与休闲交互另经 6 项软件渲染复核。自由视角和自动休闲的实现、验证与适配边界见[第八阶段记录](docs/development/stage-8.md)。
 
 ![当前蓝发角色与第八阶段花园工作室的 Electron 运行全景](docs/development/screenshots/stage-8-current-studio.png)
 
@@ -185,4 +185,4 @@ docs/                 产品设计、概念图、计划和阶段记录
 - [最新阶段与下次交接](docs/development/stage-7.md)
 - README Logo 沿用软件现有标志，内侧星形使用 Lucide Sparkles；[许可说明](docs/assets/LICENSE-lucide.txt)。
 
-从 `main` 创建功能分支，在分支内实现、验证和提交，再推送并通过 PR 审查。前七阶段已合并；第八阶段在 `feat/island-life-camera` 分支开发和审查。开发预览不等于正式发布。
+从 `main` 创建功能分支，在分支内实现、验证和提交，再推送并通过 PR 审查。前七阶段已合并；第八阶段由 `feat/island-life-camera` 的 [PR #4：自由视角、自动岛屿生活与当前角色截图](https://github.com/orange11-forever/Astrisle/pull/4) 跟踪。开发预览不等于正式发布。

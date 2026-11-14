@@ -538,7 +538,7 @@ function World({
           intensity={0.7}
           color="#d2e9ff"
         />
-        <CameraRig reset={reset} fixed={fixed} focus={focus} />
+        <CameraRig reset={reset} fixed={fixed} focus={focus} reduced={reduced} />
         <Avatar
           key={focus}
           id={focus}
@@ -563,7 +563,7 @@ function World({
       <hemisphereLight args={['#c6d9ff', '#64557c', 1.35]} />
       <directionalLight position={[-6, 12, 8]} intensity={2.3} color="#ffe8c8" />
       <directionalLight position={[6, 3, -8]} intensity={1.1} color="#98a9ed" />
-      <CameraRig reset={reset} fixed={fixed} focus={focus} />
+      <CameraRig reset={reset} fixed={fixed} focus={focus} reduced={reduced} />
       <IslandLandscape workspaceId={workspaceId} reduced={reduced} />
       <IslandLeisure life={life} />
       {celebration != null && !reduced && <Confetti key={celebration} burst={celebration} />}

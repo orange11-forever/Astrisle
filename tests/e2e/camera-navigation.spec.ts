@@ -25,7 +25,8 @@ async function drag(page: Page, x: number, y = 0, button: 'left' | 'right' = 'le
   const start = { x: box.x + box.width * 0.5, y: box.y + box.height * 0.45 };
   await page.mouse.move(start.x, start.y);
   await page.mouse.down({ button });
-  await page.mouse.move(start.x + box.height * x, start.y + box.height * y, { steps: 4 });
+  // One actual drag event preserves its full displacement without four software-rendered frames.
+  await page.mouse.move(start.x + box.height * x, start.y + box.height * y);
   await page.mouse.up({ button });
 }
 
@@ -62,9 +63,7 @@ test('overview reaches both rear views and the full above-ground pitch range wit
   expect((await cameraState(page))!.position[1]).toBeGreaterThan(0.35);
 });
 
-test('overview pans on the island plane, bounds the target, zooms closer and preserves orbit on resize', async ({
-  page,
-}) => {
+test('overview pans on the island plane and bounds the target', async ({ page }) => {
   await drag(page, 0.14, 0.1, 'right');
   await expect
     .poll(async () => Math.hypot(...(await cameraState(page))!.target.filter((_, i) => i !== 1)))
@@ -74,9 +73,14 @@ test('overview pans on the island plane, bounds the target, zooms closer and pre
   const panned = (await cameraState(page))!;
   expect(Math.hypot(panned.target[0], panned.target[2])).toBeLessThanOrEqual(7.001);
   await reset(page);
+});
+
+test('overview zooms closer and preserves orbit on resize with accessible narrow controls', async ({
+  page,
+}) => {
   const box = (await page.locator('.studio-canvas canvas').boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height * 0.45);
-  for (let i = 0; i < 30; i++) await page.mouse.wheel(0, -180);
+  for (let i = 0; i < 25; i++) await page.mouse.wheel(0, -180);
   await expect.poll(async () => (await cameraState(page))?.distance ?? Infinity).toBeLessThan(8);
   await drag(page, 0.12);
   await page.waitForTimeout(600);

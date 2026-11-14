@@ -18,10 +18,12 @@ export function CameraRig({
   reset,
   fixed,
   focus,
+  reduced,
 }: {
   reset: number;
   fixed: boolean;
   focus?: CharacterFocus;
+  reduced: boolean;
 }) {
   const { camera, size, invalidate } = useThree();
   const controls = useRef<ComponentRef<typeof OrbitControls>>(null);
@@ -71,6 +73,7 @@ export function CameraRig({
       enableRotate={!fixed}
       enablePan={!fixed && !focus}
       enableZoom={!fixed}
+      enableDamping={!reduced}
       screenSpacePanning={false}
       minDistance={focus ? 2.3 : 3}
       maxDistance={focus ? 9 : 70}
