@@ -1,0 +1,748 @@
+{
+  "schemaVersion": 1,
+  "provider": {
+    "kind": "openai-compatible",
+    "baseUrl": "https://api.deepseek.com",
+    "model": "deepseek-flash"
+  },
+  "runnerSha256": "4f78eeb6ccd49be6258b222b1d670e369b4483ca3d7b701e57edb3970f0711b7",
+  "passed": 9,
+  "total": 9,
+  "modelStepNote": "A model step may internally retry transport or invalid JSON up to twice; it is not a billed-request/token count.",
+  "limitations": [
+    "Synthetic bounded tasks; not full v0.1 or arbitrary-task certification.",
+    "Office checks cover structure and independent numeric sums, not application opening/layout/formula recalculation.",
+    "Earlier failures are documented in stage-9.md; this summary contains the complete final same-build round, not only selected successes."
+  ],
+  "samples": [
+    {
+      "scenario": "code-new",
+      "sample": "code-new-jG9jDb",
+      "status": "passed",
+      "startedAt": "2026-11-16T13:00:02.791Z",
+      "finishedAt": "2026-11-16T13:00:45.284Z",
+      "inputHashes": {},
+      "interventions": 0,
+      "localReport": ".astrisle-acceptance/code-new-jG9jDb/report.json",
+      "stages": [
+        {
+          "status": "passed",
+          "modelSteps": 13,
+          "taskCount": 2,
+          "checks": [
+            {
+              "name": "node:stats.mjs",
+              "status": "passed",
+              "detail": "Node exit=0; stop=not_requested; output matched"
+            },
+            {
+              "name": "node:stats.mjs",
+              "status": "passed",
+              "detail": "Node exit=0; stop=not_requested; output matched"
+            },
+            {
+              "name": "node:stats.mjs",
+              "status": "passed",
+              "detail": "Node exit=0; stop=not_requested; output matched"
+            },
+            {
+              "name": "export-integrity",
+              "status": "passed",
+              "detail": "Export files must not change while independent checks run"
+            },
+            {
+              "name": "source-integrity",
+              "status": "passed",
+              "detail": "Original synthetic input must remain unchanged"
+            }
+          ],
+          "acceptedArtifacts": [
+            {
+              "path": "stats.mjs",
+              "sha256": "acc1ab0f56c06216589cc85c494d9463ee4c7b26b73418a5afb696affef665ad",
+              "versionId": "c5fa5fcb-0f69-49a6-baa3-8bfd60b8fdf7"
+            }
+          ],
+          "exportHashes": {
+            "stats.mjs": "acc1ab0f56c06216589cc85c494d9463ee4c7b26b73418a5afb696affef665ad"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "code-edit",
+      "sample": "code-edit-0Vh1il",
+      "status": "passed",
+      "startedAt": "2026-11-16T13:00:45.298Z",
+      "finishedAt": "2026-11-16T13:02:51.722Z",
+      "inputHashes": {
+        "README.txt": "2b55069486e4ec2b16bb9e9e82c28ab224094998253c5e19c9d97b613fc6f2b4",
+        "tags.mjs": "edd0484ceb1e3dfa61d66e1e5eb618d8b00b08d5623b8f4228f4ab4e05d38384"
+      },
+      "interventions": 0,
+      "localReport": ".astrisle-acceptance/code-edit-0Vh1il/report.json",
+      "stages": [
+        {
+          "status": "passed",
+          "modelSteps": 17,
+          "taskCount": 2,
+          "checks": [
+            {
+              "name": "node:tags.mjs",
+              "status": "passed",
+              "detail": "Node exit=0; stop=not_requested; output matched"
+            },
+            {
+              "name": "node:tags.mjs",
+              "status": "passed",
+              "detail": "Node exit=0; stop=not_requested; output matched"
+            },
+            {
+              "name": "node:tags.mjs",
+              "status": "passed",
+              "detail": "Node exit=0; stop=not_requested; output matched"
+            },
+            {
+              "name": "text:README.txt",
+              "status": "passed",
+              "detail": "Independent check passed"
+            },
+            {
+              "name": "export-integrity",
+              "status": "passed",
+              "detail": "Export files must not change while independent checks run"
+            },
+            {
+              "name": "source-integrity",
+              "status": "passed",
+              "detail": "Original synthetic input must remain unchanged"
+            }
+          ],
+          "acceptedArtifacts": [
+            {
+              "path": "tags.mjs",
+              "sha256": "b428fbf451ae0d5ca90da4b8e96fd0a8dee39f3736d2590b38bae782a4a150a5",
+              "versionId": "2919c7bc-c799-424b-8589-64b9703302d5"
+            }
+          ],
+          "exportHashes": {
+            "README.txt": "2b55069486e4ec2b16bb9e9e82c28ab224094998253c5e19c9d97b613fc6f2b4",
+            "tags.mjs": "b428fbf451ae0d5ca90da4b8e96fd0a8dee39f3736d2590b38bae782a4a150a5"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "office",
+      "sample": "office-lSs6hO",
+      "status": "passed",
+      "startedAt": "2026-11-16T13:02:51.734Z",
+      "finishedAt": "2026-11-16T13:04:47.883Z",
+      "inputHashes": {
+        "source.json": "478e3c593a82f13197955196250fb19296eaca787f19737c387804f0b9da14b4"
+      },
+      "interventions": 0,
+      "localReport": ".astrisle-acceptance/office-lSs6hO/report.json",
+      "stages": [
+        {
+          "status": "passed",
+          "modelSteps": 12,
+          "taskCount": 2,
+          "checks": [
+            {
+              "name": "office:brief.docx",
+              "status": "passed",
+              "detail": "Office structure: matched; application rendering and formula recalculation not performed"
+            },
+            {
+              "name": "office:budget.xlsx",
+              "status": "passed",
+              "detail": "Office structure and source-cell sums: matched; application rendering and formula recalculation not performed"
+            },
+            {
+              "name": "office:deck.pptx",
+              "status": "passed",
+              "detail": "Office structure: matched; application rendering and formula recalculation not performed"
+            },
+            {
+              "name": "export-integrity",
+              "status": "passed",
+              "detail": "Export files must not change while independent checks run"
+            },
+            {
+              "name": "source-integrity",
+              "status": "passed",
+              "detail": "Original synthetic input must remain unchanged"
+            }
+          ],
+          "acceptedArtifacts": [
+            {
+              "path": "brief.docx",
+              "sha256": "7b2951ca07592e04a8cb49affb148de85cf8e9ccbd2028bbea0884c6bc89fc45",
+              "versionId": "618eaad2-2136-41a7-b989-50d7f0989854"
+            },
+            {
+              "path": "budget.xlsx",
+              "sha256": "da6a859884cce473f132f2676b54c146dbc9c4731545196068ea33703960a86e",
+              "versionId": "cf0382e9-ca32-4bc0-a451-18e4b5dce087"
+            },
+            {
+              "path": "deck.pptx",
+              "sha256": "0924df2ba0a13bed21b58d97f53824dbfe9f3036808c51dadfaa05435c047734",
+              "versionId": "eac6372f-a2ae-4585-bcc3-b0ebb308b462"
+            }
+          ],
+          "exportHashes": {
+            "brief.docx": "7b2951ca07592e04a8cb49affb148de85cf8e9ccbd2028bbea0884c6bc89fc45",
+            "budget.xlsx": "da6a859884cce473f132f2676b54c146dbc9c4731545196068ea33703960a86e",
+            "deck.pptx": "0924df2ba0a13bed21b58d97f53824dbfe9f3036808c51dadfaa05435c047734",
+            "source.json": "478e3c593a82f13197955196250fb19296eaca787f19737c387804f0b9da14b4"
+          }
+        },
+        {
+          "status": "passed",
+          "modelSteps": 16,
+          "taskCount": 2,
+          "checks": [
+            {
+              "name": "office:brief-updated.docx",
+              "status": "passed",
+              "detail": "Office structure: matched; application rendering and formula recalculation not performed"
+            },
+            {
+              "name": "office:budget-updated.xlsx",
+              "status": "passed",
+              "detail": "Office structure and source-cell sums: matched; application rendering and formula recalculation not performed"
+            },
+            {
+              "name": "office:deck-updated.pptx",
+              "status": "passed",
+              "detail": "Office structure: matched; application rendering and formula recalculation not performed"
+            },
+            {
+              "name": "office:brief.docx",
+              "status": "passed",
+              "detail": "Office structure: matched; application rendering and formula recalculation not performed"
+            },
+            {
+              "name": "office:budget.xlsx",
+              "status": "passed",
+              "detail": "Office structure and source-cell sums: matched; application rendering and formula recalculation not performed"
+            },
+            {
+              "name": "office:deck.pptx",
+              "status": "passed",
+              "detail": "Office structure: matched; application rendering and formula recalculation not performed"
+            },
+            {
+              "name": "export-integrity",
+              "status": "passed",
+              "detail": "Export files must not change while independent checks run"
+            },
+            {
+              "name": "source-integrity",
+              "status": "passed",
+              "detail": "Original synthetic input must remain unchanged"
+            }
+          ],
+          "acceptedArtifacts": [
+            {
+              "path": "brief-updated.docx",
+              "sha256": "168fd53423b691617e9a93b46ce250a7624306012ebf22ed89d6c390a5945925",
+              "versionId": "82d2832b-0e3f-4efe-a8e8-8f5eff367a3f"
+            },
+            {
+              "path": "budget-updated.xlsx",
+              "sha256": "34aba7f7a522e55cd875dbfe0981c7c85aca70d6f4b65ee4c0b9a22d00a84bdb",
+              "versionId": "18046796-d3f0-416a-bbc8-11d7dc1d23de"
+            },
+            {
+              "path": "deck-updated.pptx",
+              "sha256": "d5b6c7f2988cbe91f865e67c86be5fd5ae81ead84bd36d8309fca4fa4264acb7",
+              "versionId": "161d744a-7bed-44b1-9f8b-0d942f7b81ee"
+            }
+          ],
+          "exportHashes": {
+            "brief-updated.docx": "168fd53423b691617e9a93b46ce250a7624306012ebf22ed89d6c390a5945925",
+            "brief.docx": "7b2951ca07592e04a8cb49affb148de85cf8e9ccbd2028bbea0884c6bc89fc45",
+            "budget-updated.xlsx": "34aba7f7a522e55cd875dbfe0981c7c85aca70d6f4b65ee4c0b9a22d00a84bdb",
+            "budget.xlsx": "da6a859884cce473f132f2676b54c146dbc9c4731545196068ea33703960a86e",
+            "deck-updated.pptx": "d5b6c7f2988cbe91f865e67c86be5fd5ae81ead84bd36d8309fca4fa4264acb7",
+            "deck.pptx": "0924df2ba0a13bed21b58d97f53824dbfe9f3036808c51dadfaa05435c047734",
+            "source.json": "478e3c593a82f13197955196250fb19296eaca787f19737c387804f0b9da14b4"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "continuity",
+      "sample": "continuity-4ASHcx",
+      "status": "passed",
+      "startedAt": "2026-11-16T13:04:47.905Z",
+      "finishedAt": "2026-11-16T13:05:23.654Z",
+      "inputHashes": {},
+      "interventions": 0,
+      "localReport": ".astrisle-acceptance/continuity-4ASHcx/report.json",
+      "stages": [
+        {
+          "status": "passed",
+          "modelSteps": 8,
+          "taskCount": 2,
+          "checks": [
+            {
+              "name": "json:status.json",
+              "status": "passed",
+              "detail": "Independent check passed"
+            },
+            {
+              "name": "export-integrity",
+              "status": "passed",
+              "detail": "Export files must not change while independent checks run"
+            },
+            {
+              "name": "source-integrity",
+              "status": "passed",
+              "detail": "Original synthetic input must remain unchanged"
+            }
+          ],
+          "acceptedArtifacts": [
+            {
+              "path": "status.json",
+              "sha256": "63c013e94d9cff3ba2826d130e8e53c68389e2defa2e52790a1abe6f666a4156",
+              "versionId": "887678a8-f899-4854-9c6c-2ac15a53c17a"
+            }
+          ],
+          "exportHashes": {
+            "status.json": "63c013e94d9cff3ba2826d130e8e53c68389e2defa2e52790a1abe6f666a4156"
+          }
+        },
+        {
+          "status": "passed",
+          "modelSteps": 10,
+          "taskCount": 2,
+          "checks": [
+            {
+              "name": "json:status.json",
+              "status": "passed",
+              "detail": "Independent check passed"
+            },
+            {
+              "name": "export-integrity",
+              "status": "passed",
+              "detail": "Export files must not change while independent checks run"
+            },
+            {
+              "name": "source-integrity",
+              "status": "passed",
+              "detail": "Original synthetic input must remain unchanged"
+            }
+          ],
+          "acceptedArtifacts": [
+            {
+              "path": "status.json",
+              "sha256": "ada32571f7ea62275a4cfdedcd387340eeed278dee2beb9666a7bc12df152ba7",
+              "versionId": "5e5c85bc-9af4-40e2-ac9f-6443dfa3647f"
+            }
+          ],
+          "exportHashes": {
+            "status.json": "ada32571f7ea62275a4cfdedcd387340eeed278dee2beb9666a7bc12df152ba7"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "code-new",
+      "sample": "code-new-3eotmB",
+      "status": "passed",
+      "startedAt": "2026-11-16T13:05:23.668Z",
+      "finishedAt": "2026-11-16T13:06:06.528Z",
+      "inputHashes": {},
+      "interventions": 0,
+      "localReport": ".astrisle-acceptance/code-new-3eotmB/report.json",
+      "stages": [
+        {
+          "status": "passed",
+          "modelSteps": 12,
+          "taskCount": 2,
+          "checks": [
+            {
+              "name": "node:stats.mjs",
+              "status": "passed",
+              "detail": "Node exit=0; stop=not_requested; output matched"
+            },
+            {
+              "name": "node:stats.mjs",
+              "status": "passed",
+              "detail": "Node exit=0; stop=not_requested; output matched"
+            },
+            {
+              "name": "node:stats.mjs",
+              "status": "passed",
+              "detail": "Node exit=0; stop=not_requested; output matched"
+            },
+            {
+              "name": "export-integrity",
+              "status": "passed",
+              "detail": "Export files must not change while independent checks run"
+            },
+            {
+              "name": "source-integrity",
+              "status": "passed",
+              "detail": "Original synthetic input must remain unchanged"
+            }
+          ],
+          "acceptedArtifacts": [
+            {
+              "path": "stats.mjs",
+              "sha256": "5eeb77065b584264dce49edcd2e202a214ada7cc8dc12210ce09d65706df1912",
+              "versionId": "28526e5c-cfc9-41ae-b976-6c86729d97e3"
+            }
+          ],
+          "exportHashes": {
+            "stats.mjs": "5eeb77065b584264dce49edcd2e202a214ada7cc8dc12210ce09d65706df1912"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "code-edit",
+      "sample": "code-edit-4uTWUT",
+      "status": "passed",
+      "startedAt": "2026-11-16T13:06:06.549Z",
+      "finishedAt": "2026-11-16T13:07:39.588Z",
+      "inputHashes": {
+        "README.txt": "2b55069486e4ec2b16bb9e9e82c28ab224094998253c5e19c9d97b613fc6f2b4",
+        "tags.mjs": "edd0484ceb1e3dfa61d66e1e5eb618d8b00b08d5623b8f4228f4ab4e05d38384"
+      },
+      "interventions": 0,
+      "localReport": ".astrisle-acceptance/code-edit-4uTWUT/report.json",
+      "stages": [
+        {
+          "status": "passed",
+          "modelSteps": 24,
+          "taskCount": 2,
+          "checks": [
+            {
+              "name": "node:tags.mjs",
+              "status": "passed",
+              "detail": "Node exit=0; stop=not_requested; output matched"
+            },
+            {
+              "name": "node:tags.mjs",
+              "status": "passed",
+              "detail": "Node exit=0; stop=not_requested; output matched"
+            },
+            {
+              "name": "node:tags.mjs",
+              "status": "passed",
+              "detail": "Node exit=0; stop=not_requested; output matched"
+            },
+            {
+              "name": "text:README.txt",
+              "status": "passed",
+              "detail": "Independent check passed"
+            },
+            {
+              "name": "export-integrity",
+              "status": "passed",
+              "detail": "Export files must not change while independent checks run"
+            },
+            {
+              "name": "source-integrity",
+              "status": "passed",
+              "detail": "Original synthetic input must remain unchanged"
+            }
+          ],
+          "acceptedArtifacts": [
+            {
+              "path": "tags.mjs",
+              "sha256": "cba4bcfec352e1ef1d79377aecc9720d1b7534c99c89edef76fdf0cda3597a83",
+              "versionId": "b79aa266-424c-4af0-8448-744488b9028d"
+            }
+          ],
+          "exportHashes": {
+            "README.txt": "2b55069486e4ec2b16bb9e9e82c28ab224094998253c5e19c9d97b613fc6f2b4",
+            "tags.mjs": "cba4bcfec352e1ef1d79377aecc9720d1b7534c99c89edef76fdf0cda3597a83"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "office",
+      "sample": "office-EIukNK",
+      "status": "passed",
+      "startedAt": "2026-11-16T13:07:39.597Z",
+      "finishedAt": "2026-11-16T13:09:33.886Z",
+      "inputHashes": {
+        "source.json": "478e3c593a82f13197955196250fb19296eaca787f19737c387804f0b9da14b4"
+      },
+      "interventions": 0,
+      "localReport": ".astrisle-acceptance/office-EIukNK/report.json",
+      "stages": [
+        {
+          "status": "passed",
+          "modelSteps": 12,
+          "taskCount": 2,
+          "checks": [
+            {
+              "name": "office:brief.docx",
+              "status": "passed",
+              "detail": "Office structure: matched; application rendering and formula recalculation not performed"
+            },
+            {
+              "name": "office:budget.xlsx",
+              "status": "passed",
+              "detail": "Office structure and source-cell sums: matched; application rendering and formula recalculation not performed"
+            },
+            {
+              "name": "office:deck.pptx",
+              "status": "passed",
+              "detail": "Office structure: matched; application rendering and formula recalculation not performed"
+            },
+            {
+              "name": "export-integrity",
+              "status": "passed",
+              "detail": "Export files must not change while independent checks run"
+            },
+            {
+              "name": "source-integrity",
+              "status": "passed",
+              "detail": "Original synthetic input must remain unchanged"
+            }
+          ],
+          "acceptedArtifacts": [
+            {
+              "path": "brief.docx",
+              "sha256": "211c60b0ef57f7340c3f65980bb0c79c6feacd2d312c71552702206245c95b38",
+              "versionId": "57058968-2b67-4abc-ba15-f17aeb6f5b52"
+            },
+            {
+              "path": "budget.xlsx",
+              "sha256": "22683c5784be79f077446d03309e2032080d05ef640fdd468b9dceb5c6aa0172",
+              "versionId": "f09d219c-050a-4974-9a44-980e481f272e"
+            },
+            {
+              "path": "deck.pptx",
+              "sha256": "6a5fe0ccaf51923f069bbc9c7955427bd76d21c93f574addd473cfdb87a99054",
+              "versionId": "2190273f-a774-4f29-b0d5-ef1d489ea4de"
+            }
+          ],
+          "exportHashes": {
+            "brief.docx": "211c60b0ef57f7340c3f65980bb0c79c6feacd2d312c71552702206245c95b38",
+            "budget.xlsx": "22683c5784be79f077446d03309e2032080d05ef640fdd468b9dceb5c6aa0172",
+            "deck.pptx": "6a5fe0ccaf51923f069bbc9c7955427bd76d21c93f574addd473cfdb87a99054",
+            "source.json": "478e3c593a82f13197955196250fb19296eaca787f19737c387804f0b9da14b4"
+          }
+        },
+        {
+          "status": "passed",
+          "modelSteps": 14,
+          "taskCount": 2,
+          "checks": [
+            {
+              "name": "office:brief-updated.docx",
+              "status": "passed",
+              "detail": "Office structure: matched; application rendering and formula recalculation not performed"
+            },
+            {
+              "name": "office:budget-updated.xlsx",
+              "status": "passed",
+              "detail": "Office structure and source-cell sums: matched; application rendering and formula recalculation not performed"
+            },
+            {
+              "name": "office:deck-updated.pptx",
+              "status": "passed",
+              "detail": "Office structure: matched; application rendering and formula recalculation not performed"
+            },
+            {
+              "name": "office:brief.docx",
+              "status": "passed",
+              "detail": "Office structure: matched; application rendering and formula recalculation not performed"
+            },
+            {
+              "name": "office:budget.xlsx",
+              "status": "passed",
+              "detail": "Office structure and source-cell sums: matched; application rendering and formula recalculation not performed"
+            },
+            {
+              "name": "office:deck.pptx",
+              "status": "passed",
+              "detail": "Office structure: matched; application rendering and formula recalculation not performed"
+            },
+            {
+              "name": "export-integrity",
+              "status": "passed",
+              "detail": "Export files must not change while independent checks run"
+            },
+            {
+              "name": "source-integrity",
+              "status": "passed",
+              "detail": "Original synthetic input must remain unchanged"
+            }
+          ],
+          "acceptedArtifacts": [
+            {
+              "path": "brief-updated.docx",
+              "sha256": "252c4075393f03eba9a9260127018723fd6f61130f3b1f138ca5a059d746a443",
+              "versionId": "ea6d0583-1900-43fd-8145-8a807b62a54b"
+            },
+            {
+              "path": "budget-updated.xlsx",
+              "sha256": "649efd9011d0fa5b95759c61b35a2f18de07e1f27034a8d90692b48006960dbe",
+              "versionId": "de5a2ff0-ab23-44da-834b-ca1f35035b9c"
+            },
+            {
+              "path": "deck-updated.pptx",
+              "sha256": "421bf41e2419e35eed161ba8eabbb3131246258ec465b0a5f01edea25bbf617d",
+              "versionId": "ddc7d112-3ec4-491a-8463-c13d3d442c65"
+            }
+          ],
+          "exportHashes": {
+            "brief-updated.docx": "252c4075393f03eba9a9260127018723fd6f61130f3b1f138ca5a059d746a443",
+            "brief.docx": "211c60b0ef57f7340c3f65980bb0c79c6feacd2d312c71552702206245c95b38",
+            "budget-updated.xlsx": "649efd9011d0fa5b95759c61b35a2f18de07e1f27034a8d90692b48006960dbe",
+            "budget.xlsx": "22683c5784be79f077446d03309e2032080d05ef640fdd468b9dceb5c6aa0172",
+            "deck-updated.pptx": "421bf41e2419e35eed161ba8eabbb3131246258ec465b0a5f01edea25bbf617d",
+            "deck.pptx": "6a5fe0ccaf51923f069bbc9c7955427bd76d21c93f574addd473cfdb87a99054",
+            "source.json": "478e3c593a82f13197955196250fb19296eaca787f19737c387804f0b9da14b4"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "unseen-brackets",
+      "sample": "unseen-brackets-vujxr2",
+      "status": "passed",
+      "startedAt": "2026-11-16T13:08:16.383Z",
+      "finishedAt": "2026-11-16T13:09:49.805Z",
+      "inputHashes": {},
+      "interventions": 0,
+      "localReport": ".astrisle-acceptance/unseen-brackets-vujxr2/report.json",
+      "stages": [
+        {
+          "status": "passed",
+          "modelSteps": 20,
+          "taskCount": 2,
+          "checks": [
+            {
+              "name": "node:brackets.mjs",
+              "status": "passed",
+              "detail": "Node exit=0; stop=not_requested; output matched"
+            },
+            {
+              "name": "node:brackets.mjs",
+              "status": "passed",
+              "detail": "Node exit=0; stop=not_requested; output matched"
+            },
+            {
+              "name": "node:brackets.mjs",
+              "status": "passed",
+              "detail": "Node exit=0; stop=not_requested; output matched"
+            },
+            {
+              "name": "node:brackets.mjs",
+              "status": "passed",
+              "detail": "Node exit=0; stop=not_requested; output matched"
+            },
+            {
+              "name": "export-integrity",
+              "status": "passed",
+              "detail": "Export files must not change while independent checks run"
+            },
+            {
+              "name": "source-integrity",
+              "status": "passed",
+              "detail": "Original synthetic input must remain unchanged"
+            }
+          ],
+          "acceptedArtifacts": [
+            {
+              "path": "brackets.mjs",
+              "sha256": "12071d0250ef84929fe72ee46888dcd3a1875284ba064a3783cb5d85742ce411",
+              "versionId": "5066b8a5-5b6a-42e3-86e7-9d2cdfca9385"
+            }
+          ],
+          "exportHashes": {
+            "brackets.mjs": "12071d0250ef84929fe72ee46888dcd3a1875284ba064a3783cb5d85742ce411"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "continuity",
+      "sample": "continuity-wWiQqo",
+      "status": "passed",
+      "startedAt": "2026-11-16T13:09:33.911Z",
+      "finishedAt": "2026-11-16T13:10:11.429Z",
+      "inputHashes": {},
+      "interventions": 0,
+      "localReport": ".astrisle-acceptance/continuity-wWiQqo/report.json",
+      "stages": [
+        {
+          "status": "passed",
+          "modelSteps": 9,
+          "taskCount": 2,
+          "checks": [
+            {
+              "name": "json:status.json",
+              "status": "passed",
+              "detail": "Independent check passed"
+            },
+            {
+              "name": "export-integrity",
+              "status": "passed",
+              "detail": "Export files must not change while independent checks run"
+            },
+            {
+              "name": "source-integrity",
+              "status": "passed",
+              "detail": "Original synthetic input must remain unchanged"
+            }
+          ],
+          "acceptedArtifacts": [
+            {
+              "path": "status.json",
+              "sha256": "63c013e94d9cff3ba2826d130e8e53c68389e2defa2e52790a1abe6f666a4156",
+              "versionId": "4dd778ed-a0bf-481f-98e3-ac80292a0efa"
+            }
+          ],
+          "exportHashes": {
+            "status.json": "63c013e94d9cff3ba2826d130e8e53c68389e2defa2e52790a1abe6f666a4156"
+          }
+        },
+        {
+          "status": "passed",
+          "modelSteps": 10,
+          "taskCount": 2,
+          "checks": [
+            {
+              "name": "json:status.json",
+              "status": "passed",
+              "detail": "Independent check passed"
+            },
+            {
+              "name": "export-integrity",
+              "status": "passed",
+              "detail": "Export files must not change while independent checks run"
+            },
+            {
+              "name": "source-integrity",
+              "status": "passed",
+              "detail": "Original synthetic input must remain unchanged"
+            }
+          ],
+          "acceptedArtifacts": [
+            {
+              "path": "status.json",
+              "sha256": "a901ad6459939c7433cb102b4a66a10b77840671bb3dd2c67d6187f7af33728b",
+              "versionId": "f78e4a55-02e7-4c6a-93e6-5f040f2922ab"
+            }
+          ],
+          "exportHashes": {
+            "status.json": "a901ad6459939c7433cb102b4a66a10b77840671bb3dd2c67d6187f7af33728b"
+          }
+        }
+      ]
+    }
+  ]
+}

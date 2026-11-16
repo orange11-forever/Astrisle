@@ -3,6 +3,46 @@ import * as THREE from 'three';
 import { createCharacterModelCache, disposeCharacterClone } from './model-cache';
 import { humanoidGlb } from '../../../../tests/fixtures/island-life';
 import { characterDocument, makeGlb } from '../../../../tests/fixtures/character-model';
+import {
+  asciiFbx,
+  asciiStl,
+  binaryFbx,
+  binaryStl,
+  formatBundle,
+} from '../../../../tests/fixtures/character-formats';
+import { inspectCharacterImport } from './model-cache';
+
+it.each([
+  ['ASCII STL', formatBundle('stl', asciiStl), 0],
+  ['binary STL', formatBundle('stl', binaryStl()), 0],
+  ['animated FBX', formatBundle('fbx', asciiFbx), 1],
+  ['binary FBX', formatBundle('fbx', binaryFbx()), 0],
+] as const)(
+  'loads and normalizes real %s geometry and preserves its animations',
+  async (_name, bytes, animationCount) => {
+    expect(await inspectCharacterImport(bytes)).toEqual({
+      triangleCount: 1,
+      animationCount,
+      hasSkins: false,
+    });
+    const cache = createCharacterModelCache(async () => bytes);
+    const lease = cache.acquire('format');
+    const model = await lease.ready;
+    expect(model.animations).toHaveLength(animationCount);
+    const bounds = new THREE.Box3().setFromObject(model.instantiate());
+    expect(bounds.min.y).toBeCloseTo(0);
+    expect(bounds.max.y).toBeCloseTo(1.85);
+    lease.release();
+  },
+);
+
+it('rejects unsupported FBX materials instead of silently changing appearance', async () => {
+  await expect(
+    inspectCharacterImport(
+      formatBundle('fbx', asciiFbx.replace('"phong"', '"unsupported-custom-shader"')),
+    ),
+  ).rejects.toThrow(/不支持/);
+});
 
 describe('shared custom character resources', () => {
   it('shares inferred skin geometry but owns separate bones and retires the template once', async () => {

@@ -11,6 +11,7 @@ import type {
   NewWorkspaceInput,
   ProjectSnapshot,
   RuntimeOptions,
+  Scope,
   SubmitInput,
   Task,
   Workspace,
@@ -53,6 +54,20 @@ export interface RuntimeService {
   close(): Promise<void>;
 }
 const now = () => new Date().toISOString();
+function executionEnvironment(scope: Scope) {
+  return {
+    platform: process.platform,
+    nodeExecutable: process.versions.electron ? undefined : process.execPath,
+    allowProcess: scope.allowProcess,
+    allowNetwork: scope.allowNetwork,
+    note: 'Use only confirmed absolute executable paths. Do not guess paths from another OS. process_run accepts input as UTF-8 stdin. Tool permissions still apply.',
+  };
+}
+function grantedTool(effect: string, scope: Scope) {
+  return (
+    (effect !== 'process' || scope.allowProcess) && (effect !== 'network' || scope.allowNetwork)
+  );
+}
 const result = (ok: boolean, message: string, code?: string): CommandResult => ({
   ok,
   message,
@@ -918,49 +933,73 @@ class Runtime implements RuntimeService {
           );
           return;
         }
-        const s = this.store.get(id),
-          runId = randomUUID();
-        signal.throwIfAborted();
-        if (!this.reserveStep(id, runId)) return;
-        let response;
-        try {
-          response = await complete(
-            settings,
-            [
-              {
-                role: 'system',
-                content:
-                  'You plan real project work, never a fixed demonstration. Use propose_plan to produce a DAG of 2+ tasks across mori and luma. Each criterion must have an author and a different reviewer depending on the author. Review dependencies should use artifact_available when reviewing published files. Use only registered capabilities. Keep graph as small as the goal permits.',
-              },
-              {
-                role: 'user',
-                content: JSON.stringify({
-                  goal: s.commission.goal,
-                  criteria: s.commission.criteria,
-                  tools: this.options.executor.definitions(),
-                  workspace: s.workspace,
-                  budget: s.commission.budget,
-                }),
-              },
-            ],
-            [planTool],
-            signal,
-          );
-          this.store.endCall(runId, {
-            ok: true,
-          });
-        } catch (e) {
-          this.store.endCall(runId, {
-            ok: false,
-            error: this.safeError(e),
-          });
-          throw e;
+        const s = this.store.get(id);
+        const messages: Message[] = [
+          {
+            role: 'system',
+            content:
+              'You plan real project work, never a fixed demonstration. You must call propose_plan, not write a prose plan. Produce a DAG of 2+ tasks across mori and luma. Task kind must be investigate, implement, office, review, or integrate; author is a role, not a task kind. Every author, including investigate, must publish actual files and have a different reviewer DIRECTLY depending on that author and covering its criteria. Transitive dependency alone does not review preparatory outputs. Review tasks are read-only and finish with submit_review; never assign them report-file creation. Review dependencies use artifact_available. An author can consume a predecessor via artifact_available, or via task_passed after a separate earlier review; do not create a review-wait deadlock. Use only registered capabilities. Keep graph as small as the goal permits: prefer one author and one reviewer for tightly coupled outputs. Parallel author tasks must own disjoint output paths; specify each task scope clearly.',
+          },
+          {
+            role: 'user',
+            content: JSON.stringify({
+              goal: s.commission.goal,
+              criteria: s.commission.criteria,
+              tools: this.options.executor
+                .definitions()
+                .filter((d) => grantedTool(d.effect, s.commission.scope)),
+              environment: executionEnvironment(s.commission.scope),
+              capabilities: await this.options.executor.capabilities(),
+              workspace: s.workspace,
+              budget: s.commission.budget,
+            }),
+          },
+        ];
+        let plan: ReturnType<typeof validatePlan> | undefined;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          signal.throwIfAborted();
+          const runId = randomUUID();
+          if (!this.reserveStep(id, runId)) return;
+          let response;
+          try {
+            response = await complete(settings, messages, [planTool], signal);
+          } catch (error) {
+            this.store.endCall(runId, { ok: false, error: this.safeError(error) });
+            throw error;
+          }
+          try {
+            signal.throwIfAborted();
+            const proposal = response.calls.find((call) => call.name === 'propose_plan');
+            if (!proposal) throw new Error('Provider did not return a structured plan');
+            validateArguments(proposal.args, planTool.parameters);
+            plan = validatePlan(proposal.args.tasks, s.commission.criteria);
+            this.store.endCall(runId, { ok: true });
+            break;
+          } catch (error) {
+            const detail = this.safeError(error);
+            this.store.endCall(runId, { ok: false, error: detail });
+            if (signal.aborted || attempt === 2) throw error;
+            this.change(id, 'plan_rejected', `Plan needs correction: ${detail}`, () => {});
+            messages.push({
+              role: 'assistant',
+              content: response.text,
+              calls: response.calls,
+              native: response.native,
+            });
+            for (const call of response.calls)
+              messages.push({
+                role: 'tool',
+                callId: call.id,
+                name: call.name,
+                content: JSON.stringify({ ok: false, error: detail }),
+              });
+            messages.push({
+              role: 'user',
+              content: `The plan was rejected: ${detail}. Correct it and call propose_plan with supported task kinds, known criterion IDs, and separate authors/reviewers. Do not execute project tools or reply with a prose plan.`,
+            });
+          }
         }
-        signal.throwIfAborted();
-        const proposal = response.calls.find((c) => c.name === 'propose_plan');
-        if (!proposal) throw new Error('Provider did not return a structured plan');
-        validateArguments(proposal.args, planTool.parameters);
-        const plan = validatePlan(proposal.args.tasks, s.commission.criteria);
+        if (!plan) throw new Error('Provider did not return a valid plan');
         const ids = new Map(plan.map((p) => [p.key, randomUUID()]));
         this.change(id, 'plan_created', 'Model generated a validated task graph', (s) => {
           const time = now();
@@ -1095,7 +1134,7 @@ class Runtime implements RuntimeService {
     const messages: Message[] = [
       {
         role: 'system',
-        content: `You are ${task.agentId}, carrying out real work in an isolated task workspace. Use registered tools. All paths are relative to your workspace. Do not claim execution or tests without tool output. Publish actual files with submit_artifact then complete_task. A reviewer must use tools to inspect exact input versions and submit_review with real evidence IDs; insufficient evidence is unable_to_verify. Never approve your own work. User rejections must be respected. Tools may not access runtime state files.`,
+        content: `You are ${task.agentId}, carrying out your assigned task in an isolated task workspace. The task description and criterionIds define your scope; the overall project goal is context, not an instruction to perform other partners' tasks. Only create and publish files owned by this task. Use registered tools. All paths are relative to your workspace. Do not claim execution or tests without tool output. Publish all final files with submit_artifact, then call complete_task once the entire author handoff is ready; do not republish unchanged versions. A reviewer must inspect every pinned input version with workspace_read or Office inspection tools, then perform applicable checks and submit_review with the real evidence IDs and every input version ID. Process output alone does not establish which file version was inspected. Insufficient evidence is unable_to_verify. Never approve your own work. User rejections must be respected. Tools may not access runtime state files.`,
       },
       {
         role: 'user',
@@ -1103,6 +1142,8 @@ class Runtime implements RuntimeService {
           goal: initial.commission.goal,
           criteria: initial.commission.criteria,
           task,
+          environment: executionEnvironment(initial.commission.scope),
+          capabilities: await this.options.executor.capabilities(),
           inputs,
           userAnswers: initial.requests.filter((r) => r.taskId === taskId && r.status !== 'open'),
           pendingRequests: initial.requests.filter(
@@ -1122,7 +1163,11 @@ class Runtime implements RuntimeService {
     const definitions = [
       ...this.options.executor
         .definitions()
-        .filter((d) => task.kind !== 'review' || d.effect !== 'write'),
+        .filter(
+          (d) =>
+            (task.kind !== 'review' || d.effect !== 'write') &&
+            grantedTool(d.effect, initial.commission.scope),
+        ),
       ...runtimeTools,
     ];
     while (!signal.aborted) {
@@ -1451,10 +1496,7 @@ class Runtime implements RuntimeService {
     }
     if (call.name === 'complete_task') {
       if (task.kind === 'review') throw new Error('Reviewer must submit_review');
-      if (
-        ['implement', 'office', 'integrate'].includes(task.kind) &&
-        !task.outputArtifactIds.length
-      )
+      if (!task.outputArtifactIds.length)
         throw new Error('Publish actual deliverables before completion');
       for (const artifact of s.artifacts.filter(
         (a) => a.taskId === taskId && a.validity === 'current',

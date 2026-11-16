@@ -77,6 +77,20 @@ it('reports cancellation only after the process tree is confirmed stopped', asyn
   expect(receipt.ok).toBe(false);
   expect(receipt.metadata?.stopStatus).toBe('stopped');
 });
+it('passes explicit UTF-8 stdin to a supervised process', async () => {
+  const { context, executor } = await fixture();
+  const result = await executor.execute(
+    'process_run',
+    {
+      command: process.execPath,
+      args: ['-e', 'process.stdin.pipe(process.stdout)'],
+      input: '星岛\n{"value":42}\n',
+    },
+    context,
+  );
+  expect(result.ok, result.output).toBe(true);
+  expect(result.output).toBe('星岛\n{"value":42}\n');
+});
 it('validates every redirect target before making a cross-host request', async () => {
   const { context, executor } = await fixture();
   let forbiddenRequested = false;

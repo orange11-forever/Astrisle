@@ -89,6 +89,7 @@ const definitions: ToolDefinition[] = [
         command: stringSchema,
         args: { type: 'array', maxItems: 100, items: { type: 'string', maxLength: 32768 } },
         cwd: stringSchema,
+        input: textSchema,
         timeoutMs: { type: 'integer', minimum: 100, maximum: 120000 },
       },
       ['command'],
@@ -330,6 +331,7 @@ export function createExecutor(options: {
             cwd,
             supervisorPath,
             signal: context.signal,
+            input: str(args, 'input', ''),
             timeoutMs: Math.max(100, numeric(args.timeoutMs, 30000, 120000)),
           });
           return {

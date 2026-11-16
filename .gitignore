@@ -6,6 +6,7 @@ release/
 __pycache__/
 .pytest_cache/
 .astrisle-dev/
+.astrisle-acceptance/
 .superpowers/
 test-results/
 playwright-report/

@@ -1,0 +1,18 @@
+{
+  "id": "unseen-brackets",
+  "title": "未用于开发的括号检查委托",
+  "stages": [
+    {
+      "goal": "Create brackets.mjs, a dependency-free Node CLI. It reads a JSON string from stdin and prints one JSON boolean: whether (), [] and {} are correctly balanced and nested. Ignore all other characters, accept empty strings, reject unmatched closing/opening brackets and crossed nesting. Publish the script, independently inspect and execute it, then finish.",
+      "criteria": [
+        "The CLI accepts a JSON string and correctly validates balanced and nested bracket types"
+      ],
+      "checks": [
+        { "kind": "node", "path": "brackets.mjs", "input": "\"([a]{b})\"", "json": true },
+        { "kind": "node", "path": "brackets.mjs", "input": "\"([)]\"", "json": false },
+        { "kind": "node", "path": "brackets.mjs", "input": "\"]\"", "json": false },
+        { "kind": "node", "path": "brackets.mjs", "input": "\"\"", "json": true }
+      ]
+    }
+  ]
+}

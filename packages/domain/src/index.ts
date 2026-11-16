@@ -65,18 +65,12 @@ export function validatePlan(value: unknown, criteria: Criterion[]): ModelTaskPr
       !authors.length ||
       !reviews.length ||
       authors.some(
-        (a) => !reviews.some((r) => r.agentId !== a.agentId && reaches(r, a.key, new Set())),
+        (a) => !reviews.some((r) => r.agentId !== a.agentId && r.dependencies.includes(a.key)),
       )
     )
-      throw new Error('Every criterion requires a separate author and dependent reviewer');
-  }
-  function reaches(t: ModelTaskProposal, key: string, seen: Set<string>): boolean {
-    if (seen.has(t.key)) return false;
-    seen.add(t.key);
-    return (
-      t.dependencies.includes(key) ||
-      t.dependencies.some((dep) => reaches(tasks.find((x) => x.key === dep)!, key, seen))
-    );
+      throw new Error(
+        'Every author, including investigation tasks, requires a direct independent reviewer for its published outputs and criteria',
+      );
   }
   for (const t of tasks)
     for (const [key, kind] of Object.entries(t.dependencyKinds ?? {}))
@@ -91,6 +85,44 @@ export function validatePlan(value: unknown, criteria: Criterion[]): ModelTaskPr
         task.dependencyKinds[dependency] = 'artifact_available';
     }
   }
+  // A DAG can still deadlock when an author waits for a reviewed predecessor
+  // whose only reviewer in turn waits for this author. Simulate handoff/pass
+  // boundaries without inventing successful tool results or bypassing reviews.
+  const handedOff = new Set<string>();
+  const passed = new Set<string>();
+  let progress = true;
+  while (progress) {
+    progress = false;
+    for (const task of tasks) {
+      if (handedOff.has(task.key) || passed.has(task.key)) continue;
+      if (
+        !task.dependencies.every((key) =>
+          task.dependencyKinds?.[key] === 'artifact_available'
+            ? handedOff.has(key)
+            : passed.has(key),
+        )
+      )
+        continue;
+      progress = true;
+      if (task.kind === 'review') {
+        passed.add(task.key);
+        for (const key of task.dependencies)
+          if (tasks.find((candidate) => candidate.key === key)?.kind !== 'review') passed.add(key);
+      } else {
+        handedOff.add(task.key);
+        if (
+          !tasks.some(
+            (candidate) => candidate.kind === 'review' && candidate.dependencies.includes(task.key),
+          )
+        )
+          passed.add(task.key);
+      }
+    }
+  }
+  if (tasks.some((task) => !passed.has(task.key)))
+    throw new Error(
+      'Plan has a review dependency deadlock; review a prerequisite before the next author, or use artifact_available for its consumer',
+    );
   return tasks;
 }
 export function ready(task: Task, snapshot: ProjectSnapshot): boolean {
@@ -99,9 +131,12 @@ export function ready(task: Task, snapshot: ProjectSnapshot): boolean {
     task.dependencies.every((id) => {
       const dep = snapshot.tasks.find((t) => t.id === id);
       return task.dependencyKinds?.[id] === 'artifact_available'
-        ? dep?.outputArtifactIds.some((id) =>
-            snapshot.artifacts.some((a) => a.id === id && a.validity === 'current'),
-          )
+        ? (task.kind !== 'review' ||
+            dep?.kind === 'review' ||
+            ['awaiting_review', 'passed'].includes(dep?.status ?? '')) &&
+            dep?.outputArtifactIds.some((id) =>
+              snapshot.artifacts.some((a) => a.id === id && a.validity === 'current'),
+            )
         : dep?.status === 'passed';
     })
   );

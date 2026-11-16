@@ -1,8 +1,10 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { clone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { createProceduralGaitTemplate, disposeProceduralTemplate } from './procedural-gait';
+import { parseCharacterBundle, inspectParsedCharacter } from './format-loader';
+import type { ParsedCharacter } from './format-loader';
+import { disposeResources } from './model-resources';
 
 export interface SharedCharacterModel {
   animations: THREE.AnimationClip[];
@@ -16,32 +18,9 @@ type Entry = {
   timer?: ReturnType<typeof setTimeout>;
 };
 
-function disposeResources(scenes: THREE.Object3D[]) {
-  const geometries = new Set<THREE.BufferGeometry>();
-  const materials = new Set<THREE.Material>();
-  const textures = new Set<THREE.Texture>();
-  for (const scene of scenes)
-    scene.traverse((object) => {
-      if (!(object instanceof THREE.Mesh)) return;
-      geometries.add(object.geometry);
-      for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
-        materials.add(material);
-        for (const value of Object.values(material))
-          if (value instanceof THREE.Texture) textures.add(value);
-      }
-    });
-  for (const geometry of geometries) geometry.dispose();
-  for (const material of materials) material.dispose();
-  const images = new Set<ImageBitmap>();
-  for (const texture of textures) {
-    if (typeof ImageBitmap !== 'undefined' && texture.image instanceof ImageBitmap)
-      images.add(texture.image);
-    texture.dispose();
-  }
-  for (const image of images) image.close();
-}
-
-async function parse(bytes: Uint8Array): Promise<GLTF> {
+async function parse(bytes: Uint8Array): Promise<ParsedCharacter> {
+  const bundled = await parseCharacterBundle(bytes);
+  if (bundled) return bundled;
   const manager = new THREE.LoadingManager();
   let resourceFailed = false;
   manager.onError = () => {
@@ -67,7 +46,7 @@ async function parse(bytes: Uint8Array): Promise<GLTF> {
   return gltf;
 }
 
-function prepare(gltf: GLTF): SharedCharacterModel {
+function prepare(gltf: ParsedCharacter): SharedCharacterModel {
   const bounds = new THREE.Box3().setFromObject(gltf.scene);
   const size = bounds.getSize(new THREE.Vector3());
   if (
@@ -126,6 +105,16 @@ function prepare(gltf: GLTF): SharedCharacterModel {
     },
   };
   return model;
+}
+
+/** Parse with the same loaders used by every island before committing a replacement. */
+export async function inspectCharacterImport(bytes: Uint8Array) {
+  const parsed = await parse(bytes);
+  try {
+    return inspectParsedCharacter(parsed);
+  } finally {
+    disposeResources(parsed.scenes);
+  }
 }
 
 /** GPU resources are owned by the cache; avatar clones own only their skeleton state. */

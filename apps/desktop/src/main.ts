@@ -23,6 +23,7 @@ import { CredentialStore } from './credentials';
 import { isTrustedSender, canOpenExternally } from './security';
 import { RuntimeBridge } from './runtime-bridge';
 import { CharacterStore } from './characters';
+import { createCharacterInspector } from './character-validator';
 
 app.setName('Astrisle');
 const projectRoot = app.getAppPath();
@@ -67,7 +68,7 @@ const submitSchema = z
 
 async function start() {
   await mkdir(dataRoot, { recursive: true });
-  const characters = new CharacterStore(dataRoot);
+  const characters = new CharacterStore(dataRoot, createCharacterInspector(__dirname));
   const vault = new CredentialStore(join(dataRoot, 'provider.json'), {
     available: () => safeStorage.isEncryptionAvailable(),
     encrypt: (value) => safeStorage.encryptString(value),
@@ -106,6 +107,25 @@ async function start() {
   register('getCharacters', () => characters.profiles());
   register('updateCharacter', (id, patch) => characters.update(id, patch));
   register('loadCharacterModel', (assetId) => characters.loadModel(assetId));
+  register('completeCharacterImport', (id, token, inspection) =>
+    characters.completeImport(id, token, inspection),
+  );
+  register('cancelCharacterImport', (token) => characters.cancelImport(token));
+  register('prepareCharacterImport', async (rawId) => {
+    const id = z.enum(['mori', 'luma', 'user']).parse(rawId);
+    const result = await dialog.showOpenDialog(window!, {
+      title: '导入角色模型',
+      properties: ['openFile'],
+      filters: [
+        {
+          name: '角色模型（GLB / glTF / 3MF / STL / OBJ / FBX）',
+          extensions: ['glb', 'gltf', '3mf', 'stl', 'obj', 'fbx'],
+        },
+      ],
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+    return characters.prepareImport(id, result.filePaths[0]);
+  });
   register('importCharacter', async (rawId) => {
     const id = z.enum(['mori', 'luma', 'user']).parse(rawId);
     const result = await dialog.showOpenDialog(window!, {
