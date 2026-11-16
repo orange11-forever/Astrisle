@@ -189,4 +189,4 @@ docs/                 产品设计、概念图、计划和阶段记录
 - [最新阶段与下次交接](docs/development/stage-9.md)
 - README Logo 沿用软件现有标志，内侧星形使用 Lucide Sparkles；[许可说明](docs/assets/LICENSE-lucide.txt)。
 
-从 `main` 创建功能分支，在分支内实现、验证和提交，再推送并通过 PR 审查。前八阶段已合并，第八阶段见 [PR #4](https://github.com/orange11-forever/Astrisle/pull/4)；第九阶段在 `feat/live-model-acceptance` 开发。开发预览不等于正式发布。
+从 `main` 创建功能分支，在分支内实现、验证和提交，再推送并通过 PR 审查。前八阶段已合并，第八阶段见 [PR #4](https://github.com/orange11-forever/Astrisle/pull/4)；第九阶段由 `feat/live-model-acceptance` 的 [PR #5](https://github.com/orange11-forever/Astrisle/pull/5) 跟踪。开发预览不等于正式发布。

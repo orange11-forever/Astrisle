@@ -1,13 +1,13 @@
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { build } from 'esbuild';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, readdir, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, readFile, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 let root: string;
 beforeAll(async () => {
-  root = await mkdtemp(join(tmpdir(), 'astrisle-cli-test-'));
+  root = await realpath(await mkdtemp(join(tmpdir(), 'astrisle-cli-test-')));
   await build({
     entryPoints: ['tests/acceptance/cli.ts'],
     outfile: join(root, 'cli.cjs'),

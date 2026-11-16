@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from 'vitest';
 import { createServer } from 'node:http';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runAcceptanceScenario } from '../acceptance/runner';
@@ -28,7 +28,7 @@ const tool = (name: string, args: unknown) => ({
   function: { name, arguments: JSON.stringify(args) },
 });
 async function fixture(mode = 'success') {
-  const root = await mkdtemp(join(tmpdir(), 'astrisle-acceptance-test-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'astrisle-acceptance-test-')));
   cleanup.push(() => rm(root, { recursive: true, force: true }));
   let planningCalls = 0;
   const requests: any[] = [];

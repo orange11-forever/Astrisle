@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createExecutor } from '../../packages/executor/src/index';
@@ -13,7 +13,7 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 async function setup() {
-  const root = await mkdtemp(join(tmpdir(), 'astrisle-checks-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'astrisle-checks-')));
   roots.push(root);
   const executor = createExecutor({ projectRoot: process.cwd() });
   const signal = new AbortController().signal;

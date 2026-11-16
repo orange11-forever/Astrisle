@@ -59,3 +59,7 @@ pnpm.cmd acceptance --scenario all --repeat 2 --allow-process --key-stdin
 ## 保留范围
 
 真实模型样例不代表任意开放式任务都能成功。Office 仍只核验结构和数值，未做原生应用打开、版式与公式引擎重算。安全写回、发行包、完整异常恢复、长期资源及低配置硬件验收继续保留。静态网格不自动变成专业绑骨角色，复杂材质/扩展和缺失贴图会明确报错。
+
+## 远端交付
+
+[PR #5](https://github.com/orange11-forever/Astrisle/pull/5) 将本阶段提交到 `main` 审查。首次 Windows CI 的 14 项验收测试失败，原因是 runner 使用 `RUNNER~1` 短临时路径，而三个新测试夹具没有先取得真实路径。已在本机真实 8.3 短路径下复现同样的 14 项失败，再将夹具的 `mkdtemp` 结果经 `realpath` 规范化；相同环境下完整 242 项 JS 测试通过。生产路径保护和产品行为没有因此放宽或改变。最终远端结果以 PR 当前提交的 push 与 pull_request 两条运行记录为准。
