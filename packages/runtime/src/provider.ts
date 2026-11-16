@@ -58,7 +58,7 @@ export function normalizeResponse(kind: Kind, payload: unknown): ModelResult {
     const m = obj(array(p.choices)[0]?.message);
     return {
       text: typeof m.content === 'string' ? m.content : '',
-      calls: (m.tool_calls === undefined ? [] : array(m.tool_calls)).map((c) =>
+      calls: (m.tool_calls == null ? [] : array(m.tool_calls)).map((c) =>
         call(c.id, c.function?.name, c.function?.arguments),
       ),
       native: m,
@@ -137,6 +137,13 @@ export function buildRequest(
         messages: messages.map((m) => ({
           role: m.role,
           content: m.content,
+          ...(m.role === 'assistant' &&
+          m.native &&
+          typeof m.native === 'object' &&
+          'reasoning_content' in m.native &&
+          typeof m.native.reasoning_content === 'string'
+            ? { reasoning_content: m.native.reasoning_content }
+            : {}),
           ...(m.calls?.length
             ? {
                 tool_calls: m.calls.map((c) => ({
@@ -372,7 +379,8 @@ export async function complete(
       return normalizeResponse(settings.kind, await response.json());
     } catch (e) {
       if (signal.aborted) throw e;
-      if (attempt < 2 && e instanceof TypeError) {
+      // No tool calls have escaped normalization when response JSON is malformed.
+      if (attempt < 2 && (e instanceof TypeError || e instanceof SyntaxError)) {
         await delay(250 * (attempt + 1), signal);
         continue;
       }

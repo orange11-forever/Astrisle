@@ -3,7 +3,13 @@ import { mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import { z } from 'zod';
 import { DEFAULT_CHARACTERS } from '@astrisle/contracts';
-import type { CharacterModel, CharacterProfile } from '@astrisle/contracts';
+import type {
+  CharacterModel,
+  CharacterProfile,
+  CharacterImportInspection,
+} from '@astrisle/contracts';
+import { packageCharacterFile } from './character-import';
+import { MAX_CHARACTER_STORED_BYTES } from '../../../packages/contracts/src/character-asset';
 
 const MAX_MODEL_BYTES = 100 * 1024 * 1024;
 const idSchema = z.enum(['mori', 'luma', 'user']);
@@ -26,8 +32,8 @@ const modelSchema = z
   .object({
     assetId: assetIdSchema,
     filename: z.string().min(1).max(255),
-    format: z.enum(['glb', 'gltf']),
-    byteLength: z.number().int().min(1).max(MAX_MODEL_BYTES),
+    format: z.enum(['glb', 'gltf', '3mf', 'stl', 'obj', 'fbx']),
+    byteLength: z.number().int().min(1).max(MAX_CHARACTER_STORED_BYTES),
     triangleCount: z.number().int().nonnegative(),
     animationCount: z.number().int().nonnegative(),
     hasSkins: z.boolean(),
@@ -337,7 +343,21 @@ export function validateCharacterModel(
 /** User-local preferences, separate from immutable tasks and from public project assets. */
 export class CharacterStore {
   private queue: Promise<unknown> = Promise.resolve();
-  constructor(private readonly dataRoot: string) {}
+  private pending = new Map<
+    string,
+    {
+      id: string;
+      bytes: Buffer;
+      format: CharacterModel['format'];
+      filename: string;
+      expires: number;
+      inspection: CharacterImportInspection;
+    }
+  >();
+  constructor(
+    private readonly dataRoot: string,
+    private readonly inspect?: (bytes: Uint8Array) => Promise<CharacterImportInspection>,
+  ) {}
 
   async profiles(): Promise<CharacterProfile[]> {
     await this.queue;
@@ -412,6 +432,57 @@ export class CharacterStore {
       await handle.close();
     }
     const metadata = validateCharacterModel(bytes, sourcePath);
+    return this.saveModel(id, bytes, basename(sourcePath), metadata);
+  }
+  async prepareImport(rawId: unknown, sourcePath: string) {
+    const id = idSchema.parse(rawId);
+    const packaged = await packageCharacterFile(sourcePath);
+    if (packaged.format === 'glb' || packaged.format === 'gltf')
+      validateCharacterModel(packaged.bytes, sourcePath);
+    if (!this.inspect) throw new Error('可信模型验证器不可用，原角色保持不变');
+    const inspection = this.inspectionSchema.parse(
+      await this.inspect(new Uint8Array(packaged.bytes)),
+    );
+    for (const [token, entry] of this.pending)
+      if (entry.id === id || entry.expires < Date.now()) this.pending.delete(token);
+    const importId = randomUUID();
+    this.pending.set(importId, { ...packaged, id, inspection, expires: Date.now() + 10 * 60_000 });
+    return { importId, bytes: new Uint8Array(packaged.bytes) };
+  }
+  async cancelImport(rawToken: unknown): Promise<void> {
+    this.pending.delete(z.string().uuid().parse(rawToken));
+  }
+  async completeImport(
+    rawId: unknown,
+    rawToken: unknown,
+    rawInspection: unknown,
+  ): Promise<CharacterProfile> {
+    const id = idSchema.parse(rawId);
+    const token = z.string().uuid().parse(rawToken);
+    this.inspectionSchema.parse(rawInspection);
+    const staged = this.pending.get(token);
+    if (!staged || staged.id !== id || staged.expires < Date.now())
+      throw new Error('模型导入已取消或过期，请重新选择文件');
+    this.pending.delete(token);
+    return this.saveModel(id, staged.bytes, staged.filename, {
+      format: staged.format,
+      byteLength: staged.bytes.length,
+      ...staged.inspection,
+    });
+  }
+  private readonly inspectionSchema = z
+    .object({
+      triangleCount: z.number().int().min(1).max(2_000_000),
+      animationCount: z.number().int().min(0).max(10_000),
+      hasSkins: z.boolean(),
+    })
+    .strict();
+  private async saveModel(
+    id: CharacterProfile['id'],
+    bytes: Buffer,
+    filename: string,
+    metadata: Omit<CharacterModel, 'assetId' | 'filename'>,
+  ): Promise<CharacterProfile> {
     const assetId = createHash('sha256').update(bytes).digest('hex');
     return this.transaction(async () => {
       const profiles = await this.readProfiles();
@@ -425,7 +496,7 @@ export class CharacterStore {
         await rm(temporary, { force: true });
       }
       const profile = profiles.find((p) => p.id === id)!;
-      profile.model = { ...metadata, assetId, filename: basename(sourcePath) };
+      profile.model = { ...metadata, assetId, filename };
       profile.modelRevision = (profile.modelRevision || 0) + 1;
       profile.rotationY = 0;
       await this.persist(profiles);

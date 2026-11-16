@@ -174,7 +174,7 @@ export type CharacterId = 'mori' | 'luma' | 'user';
 export interface CharacterModel {
   assetId: string;
   filename: string;
-  format: 'glb' | 'gltf';
+  format: 'glb' | 'gltf' | '3mf' | 'stl' | 'obj' | 'fbx';
   byteLength: number;
   triangleCount: number;
   animationCount: number;
@@ -192,6 +192,15 @@ export interface CharacterUpdate {
   displayName?: string;
   resetModel?: boolean;
   rotationY?: 0 | 90 | 180 | 270;
+}
+export interface CharacterImportInspection {
+  triangleCount: number;
+  animationCount: number;
+  hasSkins: boolean;
+}
+export interface PendingCharacterImport {
+  importId: string;
+  bytes: Uint8Array;
 }
 export const DEFAULT_CHARACTERS: readonly CharacterProfile[] = [
   { id: 'mori', displayName: 'Mori' },
@@ -249,6 +258,13 @@ export interface HostAPI {
   getCharacters?(): Promise<CharacterProfile[]>;
   updateCharacter?(id: CharacterId, patch: CharacterUpdate): Promise<CharacterProfile>;
   importCharacter?(id: CharacterId): Promise<CharacterProfile | null>;
+  prepareCharacterImport?(id: CharacterId): Promise<PendingCharacterImport | null>;
+  completeCharacterImport?(
+    id: CharacterId,
+    importId: string,
+    inspection: CharacterImportInspection,
+  ): Promise<CharacterProfile>;
+  cancelCharacterImport?(importId: string): Promise<void>;
   loadCharacterModel?(assetId: string): Promise<Uint8Array>;
   createWorkspace(input: NewWorkspaceInput): Promise<Workspace>;
   chooseDirectory(): Promise<string | null>;

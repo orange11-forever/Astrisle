@@ -8,6 +8,10 @@ const api: HostAPI = {
   getCharacters: () => invoke('getCharacters'),
   updateCharacter: (id, patch) => invoke('updateCharacter', id, patch),
   importCharacter: (id) => invoke('importCharacter', id),
+  prepareCharacterImport: (id) => invoke('prepareCharacterImport', id),
+  completeCharacterImport: (id, token, inspection) =>
+    invoke('completeCharacterImport', id, token, inspection),
+  cancelCharacterImport: (token) => invoke('cancelCharacterImport', token),
   loadCharacterModel: (assetId) => invoke('loadCharacterModel', assetId),
   createWorkspace: (input) => invoke('createWorkspace', input),
   chooseDirectory: () => invoke('chooseDirectory'),

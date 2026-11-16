@@ -75,7 +75,7 @@ export const planTool: ToolDefinition = {
   name: 'propose_plan',
   effect: 'read',
   description:
-    'Propose the complete task DAG. Each criterion needs an author and a separate reviewer, using mori and luma.',
+    'Propose the complete task DAG using mori and luma. Every author, including investigate, publishes files and needs a direct independent reviewer. Reviewers are read-only and finish with submit_review. Avoid waiting for task_passed when its reviewer depends on that waiting task.',
   parameters: {
     type: 'object',
     required: ['tasks'],
@@ -105,9 +105,11 @@ export const planTool: ToolDefinition = {
             },
             kind: {
               type: 'string',
+              enum: ['investigate', 'implement', 'office', 'review', 'integrate'],
             },
             agentId: {
               type: 'string',
+              enum: ['mori', 'luma'],
             },
             dependencies: {
               type: 'array',

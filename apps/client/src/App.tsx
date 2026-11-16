@@ -1495,8 +1495,9 @@ function SettingsPanel({
       </form>
       <h4>角色外观与名称</h4>
       <p className="quiet">
-        角色名称和外观适用于所有岛屿。可导入 100 MB 以内的 GLB 或自包含 glTF
-        2；缓冲区和贴图须内嵌，不支持 Draco、Meshopt 或 KTX2 压缩。
+        角色名称和外观适用于所有岛屿。支持 GLB、自包含 glTF 2、3MF、STL、OBJ、FBX，
+        模型及资源总计不超过 100 MB。OBJ 的 MTL 和贴图、FBX 的贴图请放在模型文件夹内； STL
+        主要保留几何，3MF/OBJ 没有角色骨骼动画。暂不支持 Draco、Meshopt、KTX2 和部分 3MF 扩展。
       </p>
       {characters.map((profile) => (
         <CharacterSettings key={profile.id} profile={profile} busy={busy} host={host} run={run} />
@@ -1559,11 +1560,28 @@ function CharacterSettings({
           </button>
           <button
             type="button"
-            disabled={busy || !host?.importCharacter}
+            disabled={busy || (!host?.importCharacter && !host?.prepareCharacterImport)}
             aria-label={`为${profile.displayName}导入模型`}
             onClick={() =>
               run(async () => {
-                const imported = await host!.importCharacter!(profile.id);
+                let imported: CharacterProfile | null;
+                if (host?.prepareCharacterImport && host.completeCharacterImport) {
+                  const pending = await host.prepareCharacterImport(profile.id);
+                  if (!pending) return { ok: true, message: '已取消导入，角色保持不变' };
+                  try {
+                    const { inspectCharacterImport } = await import('./characters/model-cache');
+                    const inspection = await inspectCharacterImport(pending.bytes);
+                    imported = await host.completeCharacterImport(
+                      profile.id,
+                      pending.importId,
+                      inspection,
+                    );
+                  } finally {
+                    await host.cancelCharacterImport?.(pending.importId);
+                  }
+                } else {
+                  imported = await host!.importCharacter!(profile.id);
+                }
                 return {
                   ok: true,
                   message: imported ? '角色模型已保存，场景正在加载' : '已取消导入，角色保持不变',

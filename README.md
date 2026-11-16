@@ -17,11 +17,11 @@
 
 Astrisle 是一个面向 Windows 的多 Agent 桌面工作台。目标是让伙伴从零创建项目、修改已有代码、处理办公资料，并通过自动分工、交接、复核与返工推进工作。3D 场景呈现协作关系，普通面板提供文件、证据、权限和进度的具体信息。
 
-**当前状态：第八阶段开发预览。** 已有 Windows 进程树监督、停止确认与持久化回执；本轮增加 360° 自由环绕与平移、自动坐椅休息／喝茶／荡秋千，以及更细致的花园、藤架、池塘和茶席。尚未完成完整 v0.1 验收，也未用真实供应商凭据验收开放式项目任务。
+**当前状态：第九阶段开发预览。** 新增真实模型任务验收入口，以及 GLB/glTF、3MF、STL、OBJ、FBX 角色导入；导入在主进程管理的隔离窗口中检查，失败保留原角色。已使用 DeepSeek 进行编程、Office 和连续委托的实际验证，结果与范围见[第九阶段记录](docs/development/stage-9.md)。完整 v0.1 与正式发行验收仍未完成。
 
 第二至第五阶段已由 [PR #2：任务续跑、运行时保护与星岛角色配置](https://github.com/orange11-forever/Astrisle/pull/2) 合并。第六、七阶段已由 [PR #3：Windows 进程监督、岛屿散步与验收庆祝](https://github.com/orange11-forever/Astrisle/pull/3) 合并。运行保障见[第六阶段](docs/development/stage-6.md)，散步和验收庆祝见[第七阶段](docs/development/stage-7.md)，本轮自由视角与岛屿生活见[最新开发记录](docs/development/stage-8.md)。
 
-本轮本地验证通过 189 项 JS、10 项 Office 和 21 项桌面/UI 测试，共 220 项；构建、类型与格式检查通过，新增镜头与休闲交互另经 6 项软件渲染复核。自由视角和自动休闲的实现、验证与适配边界见[第八阶段记录](docs/development/stage-8.md)。
+本轮本地验证通过 242 项 JS、10 项 Office 和 35 项桌面/UI 测试，共 287 项；构建、类型与格式检查通过。最终同构建的 DeepSeek 实测 9/9 通过，包含四组任务各两次及一项追加任务，详见[验证摘要](docs/validation/stage-9-live-model-summary.json)。新模型格式、贴图、动画及伪造校验结果的拦截均有实际加载测试。自由视角与自动休闲沿用[第八阶段](docs/development/stage-8.md)实现。
 
 ![当前蓝发角色与第八阶段花园工作室的 Electron 运行全景](docs/development/screenshots/stage-8-current-studio.png)
 
@@ -44,10 +44,10 @@ Astrisle 是一个面向 Windows 的多 Agent 桌面工作台。目标是让伙�
 | 工作工具 | 文件检索/读取/写入/局部修改、明确授权的本机进程、Windows Job 进程树停止确认、按域名授权的网页读取 |
 | 办公 | DOCX、XLSX、PPTX 常用创建与局部修改；文件回读、来源记录和独立数值检查 |
 | 前端 | 360° 环绕与平移、花园星岛、自动坐椅／喝茶／荡秋千、散步与工位寻路、群岛管理、角色特写、验收彩纸礼炮、按需渲染、2D 模式和减少动效 |
-| 角色配置 | 外部 GLB／自包含 glTF 导入、自动居中与尺寸归一化、四方向调整、伙伴显示名称修改、跨岛屿保存与资源共享 |
+| 角色配置 | GLB／自包含 glTF、3MF、STL、OBJ、FBX 导入，伴随资源复制、独立解析检查、自动居中与尺寸归一化、四方向调整、跨岛屿保存与资源共享 |
 | 运行预算 | 累计模型步数与活动时间、暂停后调整总额度、并发调用限额、预算恢复和返工续接 |
 
-模型适配器已有协议测试；这不代表所有厂商、模型和第三方兼容端点都已实测。DeepSeek、通义等服务应在符合工具调用协议时选用兼容模式，并填写该服务实际的基础地址与模型名称。
+模型适配器已有协议测试，DeepSeek 的实际任务记录见第九阶段；这不代表所有厂商、模型和第三方兼容端点都已实测。兼容服务须支持工具调用，并填写其实际基础地址与模型名称。
 
 ## 本地启动
 
@@ -102,7 +102,9 @@ pnpm.cmd dev
 
 在“工作室设置 → 角色外观与名称”中，可以修改每位角色的显示名称，导入或替换本地模型，并调整朝向。名称不改变内部任务身份或历史记录。模型会保存到应用自己的数据目录，原文件之后移动也不影响使用。
 
-当前接受 100 MB、200 万三角面以内的 GLB 或自包含 glTF 2，贴图和缓冲区须内嵌；暂不支持 Draco、Meshopt、KTX2 等需要额外解码器的格式。带有动画的文件使用已有剪辑；合适的静态直立双足模型会在显示时适配基础骨骼和步态，保留原始文件。复杂姿态和服饰不保证适配，不适合的网格保留原姿态。这不是通用自动绑骨或制作级动画重定向。
+当前接受 GLB、自包含 glTF 2、3MF、STL、OBJ 和 FBX，源文件及伴随资源合计须在 100 MB、模型在 200 万三角面以内。OBJ 的 MTL/贴图和 FBX 的外部贴图应放在模型目录或其子目录中；程序复制所需资源，缺失或不支持的材质会明确报错。GLB/glTF 的资源仍须内嵌，暂不支持 Draco、Meshopt、KTX2 等外部解码器。具体格式范围见[模型导入说明](docs/development/character-model-import.md)。
+
+带有可用骨骼和动画的文件保留已有剪辑。STL 通常只有几何形状，OBJ/3MF 不提供角色动画；合适的静态直立双足模型会在显示时适配基础骨骼和步态，原始文件保持不变。复杂姿态和服饰不保证适配，这不是通用自动绑骨或制作级动画重定向。
 
 伙伴空闲时会沿岛上步道散步，自动走向长椅、茶席和秋千，落座、活动、起身后继续散步。每处设施一次由一位角色使用；下一处被占用时继续散步等待，保证活动轮换。有任务或交接时优先结束休闲并返回工作位置。全部自动发生，无需手动选择动作。特写保持静止；减少动效会关闭自动移动和休闲循环，也会响应运行中的系统偏好变化。委托全部验收后自动放一次彩纸礼炮，也可点击“庆祝一下”重播；部分接受和取消不触发，减少动效与 2D 模式只显示完成提示。
 
@@ -138,14 +140,16 @@ pnpm.cmd test:ui
 
 UI 测试当前使用 Microsoft Edge；桌面测试使用真实 Electron 和独立测试数据，验证工作区、预算、角色配置、模型副本的持久化及渲染进程权限。新增场景测试覆盖实际散步、任务打断、特写切换和验收礼炮；执行器测试使用真实子进程和 SQLite 核对停止回执与重启行为。
 
-最近的验证范围、审查修复与边界见[第六阶段](docs/development/stage-6.md)和[第七阶段](docs/development/stage-7.md)。历史记录：[第一阶段](docs/development/stage-1.md)、[第二阶段](docs/development/stage-2.md)、[第三阶段](docs/development/stage-3.md)、[第四阶段](docs/development/stage-4.md)、[第五阶段](docs/development/stage-5.md)。
+最近的验证范围、审查修复与边界见[第九阶段](docs/development/stage-9.md)。历史记录：[第一阶段](docs/development/stage-1.md)、[第二阶段](docs/development/stage-2.md)、[第三阶段](docs/development/stage-3.md)、[第四阶段](docs/development/stage-4.md)、[第五阶段](docs/development/stage-5.md)、[第六阶段](docs/development/stage-6.md)、[第七阶段](docs/development/stage-7.md)、[第八阶段](docs/development/stage-8.md)。
 
 运行时集成测试使用本地脚本化 HTTP 模型替身，文件和数据库操作是真实的。这类测试验证协议与状态转换，不能替代真实模型能力验收。
+
+真实模型验收用 `pnpm.cmd acceptance --list` 查看场景，再按[配置步骤](docs/development/stage-9.md#使用)运行。密钥支持隐藏标准输入，结果保存在独立的 `.astrisle-acceptance/`；该目录与自动清理的浏览器测试输出分开。
 
 ## 已知限制
 
 - 原项目安全写回尚未完成，界面会返回不可用原因；当前使用新目录导出。没有验证 Windows 独占写入与中断恢复前不会开放写回。
-- 尚未用真实模型 API 完成编程与办公全流程验收，无法据此承诺所有开放式委托都能成功。
+- 已有真实模型编程与办公样例验证，样本数量和复杂度仍有限，不能据此承诺任意开放式委托都能成功。
 - Office 验证目前覆盖结构回读和数值核对；没有完成 Microsoft Office/LibreOffice 打开、公式引擎重算及版式验收。复杂对象、宏和外部链接可能被拒绝。
 - 当前任务隔离采用独立文件副本与基线清单，尚未采用内部 Git worktree。已实现本机运行时独占、调用代次校验与 Windows 普通后代进程树停止确认；逐任务 worker 租约、完整恢复及长期资源控制仍需完善。上述机制不替代不可信代码隔离，也不支持跨机器共享数据目录。
 - 外部模型的外观取决于文件本身；静态模型的基础步态依靠保守轮廓推断，不能代替专业绑骨、服饰权重、布料模拟或跨骨骼重定向。默认程序化角色和场景仍为开发资产。
@@ -182,7 +186,7 @@ docs/                 产品设计、概念图、计划和阶段记录
 - [岛屿散步与角色动作设计](docs/superpowers/specs/2026-11-14-island-life-design.md)
 - [概念图生成说明](docs/concepts/astrisle-star-island-prompt.md)
 - [鲸鱼角色参考、署名与使用条件](docs/concepts/blue-whale-girl-references.md)：角色视觉资产保留上游 CC BY-NC-SA 4.0 的署名、非商业与相同方式共享条件，具体范围见该文档。
-- [最新阶段与下次交接](docs/development/stage-7.md)
+- [最新阶段与下次交接](docs/development/stage-9.md)
 - README Logo 沿用软件现有标志，内侧星形使用 Lucide Sparkles；[许可说明](docs/assets/LICENSE-lucide.txt)。
 
-从 `main` 创建功能分支，在分支内实现、验证和提交，再推送并通过 PR 审查。前七阶段已合并；第八阶段由 `feat/island-life-camera` 的 [PR #4：自由视角、自动岛屿生活与当前角色截图](https://github.com/orange11-forever/Astrisle/pull/4) 跟踪。开发预览不等于正式发布。
+从 `main` 创建功能分支，在分支内实现、验证和提交，再推送并通过 PR 审查。前八阶段已合并，第八阶段见 [PR #4](https://github.com/orange11-forever/Astrisle/pull/4)；第九阶段在 `feat/live-model-acceptance` 开发。开发预览不等于正式发布。
