@@ -38,6 +38,14 @@ it.skipIf(process.platform !== 'win32')(
     const capabilities = await createExecutor({ projectRoot: context.workPath }).capabilities();
     expect(capabilities.find((c) => c.id === 'process')?.available).toBe(false);
     expect(capabilities.find((c) => c.id === 'office')?.available).toBe(false);
+    expect(capabilities.find((c) => c.id === 'safe_apply')?.available).toBe(false);
+  },
+);
+it.skipIf(process.platform !== 'win32')(
+  'advertises installed native writeback with its accepted-version boundary',
+  async () => {
+    const capabilities = await createExecutor({ projectRoot: process.cwd() }).capabilities();
+    expect(capabilities.find((c) => c.id === 'safe_apply')?.available).toBe(true);
   },
 );
 it('executes a real host process with minimal environment and redacted output', async () => {

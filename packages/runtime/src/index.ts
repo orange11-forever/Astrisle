@@ -5,6 +5,7 @@ import type {
   Artifact,
   ArtifactPreview,
   ApplyPreview,
+  ApplyOperation,
   Bootstrap,
   Budget,
   CommandResult,
@@ -25,9 +26,8 @@ import {
   integrateTaskWorkspace,
   previewTaskWorkspaceChanges,
   exportWorkspace as exportWorkspaceStorage,
-  prepareWorkspaceApply,
-  applyWorkspace,
 } from '../../workspace/src/index';
+import { SafeApplyService } from '../../workspace/src/apply';
 import { assertPlainPath } from '../../executor/src/path-guard';
 import { complete, validateArguments, type Call, type Message } from './provider';
 import { planTool, runtimeTools } from './tools';
@@ -49,6 +49,9 @@ export interface RuntimeService {
   exportWorkspace(id: string, destination: string): Promise<CommandResult>;
   prepareApply(id: string): Promise<ApplyPreview>;
   apply(operationId: string): Promise<CommandResult>;
+  inspectApply(operationId: string): Promise<ApplyOperation>;
+  prepareRollback(operationId: string): Promise<ApplyPreview>;
+  resolveApplyDirectory(operationId: string): Promise<string>;
   subscribe(listener: (snapshot: ProjectSnapshot) => void): () => void;
   testProvider(): Promise<CommandResult>;
   close(): Promise<void>;
@@ -130,6 +133,9 @@ export function createRuntime(options: RuntimeOptions): RuntimeService {
     exportWorkspace: command(runtime.exportWorkspace),
     prepareApply: command(runtime.prepareApply),
     apply: command(runtime.apply),
+    inspectApply: command(runtime.inspectApply),
+    prepareRollback: command(runtime.prepareRollback),
+    resolveApplyDirectory: command(runtime.resolveApplyDirectory),
     testProvider: command(runtime.testProvider),
     subscribe: (listener) => {
       if (closing) throw closingError();
@@ -172,6 +178,8 @@ class Runtime implements RuntimeService {
     }
   >();
   private planning = new Set<string>();
+  private writebacks: SafeApplyService;
+  private writebackBusy = new Set<string>();
   private closing = false;
   private closed = false;
   private activeSince = new Map<string, number>();
@@ -183,6 +191,11 @@ class Runtime implements RuntimeService {
       this.store = store = new RuntimeStore(options.dataRoot);
       this.store.beginRuntime();
       this.recover();
+      this.writebacks = new SafeApplyService({
+        dataRoot: options.dataRoot,
+        store: this.store,
+        helperPath: options.applyHelperPath,
+      });
       this.budgetTimer = setInterval(() => this.checkpointBudgets(), 1000);
       this.budgetTimer.unref();
     } catch (error) {
@@ -381,9 +394,10 @@ class Runtime implements RuntimeService {
     s.commission.updatedAt = now();
   }
   private emit(s: ProjectSnapshot): void {
+    const applyOperations = this.writebacks?.list(s.workspace.id) ?? [];
     for (const listener of this.listeners)
       try {
-        listener(structuredClone(s));
+        listener(structuredClone(applyOperations.length ? { ...s, applyOperations } : s));
       } catch {
         /* Listener failures never roll back committed state. */
       }
@@ -443,10 +457,93 @@ class Runtime implements RuntimeService {
     return result(true, '项目候选版本已导出到新目录');
   }
   async prepareApply(id: string): Promise<ApplyPreview> {
-    return prepareWorkspaceApply(this.store.get(id).workspace);
+    const snapshot = this.store.get(id);
+    if (
+      this.writebackBusy.has(snapshot.workspace.id) ||
+      (snapshot.commission.status === 'accepted' && this.store.busy(snapshot.workspace.id))
+    )
+      return {
+        operationId: randomUUID(),
+        sourcePath: snapshot.workspace.sourcePath,
+        changes: [],
+        conflicts: [],
+        supported: false,
+        reason: '该工作区仍有写入活动，请等待结束后再预览。',
+      };
+    return this.writebacks.prepare(snapshot);
   }
   async apply(operationId: string): Promise<CommandResult> {
-    return applyWorkspace(operationId);
+    let binding: ReturnType<SafeApplyService['binding']>;
+    try {
+      binding = this.writebacks.binding(operationId);
+    } catch {
+      return result(false, '写回预览不存在或已过期，请重新准备。', 'unknown_apply');
+    }
+    if (this.writebackBusy.has(binding.workspaceId) || this.store.busy(binding.workspaceId))
+      return result(false, '工作区仍有写入活动，不能同时写回。', 'writeback_busy');
+    if (
+      this.writebacks
+        .list(binding.workspaceId)
+        .some(
+          (op) =>
+            op.operationId !== binding.operationId &&
+            !['prepared', 'applied', 'rolled_back', 'conflict'].includes(op.status),
+        )
+    )
+      return result(false, '工作区有其他待核查写回，请先处理。', 'writeback_pending');
+    this.writebackBusy.add(binding.workspaceId);
+    try {
+      const response = await this.writebacks.execute(
+        operationId,
+        this.store.get(binding.commissionId),
+      );
+      this.change(binding.commissionId, 'writeback_result', response.message);
+      return response;
+    } finally {
+      this.writebackBusy.delete(binding.workspaceId);
+    }
+  }
+  async inspectApply(operationId: string): Promise<ApplyOperation> {
+    const binding = this.writebacks.binding(operationId);
+    if (this.writebackBusy.has(binding.workspaceId) || this.store.busy(binding.workspaceId))
+      throw new Error('工作区仍有写入活动，请稍后核查。');
+    this.writebackBusy.add(binding.workspaceId);
+    try {
+      const operation = await this.writebacks.inspect(operationId);
+      this.change(binding.commissionId, 'writeback_inspected', operation.message);
+      return operation;
+    } finally {
+      this.writebackBusy.delete(binding.workspaceId);
+    }
+  }
+  async prepareRollback(operationId: string): Promise<ApplyPreview> {
+    const binding = this.writebacks.binding(operationId),
+      snapshot = this.store.get(binding.commissionId);
+    if (this.writebackBusy.has(binding.workspaceId) || this.store.busy(binding.workspaceId))
+      return {
+        operationId: randomUUID(),
+        sourcePath: snapshot.workspace.sourcePath,
+        changes: [],
+        conflicts: [],
+        supported: false,
+        reason: '工作区仍有写入活动，请稍后恢复。',
+        mode: 'rollback',
+      };
+    this.writebackBusy.add(binding.workspaceId);
+    try {
+      return await this.writebacks.prepareRollback(operationId, snapshot);
+    } finally {
+      this.writebackBusy.delete(binding.workspaceId);
+    }
+  }
+  private writebackBlock(workspaceId: string): CommandResult | undefined {
+    if (this.writebackBusy.has(workspaceId))
+      return result(false, '原项目写回或核查正在进行，请稍后继续。', 'writeback_busy');
+    if (this.writebacks.hasPending(workspaceId))
+      return result(false, '上次写回结果尚未核清，请先查看写回记录。', 'writeback_pending');
+  }
+  async resolveApplyDirectory(operationId: string): Promise<string> {
+    return this.writebacks.resolveDirectory(operationId);
   }
   async submit(input: SubmitInput): Promise<CommandResult> {
     if (this.closing) return result(false, 'Runtime is closing', 'closing');
@@ -456,6 +553,8 @@ class Runtime implements RuntimeService {
       return receipt.payload === payload
         ? receipt.result
         : result(false, 'Request ID already has a different payload', 'request_conflict');
+    const applyBlock = this.writebackBlock(input.workspaceId);
+    if (applyBlock) return applyBlock;
     const workspace = this.store.workspaces().find((w) => w.id === input.workspaceId);
     if (!workspace) return result(false, 'Workspace not found', 'workspace_not_found');
     if (
@@ -522,6 +621,8 @@ class Runtime implements RuntimeService {
   async snapshot(id: string): Promise<ProjectSnapshot> {
     const s = this.store.get(id);
     if (this.activeSince.has(id)) s.commission.activeMilliseconds = this.elapsed(s);
+    const operations = this.writebacks.list(s.workspace.id);
+    if (operations.length) s.applyOperations = operations;
     return s;
   }
   subscribe(listener: (snapshot: ProjectSnapshot) => void): () => void {
@@ -531,6 +632,8 @@ class Runtime implements RuntimeService {
   async control(id: string, action: 'pause' | 'resume' | 'cancel'): Promise<CommandResult> {
     if (this.closing) return result(false, 'Runtime is closing', 'closing');
     const current = this.store.get(id);
+    const applyBlock = action === 'resume' ? this.writebackBlock(current.workspace.id) : undefined;
+    if (applyBlock) return applyBlock;
     if (['accepted', 'cancelled'].includes(current.commission.status))
       return result(false, 'Commission is terminal', 'terminal');
     if (
@@ -668,6 +771,8 @@ class Runtime implements RuntimeService {
   }
   async revise(id: string, instruction: string, expectedRevision: number): Promise<CommandResult> {
     const s = this.store.get(id);
+    const applyBlock = this.writebackBlock(s.workspace.id);
+    if (applyBlock) return applyBlock;
     if (s.requests.some((r) => r.status === 'open' && r.title === interruptedTitle))
       return result(false, 'Resolve unknown tool outcomes before revising work', 'outcome_unknown');
     if (s.commission.revision !== expectedRevision)

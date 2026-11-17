@@ -1,6 +1,7 @@
 import { build } from 'esbuild';
 import { copyFile } from 'node:fs/promises';
 import './build-process-supervisor.mjs';
+import './build-safe-apply.mjs';
 await build({
   entryPoints: {
     main: 'apps/desktop/src/main.ts',

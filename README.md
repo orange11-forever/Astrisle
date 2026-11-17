@@ -17,11 +17,11 @@
 
 Astrisle 是一个面向 Windows 的多 Agent 桌面工作台。目标是让伙伴从零创建项目、修改已有代码、处理办公资料，并通过自动分工、交接、复核与返工推进工作。3D 场景呈现协作关系，普通面板提供文件、证据、权限和进度的具体信息。
 
-**当前状态：第九阶段开发预览。** 新增真实模型任务验收入口，以及 GLB/glTF、3MF、STL、OBJ、FBX 角色导入；导入在主进程管理的隔离窗口中检查，失败保留原角色。已使用 DeepSeek 进行编程、Office 和连续委托的实际验证，结果与范围见[第九阶段记录](docs/development/stage-9.md)。完整 v0.1 与正式发行验收仍未完成。
+**当前状态：第十阶段开发预览。** 已接通 Windows 原项目安全写回：预览并单独确认后应用已验收的新增/修改，保留备份和逐文件记录，支持重启后核查与受控恢复。具体范围见[第十阶段记录](docs/development/stage-10.md)。第九阶段的真实模型验收及 GLB/glTF、3MF、STL、OBJ、FBX 导入继续保留。完整 v0.1 与正式发行验收仍未完成。
 
 第二至第五阶段已由 [PR #2：任务续跑、运行时保护与星岛角色配置](https://github.com/orange11-forever/Astrisle/pull/2) 合并。第六、七阶段已由 [PR #3：Windows 进程监督、岛屿散步与验收庆祝](https://github.com/orange11-forever/Astrisle/pull/3) 合并。运行保障见[第六阶段](docs/development/stage-6.md)，散步和验收庆祝见[第七阶段](docs/development/stage-7.md)，本轮自由视角与岛屿生活见[最新开发记录](docs/development/stage-8.md)。
 
-本轮本地验证通过 242 项 JS、10 项 Office 和 35 项桌面/UI 测试，共 287 项；构建、类型与格式检查通过。最终同构建的 DeepSeek 实测 9/9 通过，包含四组任务各两次及一项追加任务，详见[验证摘要](docs/validation/stage-9-live-model-summary.json)。新模型格式、贴图、动画及伪造校验结果的拦截均有实际加载测试。自由视角与自动休闲沿用[第八阶段](docs/development/stage-8.md)实现。
+本轮本地验证通过 285 项 JS、10 项 Office 和 36 项桌面/UI 测试，共 331 项；构建、类型和格式检查通过。原生写回测试包含真实文件竞争、junction 替换、崩溃和恢复。第九阶段同构建 DeepSeek 实测 9/9 的[验证摘要](docs/validation/stage-9-live-model-summary.json)继续保留；本阶段没有重复调用真实供应商。自由视角与自动休闲沿用[第八阶段](docs/development/stage-8.md)实现。
 
 ![当前蓝发角色与第八阶段花园工作室的 Electron 运行全景](docs/development/screenshots/stage-8-current-studio.png)
 
@@ -38,7 +38,7 @@ Astrisle 是一个面向 Windows 的多 Agent 桌面工作台。目标是让伙�
 | 模块 | 当前内容 |
 |---|---|
 | 桌面 | Electron 窗口与托盘、受限 preload 桥接、独立 Node 运行时、系统加密的 API 密钥存储 |
-| 工作空间 | 创建或导入项目、独立工作副本、文件基线、候选变更整合、冲突检查、导出到新目录 |
+| 工作空间 | 创建或导入项目、独立工作副本、文件基线、候选整合、导出到新目录；已验收新增/修改的 Windows 写回、备份、核查与恢复 |
 | 委托与协作 | SQLite 持久化、幂等派单、动态任务图、两位伙伴、版本化交接、复核与返工、持久化动作回执与重启续接、运行时独占与调用代次校验 |
 | 模型适配 | OpenAI-compatible Chat Completions、OpenAI Responses、Anthropic Messages、Gemini generateContent 四种协议 |
 | 工作工具 | 文件检索/读取/写入/局部修改、明确授权的本机进程、Windows Job 进程树停止确认、按域名授权的网页读取 |
@@ -53,7 +53,7 @@ Astrisle 是一个面向 Windows 的多 Agent 桌面工作台。目标是让伙�
 
 当前开发和验证环境是 Windows x64、Node.js 22.22、Python 3.12 和 pnpm 11.21。Node 至少需要 22.13，以提供本项目使用的 `node:sqlite`；Node 22 下出现 SQLite experimental 提示是已知现象。
 
-Windows 进程监督要求 Windows 10+ x64。测试和桌面构建会用系统 .NET Framework 4.x 的 C# 编译器生成 `dist/helpers/process-supervisor.exe`；缺少编译器会使构建失败，缺少 helper 时不会启动目标程序。
+Windows 进程监督和写回要求 Windows 10+ x64。测试和桌面构建会用系统 .NET Framework 4.x 的 C# 编译器生成 `dist/helpers/process-supervisor.exe` 和 `safe-apply.exe`；缺少编译器会使构建失败。原项目写回还要求本机固定 NTFS 磁盘，辅助程序缺失时保持不可用。
 
 先准备 Node.js、Python、pnpm 和 Git，在 PowerShell 中执行：
 
@@ -95,6 +95,7 @@ pnpm.cmd dev
 2. 创建并命名岛屿，或导入已有项目。**一座岛屿对应一个工作空间**；可从 3D 群岛总览切换进入不同岛屿。创建岛屿不需要模型密钥，导入产生独立副本，原项目不会因此被修改。
 3. 创建委托，填写目标、验收要求和授权范围。默认不授予本机程序执行和网络访问。
 4. 从伙伴、任务与证据面板查看实际执行，回复必要的问题；查看具体产物后可分项接受和导出。
+5. 导入项目的全部当前成果验收后，可在“成果与验收”预览写回。核对原目录和文件内容，再通过系统确认应用。中断时从“写回记录”核查并准备恢复；后续外部修改或无法判定的部分字节不会被备份自动覆盖。
 
 在场景右下角选择“角色特写”，可旋转、缩放查看 Mori、Luma 和用户化身；“回到全景”恢复工作室视角。人物造型不决定实际使用的 API 或模型供应商。
 
@@ -140,7 +141,7 @@ pnpm.cmd test:ui
 
 UI 测试当前使用 Microsoft Edge；桌面测试使用真实 Electron 和独立测试数据，验证工作区、预算、角色配置、模型副本的持久化及渲染进程权限。新增场景测试覆盖实际散步、任务打断、特写切换和验收礼炮；执行器测试使用真实子进程和 SQLite 核对停止回执与重启行为。
 
-最近的验证范围、审查修复与边界见[第九阶段](docs/development/stage-9.md)。历史记录：[第一阶段](docs/development/stage-1.md)、[第二阶段](docs/development/stage-2.md)、[第三阶段](docs/development/stage-3.md)、[第四阶段](docs/development/stage-4.md)、[第五阶段](docs/development/stage-5.md)、[第六阶段](docs/development/stage-6.md)、[第七阶段](docs/development/stage-7.md)、[第八阶段](docs/development/stage-8.md)。
+最近的验证范围、审查修复与边界见[第十阶段](docs/development/stage-10.md)。历史记录：[第一阶段](docs/development/stage-1.md)、[第二阶段](docs/development/stage-2.md)、[第三阶段](docs/development/stage-3.md)、[第四阶段](docs/development/stage-4.md)、[第五阶段](docs/development/stage-5.md)、[第六阶段](docs/development/stage-6.md)、[第七阶段](docs/development/stage-7.md)、[第八阶段](docs/development/stage-8.md)、[第九阶段](docs/development/stage-9.md)。
 
 运行时集成测试使用本地脚本化 HTTP 模型替身，文件和数据库操作是真实的。这类测试验证协议与状态转换，不能替代真实模型能力验收。
 
@@ -148,7 +149,7 @@ UI 测试当前使用 Microsoft Edge；桌面测试使用真实 Electron 和独�
 
 ## 已知限制
 
-- 原项目安全写回尚未完成，界面会返回不可用原因；当前使用新目录导出。没有验证 Windows 独占写入与中断恢复前不会开放写回。
+- 写回仅支持已验收的新增/修改和本机固定 NTFS 普通文件；未复核删除、UNC、重解析路径、硬链接和被占用文件会拒绝。多文件更新不保证整体原子性；歧义中断字节或后续修改需人工核查，恢复后空目录、备份与记录保留。
 - 已有真实模型编程与办公样例验证，样本数量和复杂度仍有限，不能据此承诺任意开放式委托都能成功。
 - Office 验证目前覆盖结构回读和数值核对；没有完成 Microsoft Office/LibreOffice 打开、公式引擎重算及版式验收。复杂对象、宏和外部链接可能被拒绝。
 - 当前任务隔离采用独立文件副本与基线清单，尚未采用内部 Git worktree。已实现本机运行时独占、调用代次校验与 Windows 普通后代进程树停止确认；逐任务 worker 租约、完整恢复及长期资源控制仍需完善。上述机制不替代不可信代码隔离，也不支持跨机器共享数据目录。
@@ -186,7 +187,8 @@ docs/                 产品设计、概念图、计划和阶段记录
 - [岛屿散步与角色动作设计](docs/superpowers/specs/2026-11-14-island-life-design.md)
 - [概念图生成说明](docs/concepts/astrisle-star-island-prompt.md)
 - [鲸鱼角色参考、署名与使用条件](docs/concepts/blue-whale-girl-references.md)：角色视觉资产保留上游 CC BY-NC-SA 4.0 的署名、非商业与相同方式共享条件，具体范围见该文档。
-- [最新阶段与下次交接](docs/development/stage-9.md)
+- [最新阶段与下次交接](docs/development/stage-10.md)
+- [用户确认的后续现代化功能](docs/development/modern-features-backlog.md)
 - README Logo 沿用软件现有标志，内侧星形使用 Lucide Sparkles；[许可说明](docs/assets/LICENSE-lucide.txt)。
 
-从 `main` 创建功能分支，在分支内实现、验证和提交，再推送并通过 PR 审查。前八阶段已合并，第八阶段见 [PR #4](https://github.com/orange11-forever/Astrisle/pull/4)；第九阶段由 `feat/live-model-acceptance` 的 [PR #5](https://github.com/orange11-forever/Astrisle/pull/5) 跟踪。开发预览不等于正式发布。
+从 `main` 创建功能分支，在分支内实现、验证和提交，再推送并通过 PR 审查。前九阶段已合并，第九阶段见 [PR #5](https://github.com/orange11-forever/Astrisle/pull/5)；第十阶段在 `feat/safe-writeback` 开发。开发预览不等于正式发布。

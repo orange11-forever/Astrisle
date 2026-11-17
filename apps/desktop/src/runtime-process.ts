@@ -27,6 +27,9 @@ const permitted = new Set([
   'exportWorkspace',
   'prepareApply',
   'apply',
+  'inspectApply',
+  'prepareRollback',
+  'resolveApplyDirectory',
   'testProvider',
   'close',
 ]);
@@ -51,6 +54,7 @@ port.on('message', async ({ data: request }) => {
         dataRoot: input.dataRoot,
         executor,
         getCredentials: async () => credentials,
+        applyHelperPath: join(input.projectRoot, 'dist/helpers/safe-apply.exe'),
       });
       service.subscribe((snapshot: ProjectSnapshot) =>
         port.postMessage({ event: 'snapshot', value: snapshot }),

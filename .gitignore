@@ -8,6 +8,7 @@ __pycache__/
 .astrisle-dev/
 .astrisle-acceptance/
 .superpowers/
+.impeccable/review/
 test-results/
 playwright-report/
 *.tsbuildinfo

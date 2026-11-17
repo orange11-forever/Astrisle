@@ -10,13 +10,14 @@ import type {
 } from '../../contracts/src/index';
 import { assertPlainPath, contained, validatePath } from '../../executor/src/path-guard';
 
-type Manifest = {
+export type Manifest = {
   schemaVersion: 1;
   files: Record<string, string>;
   excluded: string[];
   createdAt: string;
   workspaceId: string;
 };
+export { scan as scanWorkspaceManifest, changes as manifestChanges, readManifest };
 const excluded = new Set([
   '.git',
   'node_modules',

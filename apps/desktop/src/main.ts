@@ -234,6 +234,19 @@ async function start() {
     preparedApplies.set(preview.operationId, preview);
     return preview;
   });
+  register('inspectApply', (id) => bridge.call('inspectApply', identifier.parse(id)));
+  register('prepareRollback', async (id) => {
+    const preview = await bridge.call<ApplyPreview>('prepareRollback', identifier.parse(id));
+    preparedApplies.set(preview.operationId, preview);
+    return preview;
+  });
+  register('openApplyBackups', async (id) => {
+    const directory = await bridge.call<string>('resolveApplyDirectory', identifier.parse(id));
+    const error = await shell.openPath(directory);
+    return error
+      ? { ok: false, message: error }
+      : { ok: true, message: '已打开备份与恢复记录目录' };
+  });
   register('apply', async (id) => {
     const operationId = identifier.parse(id);
     const preview = preparedApplies.get(operationId);
@@ -245,14 +258,22 @@ async function start() {
       };
     const result = await dialog.showMessageBox(window!, {
       type: 'question',
-      title: '应用到原项目',
-      message: `将写入原项目的 ${preview.changes.length} 个文件变更`,
-      detail: '此操作独立于接受交付。写入前会再次检查原文件版本。',
-      buttons: ['取消', '应用此版本'],
+      title: preview.mode === 'rollback' ? '恢复写回前的文件' : '应用到原项目',
+      message:
+        preview.mode === 'rollback'
+          ? `将恢复本次写回涉及的 ${preview.changes.length} 个文件`
+          : `将写入原项目的 ${preview.changes.length} 个文件变更`,
+      detail: `${preview.sourcePath ?? ''}\n${preview.mode === 'rollback' ? '恢复会重新核对文件身份与内容，后续修改不会被覆盖。' : '此操作独立于接受交付。写入前会再次检查原文件版本。'}`,
+      buttons: ['取消', preview.mode === 'rollback' ? '恢复这些文件' : '应用此版本'],
       defaultId: 0,
       cancelId: 0,
     });
-    if (result.response !== 1) return { ok: false, code: 'cancelled', message: '已取消写回' };
+    if (result.response !== 1)
+      return {
+        ok: false,
+        code: 'cancelled',
+        message: preview.mode === 'rollback' ? '已取消恢复' : '已取消写回',
+      };
     preparedApplies.delete(operationId);
     return bridge.call('apply', operationId);
   });

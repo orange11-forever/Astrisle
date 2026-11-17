@@ -11,6 +11,13 @@ export interface StoredCall {
   request: { kind?: string; name?: string; args?: Record<string, unknown>; revision?: number };
   result?: unknown;
 }
+export interface StoredApplyOperation {
+  id: string;
+  workspaceId: string;
+  commissionId: string;
+  state: string;
+  data: unknown;
+}
 /** Runtime is the sole database writer. Every snapshot and its outbox are one transaction. */
 export class RuntimeStore {
   private db: DatabaseSync;
@@ -37,7 +44,10 @@ export class RuntimeStore {
       CREATE TABLE IF NOT EXISTS receipts(request_id TEXT PRIMARY KEY, payload TEXT NOT NULL, result TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS outbox(event_id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), sequence INTEGER NOT NULL, data TEXT NOT NULL, UNIQUE(project_id,sequence));
       CREATE TABLE IF NOT EXISTS calls(id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), task_id TEXT, state TEXT NOT NULL, data TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS task_paths(task_id TEXT PRIMARY KEY, path TEXT NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS task_paths(task_id TEXT PRIMARY KEY, path TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS apply_operations(id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL REFERENCES workspaces(id),commission_id TEXT NOT NULL REFERENCES projects(id),state TEXT NOT NULL,data TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS applies_by_workspace ON apply_operations(workspace_id);
+      INSERT OR IGNORE INTO migrations VALUES(4);`);
     this.transaction(() => {
       const columns = this.db.prepare('PRAGMA table_info(calls)').all();
       if (!columns.some((column) => column.name === 'request_data')) {
@@ -109,6 +119,47 @@ export class RuntimeStore {
     this.db
       .prepare('INSERT INTO workspaces VALUES(?,?)')
       .run(workspace.id, JSON.stringify(workspace));
+  }
+  putApplyOperation(record: StoredApplyOperation): void {
+    const changes = this.db
+      .prepare(
+        'INSERT INTO apply_operations VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,data=excluded.data WHERE workspace_id=excluded.workspace_id AND commission_id=excluded.commission_id',
+      )
+      .run(
+        record.id,
+        record.workspaceId,
+        record.commissionId,
+        record.state,
+        JSON.stringify(record.data),
+      ).changes;
+    if (changes !== 1) throw new Error('Writeback operation binding changed');
+  }
+  private applyRow(row: Record<string, unknown>): StoredApplyOperation {
+    let data: unknown = null;
+    try {
+      data = JSON.parse(String(row.data));
+    } catch {
+      /* corrupt operations remain visible and block new work */
+    }
+    return {
+      id: String(row.id),
+      workspaceId: String(row.workspace_id),
+      commissionId: String(row.commission_id),
+      state: String(row.state),
+      data,
+    };
+  }
+  applyOperation(id: string): StoredApplyOperation | undefined {
+    const row = this.db.prepare('SELECT * FROM apply_operations WHERE id=?').get(id);
+    return row ? this.applyRow(row) : undefined;
+  }
+  applyOperations(workspaceId?: string): StoredApplyOperation[] {
+    const rows = workspaceId
+      ? this.db
+          .prepare('SELECT * FROM apply_operations WHERE workspace_id=? ORDER BY rowid DESC')
+          .all(workspaceId)
+      : this.db.prepare('SELECT * FROM apply_operations ORDER BY rowid DESC').all();
+    return rows.map((row) => this.applyRow(row));
   }
   projects(): ProjectSnapshot[] {
     return this.db

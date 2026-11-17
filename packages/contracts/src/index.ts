@@ -149,6 +149,7 @@ export interface ProjectSnapshot {
   events: ProjectEvent[];
   requests: UserRequest[];
   lastSequence: number;
+  applyOperations?: ApplyOperation[];
 }
 export type ProviderKind = 'openai-compatible' | 'openai-responses' | 'anthropic' | 'gemini';
 export interface ProviderSettings {
@@ -245,6 +246,10 @@ export interface ApplyChange {
   action: 'create' | 'modify' | 'delete';
   beforeHash?: string;
   afterHash?: string;
+  beforeText?: string;
+  afterText?: string;
+  binary?: boolean;
+  truncated?: boolean;
 }
 export interface ApplyPreview {
   operationId: string;
@@ -252,6 +257,39 @@ export interface ApplyPreview {
   conflicts: string[];
   supported: boolean;
   reason?: string;
+  sourcePath?: string;
+  mode?: 'apply' | 'rollback';
+  expiresAt?: string;
+}
+export type ApplyStatus =
+  | 'prepared'
+  | 'applying'
+  | 'applied'
+  | 'rolling_back'
+  | 'rolled_back'
+  | 'interrupted'
+  | 'conflict'
+  | 'unknown';
+export interface ApplyFileState {
+  path: string;
+  state: string;
+  beforeHash?: string | null;
+  afterHash?: string | null;
+  currentHash?: string | null;
+  message?: string;
+}
+export interface ApplyOperation {
+  operationId: string;
+  commissionId: string;
+  workspaceId: string;
+  sourcePath: string;
+  status: ApplyStatus;
+  createdAt: string;
+  updatedAt: string;
+  message: string;
+  files: ApplyFileState[];
+  conflicts: string[];
+  canRollback: boolean;
 }
 export interface HostAPI {
   bootstrap(): Promise<Bootstrap>;
@@ -288,6 +326,9 @@ export interface HostAPI {
   exportArtifacts(commissionId: string): Promise<CommandResult>;
   prepareApply(commissionId: string): Promise<ApplyPreview>;
   apply(operationId: string): Promise<CommandResult>;
+  inspectApply?(operationId: string): Promise<ApplyOperation>;
+  prepareRollback?(operationId: string): Promise<ApplyPreview>;
+  openApplyBackups?(operationId: string): Promise<CommandResult>;
   saveProvider(input: ProviderInput): Promise<ProviderSettings>;
   testProvider(): Promise<CommandResult>;
   onSnapshot(listener: (snapshot: ProjectSnapshot) => void): () => void;
@@ -322,6 +363,7 @@ export interface RuntimeOptions {
   dataRoot: string;
   executor: ToolExecutor;
   getCredentials: () => Promise<(ProviderInput & { apiKey: string }) | null>;
+  applyHelperPath?: string;
 }
 export interface ModelTaskProposal {
   key: string;
