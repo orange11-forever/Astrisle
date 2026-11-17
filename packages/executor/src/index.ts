@@ -287,9 +287,15 @@ export function createExecutor(options: {
         {
           id: 'safe_apply',
           name: 'Original-project writeback',
-          available: false,
+          available:
+            process.platform === 'win32' &&
+            supervised &&
+            (await fs.stat(path.join(options.projectRoot, 'dist/helpers/safe-apply.exe')).then(
+              (stat) => stat.isFile(),
+              () => false,
+            )),
           detail:
-            'Locked Windows writeback not verified; independent new-directory export is available.',
+            'Requires accepted current versions and separate confirmation. Local NTFS creates/modifications, exclusive handles, durable backups and inspect-before-recovery; unsupported paths and unreviewed deletions are refused.',
         },
       ];
     },

@@ -1216,6 +1216,7 @@ details > p {
 }
 .apply-list li {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   gap: 15px;
   font-size: 12px;
@@ -1229,7 +1230,60 @@ details > p {
   white-space: nowrap;
 }
 .apply-list code {
+  flex: 1;
+  min-width: 0;
   overflow-wrap: anywhere;
+}
+.apply-list li > p {
+  flex-basis: 100%;
+  margin: 0.2rem 0;
+}
+
+.writeback-history {
+  margin-top: 1.5rem;
+}
+.writeback-files {
+  padding: 0;
+  list-style: none;
+}
+.writeback-files li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.4rem 0;
+}
+.writeback-files code {
+  overflow-wrap: anywhere;
+}
+.writeback-diff {
+  width: 100%;
+  flex-basis: 100%;
+  min-width: 0;
+}
+.writeback-diff-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1rem;
+}
+.writeback-diff-columns pre {
+  max-height: 16rem;
+  overflow: auto;
+  padding: 0.75rem;
+  background: var(--paper);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.writeback-diff-columns h4 {
+  margin: 0.75rem 0 0.4rem;
+}
+@media (max-width: 700px) {
+  .writeback-diff-columns {
+    grid-template-columns: 1fr;
+  }
+  .writeback-files li {
+    flex-direction: column;
+    gap: 0.25rem;
+  }
 }
 @media (min-width: 1600px) {
   .studio {

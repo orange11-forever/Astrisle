@@ -45,6 +45,7 @@ import { DEFAULT_CHARACTERS } from '@astrisle/contracts';
 import { StudioScene } from './Scene';
 import { Archipelago } from './Archipelago';
 import { BudgetPanel } from './BudgetPanel';
+import { WritebackHistory, WritebackPreview } from './WritebackHistory';
 import { SceneQualitySelect, type SceneQuality } from './render-quality';
 import type { CharacterFocus, Panel } from './Scene';
 import { useCompletionCelebration } from './celebration';
@@ -127,6 +128,7 @@ function Modal({
     <dialog
       ref={ref}
       className="modal"
+      aria-label={title}
       onCancel={onClose}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
@@ -1061,6 +1063,23 @@ export function App() {
                       项。接受成果不会自动写回原项目。
                     </p>
                   )}
+                  <WritebackHistory
+                    operations={snapshot.applyOperations ?? []}
+                    busy={busy}
+                    onInspect={(id) => {
+                      void run(async () => {
+                        await host!.inspectApply!(id);
+                      }, '已核查写回状态');
+                    }}
+                    onRollback={(id) => {
+                      void run(async () => {
+                        setApplyPreview(await host!.prepareRollback!(id));
+                      }, '恢复预览已生成');
+                    }}
+                    onBackups={(id) => {
+                      void run(() => host!.openApplyBackups!(id));
+                    }}
+                  />
                 </>
               )}
             </>
@@ -1144,32 +1163,11 @@ export function App() {
         </Modal>
       )}
       {applyPreview && (
-        <Modal title="确认写回原项目" onClose={() => setApplyPreview(undefined)}>
-          <p>下面列出将写入原项目的更改。请先核对路径和冲突。</p>
-          {!applyPreview.supported && (
-            <p className="error-text">
-              {applyPreview.reason || '当前项目不支持自动写回，请导出成果。'}
-            </p>
-          )}
-          {applyPreview.conflicts.map((conflict, i) => (
-            <p className="error-text" key={i}>
-              {conflict}
-            </p>
-          ))}
-          <ul className="apply-list">
-            {applyPreview.changes.map((change, i) => (
-              <li key={i}>
-                <b>
-                  {change.action === 'create'
-                    ? '新增'
-                    : change.action === 'modify'
-                      ? '修改'
-                      : '删除'}
-                </b>
-                <code>{change.path}</code>
-              </li>
-            ))}
-          </ul>
+        <Modal
+          title={applyPreview.mode === 'rollback' ? '确认恢复写回前的文件' : '确认写回原项目'}
+          onClose={() => setApplyPreview(undefined)}
+        >
+          <WritebackPreview preview={applyPreview} />
           <div className="button-row">
             <button onClick={() => setApplyPreview(undefined)}>返回</button>
             <button
@@ -1186,7 +1184,8 @@ export function App() {
                 })
               }
             >
-              确认写回 {applyPreview.changes.length} 项更改
+              {applyPreview.mode === 'rollback' ? '确认恢复' : '确认写回'}{' '}
+              {applyPreview.changes.length} 项更改
             </button>
           </div>
         </Modal>
