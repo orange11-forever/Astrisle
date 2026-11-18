@@ -133,6 +133,8 @@ test('an imported seated character stands for real work and stays stationary in 
   page,
 }) => {
   await open(page, true);
+  await page.getByRole('button', { name: '展开项目与委托' }).click();
+  await page.getByRole('button', { name: '场景验收 待验收' }).click();
   const seated = (await inspect(page, 45, { id: 'mori', stage: 'enjoying' }))!.actors[0];
   expect(seated.stage).toBe('enjoying');
   expect((await inspect(page))!.actors[0].knee).toBeGreaterThan(1);
@@ -145,12 +147,32 @@ test('an imported seated character stands for real work and stays stationary in 
     expect(actor.cup).toBe(true);
     expect(actor.importedGripGap).toBeLessThan(0.025);
   }
-  await page.getByRole('button', { name: '展开项目与委托' }).click();
-  await page.getByRole('button', { name: '场景验收 待验收' }).click();
-  await page.evaluate(() => (window as any).setLifeWorking());
+  // Observe the 0.8-second stand-up animation inside the renderer. On a busy
+  // runner it can finish between two consecutive Playwright inspections.
+  const transition = await page.evaluate(async () => {
+    const url = performance
+      .getEntriesByType('resource')
+      .find((entry) => entry.name.includes('/@react-three_fiber.js'))!.name;
+    const { _roots, addAfterEffect } = await import(url);
+    const scene = _roots.get(document.querySelector('canvas')).store.getState().scene;
+    const actor = scene.getObjectByName('avatar-mori');
+    const initialStage = actor.userData.activityStage;
+    const standingUp = new Promise<number>((resolve) => {
+      const unsubscribe = addAfterEffect(() => {
+        const { activityStage, activityBlend } = actor.userData;
+        if (activityStage === 'leaving' && activityBlend > 0 && activityBlend < 1) {
+          unsubscribe();
+          resolve(activityBlend);
+        }
+      });
+    });
+    (window as any).setLifeWorking();
+    return { initialStage, blend: await standingUp };
+  });
+  expect(transition.initialStage).toBe('enjoying');
+  expect(transition.blend).toBeGreaterThan(0);
+  expect(transition.blend).toBeLessThan(1);
   await expect(page.locator('.scene-label').filter({ hasText: 'Mori' })).toContainText('工作中');
-  await inspect(page, 0.2);
-  expect((await inspect(page))!.actors[0].stage).toBe('leaving');
   await inspect(page, 35);
   const back = (await inspect(page))!.actors[0];
   expect(back.position[0]).toBeCloseTo(-3.45, 2);
