@@ -23,6 +23,8 @@ test('browser preview is honest, 3D renders, panels and 2D remain accessible', a
   await expect(page.getByLabel('API 基础地址')).toHaveValue(
     'https://generativelanguage.googleapis.com',
   );
+  await page.getByRole('link', { name: '角色外观' }).click();
+  await expect(page.getByRole('heading', { name: '角色外观与名称' })).toBeFocused();
   expect(errors).toEqual([]);
 });
 test('desktop and narrow layouts show scene plus useful panels without overflow', async ({
@@ -34,7 +36,7 @@ test('desktop and narrow layouts show scene plus useful panels without overflow'
   const stage = await page.getByTestId('island-stage').boundingBox();
   expect((stage!.width * stage!.height) / (1440 * 960)).toBeGreaterThan(0.8);
   await page.screenshot({
-    path: 'docs/development/screenshots/studio-preview.png',
+    path: 'test-results/browser-studio-preview.png',
     fullPage: true,
   });
   await page.setViewportSize({ width: 390, height: 844 });

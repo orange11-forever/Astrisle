@@ -1,5 +1,13 @@
 import { expect, it } from 'vitest';
 import {
+  harborBridge,
+  harborGardenLanding,
+  harborStops,
+  harborStreetZ,
+  harborToWorld,
+  worldToHarbor,
+} from './harbor-layout';
+import {
   STATION_POINTS,
   findIslandRoute,
   isWalkable,
@@ -85,4 +93,61 @@ it('keeps a continuous pace through promenade waypoints that are not rest stops'
   expect(state.route).toHaveLength(0);
   expect(state.pause).toBe(0);
   expect(state.speed).toBeGreaterThan(0.2);
+});
+
+it('crosses the bridge and turns along the quay to reach both stops in either direction', () => {
+  const home: [number, number] = [-3.45, 1.2];
+  for (const stop of Object.values(harborStops)) {
+    for (const [from, to] of [
+      [home, stop.point],
+      [stop.point, home],
+    ] as const) {
+      const route = findIslandRoute(from, to);
+      expect(route.at(-1)).toEqual(to);
+      expect(
+        route.some((point) => {
+          const [x, z] = worldToHarbor(point);
+          return Math.abs(x - harborBridge.x) < 0.001 && Math.abs(z - harborStreetZ) < 0.001;
+        }),
+      ).toBe(true);
+      let previous = from;
+      for (const point of route) {
+        expect(segmentIsWalkable(previous, point)).toBe(true);
+        previous = point;
+      }
+    }
+  }
+  expect(isWalkable(harborToWorld([3.8, 4.25]))).toBe(false);
+  expect(isWalkable(harborToWorld([-4.9, 0.9]))).toBe(false);
+  expect(isWalkable(harborToWorld([0.38, 6.0]))).toBe(false);
+  expect(segmentIsWalkable(harborGardenLanding, harborStops.mooring.point)).toBe(false);
+});
+
+it('visits the quayside while idle and follows the bridge back for work', () => {
+  const home: [number, number] = [-3.45, 1.2];
+  const state = createWalker('mori', harborGardenLanding);
+  const travel = (roaming: boolean, reduced = false) => {
+    const before = [...state.position];
+    advanceWalker(state, 0.05, { roaming, target: home, reduced });
+    expect(Math.hypot(state.position[0] - before[0]!, state.position[1] - before[1]!)).toBeLessThan(
+      0.06,
+    );
+    expect(isWalkable(state.position)).toBe(true);
+  };
+  for (let step = 0; step < 1100 && state.harborVisit?.stage !== 'watching'; step++) travel(true);
+  expect(state.harborVisit).toMatchObject({ stage: 'watching', stop: 'market' });
+  expect(state.position).toEqual(harborStops.market.point);
+  travel(true, true);
+  expect(state.harborVisit?.stage).toBe('watching');
+  expect(state.position).toEqual(harborStops.market.point);
+  travel(false);
+  expect(state.harborVisit).toBeUndefined();
+  let crossed = false;
+  for (let step = 0; step < 1350 && state.route.length; step++) {
+    travel(false);
+    const [x, z] = worldToHarbor(state.position);
+    crossed ||= Math.abs(x - harborBridge.x) < 0.02 && z > 3.0 && z < 5.5;
+  }
+  expect(crossed).toBe(true);
+  expect(state.position).toEqual(home);
 });

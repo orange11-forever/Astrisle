@@ -1,11 +1,14 @@
-/** Workspace identity is the only seed: decoration survives restart without a second domain store. */
+export { harborOrigin } from './harbor-layout';
+
+/** Workspace identity keeps the shape and decoration stable across palette changes. */
 export function islandSeed(id: string): number {
   let hash = 2166136261;
   for (const char of id) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
   return hash >>> 0;
 }
-const palettes = [
+export const islandThemes = [
   {
+    id: 'sea-breeze',
     name: '海风青',
     grass: '#92aa93',
     leaf: '#537c68',
@@ -16,6 +19,7 @@ const palettes = [
     flag: '#527f80',
   },
   {
+    id: 'wisteria',
     name: '紫藤雾',
     grass: '#a2ae9d',
     leaf: '#657c77',
@@ -26,6 +30,7 @@ const palettes = [
     flag: '#9586b3',
   },
   {
+    id: 'apricot',
     name: '杏色晴',
     grass: '#abb38d',
     leaf: '#788565',
@@ -36,6 +41,7 @@ const palettes = [
     flag: '#c39373',
   },
   {
+    id: 'rose',
     name: '蔷薇湾',
     grass: '#9bb09d',
     leaf: '#5b8175',
@@ -46,9 +52,31 @@ const palettes = [
     flag: '#b18598',
   },
 ] as const;
-export function islandAppearance(id: string) {
+export type IslandThemeId = (typeof islandThemes)[number]['id'];
+
+export function isIslandThemeId(value: unknown): value is IslandThemeId {
+  return islandThemes.some((theme) => theme.id === value);
+}
+
+export function parseIslandThemeOverrides(raw: string | null): Map<string, IslandThemeId> {
+  const overrides = new Map<string, IslandThemeId>();
+  try {
+    const stored: unknown = JSON.parse(raw ?? 'null');
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return overrides;
+    for (const [id, value] of Object.entries(stored)) {
+      if (isIslandThemeId(value)) overrides.set(id, value);
+    }
+  } catch {
+    // An unreadable preference falls back to the workspace's automatic palette.
+  }
+  return overrides;
+}
+
+export function islandAppearance(id: string, themeId?: IslandThemeId) {
   const seed = islandSeed(id);
-  return { ...palettes[seed % palettes.length]!, seed, rotation: ((seed % 16) * Math.PI) / 8 };
+  const palette =
+    islandThemes.find((theme) => theme.id === themeId) ?? islandThemes[seed % islandThemes.length]!;
+  return { ...palette, seed, rotation: ((seed % 16) * Math.PI) / 8 };
 }
 export function islandPosition(index: number, count: number): [number, number, number] {
   const columns = Math.min(3, Math.max(1, count));

@@ -1,10 +1,24 @@
-﻿import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { islandAppearance } from './islands';
-import { ISLAND_RADIUS, PROMENADE_RADIUS } from './island-motion';
+import { islandAppearance, type IslandThemeId } from './islands';
+import { PROMENADE_RADIUS } from './island-motion';
 import { FACILITIES, TEA_TABLE } from './island-facilities';
+import { gardenApproaches, nearGardenApproach } from './garden-access';
+import {
+  POND_BEARING,
+  POND_CENTER,
+  POND_WATER_LEVEL,
+  createPondLeaf,
+  createPondPetal,
+  createPondRipples,
+  createPondStone,
+  createPondWater,
+  pondPoint,
+} from './island-pond';
+import { createIslandTerrain, shoreGroundHeight, shoreRadius } from './island-terrain';
+import { TeaGardenDressing } from './TeaGardenDressing';
 
 type V3 = [number, number, number];
 type Palette = ReturnType<typeof islandAppearance>;
@@ -14,7 +28,7 @@ type Transform = { position?: V3; scale?: V3; rotation?: V3; parent?: THREE.Matr
 function addPart(
   parts: THREE.BufferGeometry[],
   source: THREE.BufferGeometry,
-  color: string,
+  color: THREE.ColorRepresentation,
   { position = [0, 0, 0], scale = [1, 1, 1], rotation = [0, 0, 0], parent }: Transform = {},
 ) {
   const geometry = source.index ? source.toNonIndexed() : source;
@@ -238,6 +252,153 @@ function addFlowers(
   }
 }
 
+function addPondGarden(parts: THREE.BufferGeometry[], palette: Palette) {
+  const parent = new THREE.Matrix4().makeRotationY(POND_BEARING).setPosition(...POND_CENTER);
+  const bankStone = new THREE.Color(palette.stone).lerp(new THREE.Color('#8e8872'), 0.42);
+  const wetStone = new THREE.Color('#647c73');
+  const moss = new THREE.Color(palette.leaf).lerp(new THREE.Color('#72834f'), 0.44);
+  const stones = [
+    [0.18, 0.19, 0.94],
+    [0.49, 0.13, 1.03],
+    [0.93, 0.11, 0.92],
+    [1.57, 0.126, 0.86],
+    [2.08, 0.08, 0.96],
+    [2.69, 0.15, 0.94],
+    [3.19, 0.162, 0.93],
+    [3.53, 0.118, 0.96],
+    [4.27, 0.098, 0.94],
+    [4.77, 0.078, 0.96],
+    [5.04, 0.139, 0.9],
+    [5.62, 0.1, 0.98],
+  ] as const;
+  for (const [angle, size, distance] of stones) {
+    const position = pondPoint(angle, distance, -0.058);
+    const tint = bankStone.clone().lerp(wetStone, 0.16 + Math.cos(angle * 3) ** 2 * 0.5);
+    addPart(parts, createPondStone(angle), tint, {
+      position,
+      scale: [size, size * 0.57, size * 0.79],
+      rotation: [0.13, angle * 1.87, 0.17 * Math.sin(angle)],
+      parent,
+    });
+    if (size > 0.125) {
+      addPart(parts, createPondStone(angle * 2), moss, {
+        position: [position[0] + 0.021, position[1] + size * 0.36, position[2] - 0.015],
+        scale: [size * 0.51, size * 0.12, size * 0.36],
+        rotation: [0.1, angle * 1.87, 0],
+        parent,
+      });
+    }
+  }
+  for (let i = 0; i < 18; i++) {
+    const angle = i * 2.39996 + 0.24;
+    const size = 0.022 + (i % 4) * 0.011;
+    const radius = 0.7 + (i % 5) * 0.066;
+    addPart(parts, new THREE.IcosahedronGeometry(1, 0), i % 3 ? bankStone : wetStone, {
+      position: pondPoint(angle, radius, Math.min(-0.032, -0.22 + (radius - 0.68) * 0.7)),
+      scale: [size, size * 0.54, size * 0.85],
+      rotation: [0, angle, 0.1],
+      parent,
+    });
+  }
+
+  const reedShade = new THREE.Color(palette.leaf).lerp(new THREE.Color('#3f6954'), 0.52);
+  const reedTip = new THREE.Color(palette.lightLeaf).lerp(new THREE.Color('#84905b'), 0.46);
+  for (const [x, z, height] of [
+    [-0.94, 0.15, 0.46],
+    [-0.66, 0.224, 0.32],
+    [0.79, 0.212, 0.27],
+  ] as const) {
+    for (let i = 0; i < 8; i++) {
+      const angle = i * 2.39996 + x;
+      const length = height * (0.56 + (i % 4) * 0.15);
+      const leaf = createPondLeaf(length, 0.038 + (i % 3) * 0.012, 0.53 + (i % 3) * 0.26);
+      const tint = i % 3 ? reedShade : reedTip;
+      const transform: Transform = {
+        position: [x + Math.cos(angle) * 0.049, -0.093, z + Math.sin(angle) * 0.026],
+        rotation: [0, angle, 0],
+        parent,
+      };
+      // The mirrored face keeps the blade visible from both sides of the bank.
+      addPart(parts, leaf.clone().scale(-1, 1, 1), tint, transform);
+      addPart(parts, leaf, tint, transform);
+    }
+  }
+  for (let i = 0; i < 5; i++) {
+    const x = -1.052 + i * 0.067;
+    const z = 0.147 + Math.sin(i * 1.6) * 0.043;
+    const height = 0.29 + (i % 3) * 0.09;
+    const tilt = 0.018 + i * 0.009;
+    addBranch(parts, [x, -0.086, z], [x + tilt, height, z + 0.038], 0.009, '#687d56', parent);
+    addPart(parts, new THREE.CapsuleGeometry(0.019, 0.062 + (i % 2) * 0.019, 3, 7), '#8a684a', {
+      position: [x + tilt, height - 0.013, z + 0.038],
+      rotation: [0.1, 0, -0.072],
+      parent,
+    });
+  }
+
+  const pads = [
+    { x: -0.35, z: 0.043, size: 0.139, yaw: 0.36, bloom: 0.8 },
+    { x: -0.12, z: -0.13, size: 0.087, yaw: 3.5, bloom: 0 },
+    { x: 0.17, z: 0.116, size: 0.104, yaw: 4.63, bloom: 0 },
+    { x: 0.42, z: -0.065, size: 0.151, yaw: 1.91, bloom: 1 },
+    { x: 0.63, z: 0.1, size: 0.092, yaw: 2.4, bloom: 0 },
+    { x: 0.75, z: -0.13, size: 0.081, yaw: 0.94, bloom: 0 },
+  ];
+  const waterLine = POND_WATER_LEVEL + 0.009;
+  const padYoung = new THREE.Color('#57875d').lerp(new THREE.Color(palette.leaf), 0.4);
+  const padMature = new THREE.Color('#436e56').lerp(new THREE.Color(palette.leaf), 0.5);
+  const shadedPetal = new THREE.Color('#d78eaa').lerp(new THREE.Color(palette.flower), 0.25);
+  for (const { x, z, size, yaw, bloom } of pads) {
+    const pad = new THREE.CircleGeometry(size, 24, yaw + 0.14, Math.PI * 2 - 0.28);
+    const vertices = pad.getAttribute('position');
+    for (let i = 1; i < vertices.count; i++) {
+      const u = vertices.getX(i);
+      const v = vertices.getY(i);
+      const scallop = Math.cos(Math.atan2(v, u) * 9) * 0.025 + 1;
+      vertices.setXYZ(i, u * scallop, v * scallop * 0.89, -0.003 + u * 0.034);
+    }
+    pad.computeVertexNormals();
+    addPart(parts, pad, bloom ? padMature : padYoung, {
+      position: [x, waterLine, z],
+      rotation: [-Math.PI / 2, 0, 0],
+      parent,
+    });
+    for (let vein = 0; vein < 4; vein++) {
+      const angle = yaw + 0.46 + vein * 1.37;
+      addBranch(
+        parts,
+        [x, waterLine + 0.004, z],
+        [x + Math.cos(angle) * size * 0.77, waterLine + 0.004, z - Math.sin(angle) * size * 0.69],
+        0.0017,
+        '#7f9f70',
+        parent,
+      );
+    }
+    if (!bloom) continue;
+    for (const ring of [0, 1]) {
+      const count = ring ? 6 : 9;
+      for (let i = 0; i < count; i++) {
+        const angle = (i * Math.PI * 2) / count + ring * 0.4;
+        const petal = createPondPetal(
+          (ring ? 0.079 : 0.124) * bloom,
+          (ring ? 0.049 : 0.063) * bloom,
+          ring ? 0.04 : 0.019,
+        );
+        addPart(parts, petal, ring ? '#fff0dd' : shadedPetal, {
+          position: [x, waterLine + 0.019 + ring * 0.012, z],
+          rotation: [0, angle, 0],
+          parent,
+        });
+      }
+    }
+    addPart(parts, new THREE.SphereGeometry(0.027 * bloom, 10, 5), '#e3b554', {
+      position: [x, waterLine + 0.058, z],
+      scale: [1, 0.56, 1],
+      parent,
+    });
+  }
+}
+
 export function Pennant({
   position,
   palette,
@@ -283,8 +444,15 @@ export function Pennant({
   );
 }
 
-function landscapeSurface(palette: Palette): Surface {
-  const parts: THREE.BufferGeometry[] = [];
+function pointOnCliff(cliff: THREE.Mesh, ray: THREE.Raycaster, bearing: number, height: number) {
+  const x = Math.cos(bearing);
+  const z = Math.sin(bearing);
+  ray.set(new THREE.Vector3(x * 11, height, z * 11), new THREE.Vector3(-x, 0, -z));
+  return ray.intersectObject(cliff)[0]?.point;
+}
+
+function landscapeSurface(palette: Palette, cliff: THREE.Mesh): Surface {
+  const parts = [cliff.geometry];
   const bench = FACILITIES['garden-bench'].position;
   const tea = FACILITIES['tea-chair'].position;
   const swing = FACILITIES['garden-swing'].position;
@@ -292,22 +460,6 @@ function landscapeSurface(palette: Palette): Surface {
     Math.hypot(x - bench[0], z - bench[1]) < 1.35 + margin ||
     Math.hypot(x - (tea[0] + TEA_TABLE[0]) / 2, z - (tea[1] + TEA_TABLE[1]) / 2) < 1.5 + margin ||
     Math.hypot(x - swing[0], z - swing[1]) < 1.65 + margin;
-  addPart(parts, new THREE.CylinderGeometry(ISLAND_RADIUS - 0.07, 7.6, 1.05, 18), palette.stone, {
-    position: [0, -0.9, 0],
-    rotation: [0, palette.rotation, 0],
-  });
-  addPart(parts, new THREE.ConeGeometry(7.6, 3.5, 12), palette.stone, {
-    position: [0, -3.175, 0],
-    rotation: [0, 0.22, Math.PI],
-  });
-  addPart(
-    parts,
-    new THREE.CylinderGeometry(ISLAND_RADIUS, ISLAND_RADIUS - 0.12, 0.27, 80),
-    palette.grass,
-    {
-      position: [0, -0.16, 0],
-    },
-  );
   const path = new THREE.CatmullRomCurve3(
     Array.from({ length: 33 }, (_, i) => {
       const angle = (i / 32) * Math.PI * 2;
@@ -332,7 +484,11 @@ function landscapeSurface(palette: Palette): Surface {
       rotation: [0, -angle, 0],
     });
     for (const radius of [6.49, 7.73]) {
-      if (nearFacility(x * radius, z * radius, 0.2)) continue;
+      if (
+        nearFacility(x * radius, z * radius, 0.2) ||
+        nearGardenApproach(x * radius, z * radius, 0.2)
+      )
+        continue;
       addPart(parts, new THREE.BoxGeometry(0.12, 0.065, 0.48), i % 3 ? '#c5bca2' : '#ded3b9', {
         position: [x * radius, -0.005, z * radius],
         rotation: [0, -angle, 0],
@@ -341,22 +497,76 @@ function landscapeSurface(palette: Palette): Surface {
   }
   [
     [-7.2, -0.02, -4.5, 1.0],
-    [-2.2, -0.02, -8.1, 0.9],
+    [3.19, -0.02, -7.78, 0.9],
     [1.2, -0.02, -8.3, 0.8],
     [6.6, -0.02, -5.1, 1.05],
     [-8.25, -0.02, 1.0, 0.82],
-    [-6.6, -0.02, 5.2, 0.7],
+    [-5.15, -0.02, 6.64, 0.7],
   ].forEach(([x, y, z, scale]) => addTree(parts, palette, [x!, y!, z!], scale!));
-  for (let i = 0; i < 24; i++) {
-    const angle = i * 0.65 + palette.rotation;
-    const radius = 8.45 + (i % 3) * 0.12;
-    if (nearFacility(Math.cos(angle) * radius, Math.sin(angle) * radius, 0.3)) continue;
-    addPart(parts, new THREE.DodecahedronGeometry(1, 0), palette.stone, {
-      position: [Math.cos(angle) * radius, -0.1, Math.sin(angle) * radius],
-      scale: [0.21 + (i % 3) * 0.06, 0.16, 0.25],
+  // Continue both bridge decks in matching stone setts up to the circular promenade.
+  for (const { start, end, width } of gardenApproaches) {
+    const dx = end[0] - start[0],
+      dz = end[1] - start[1];
+    const length = Math.hypot(dx, dz);
+    const yaw = Math.atan2(dx, dz);
+    const rows = Math.ceil(length / 0.24);
+    for (let row = 0; row < rows; row++) {
+      const t = (row + 0.5) / rows;
+      for (const side of [-1, 1]) {
+        const offset = (side * width) / 4;
+        addPart(
+          parts,
+          new THREE.BoxGeometry(width / 2 - 0.014, 0.032, length / rows - 0.014),
+          (row + side) % 3 ? '#c5b79e' : '#baa98e',
+          {
+            position: [
+              start[0] + dx * t + Math.cos(yaw) * offset,
+              0.007,
+              start[1] + dz * t - Math.sin(yaw) * offset,
+            ],
+            rotation: [0, yaw, 0],
+          },
+        );
+      }
+    }
+  }
+  // Driftwood-colored rocks and short coastal plants follow the verge in clusters.
+  for (let i = 0; i < 27; i++) {
+    const angle = i * 2.399963 + palette.rotation;
+    const radius = Math.max(8.68, shoreRadius(angle, palette.rotation) - 0.27);
+    const x = Math.cos(angle) * radius;
+    const z = Math.sin(angle) * radius;
+    const atGlasshouseAccess = -0.8 * x + 0.6 * z > radius * 0.984;
+    if (
+      nearFacility(x, z, 0.44) ||
+      (Math.abs(x) < 0.9 && z < -8.2) ||
+      atGlasshouseAccess ||
+      nearGardenApproach(x, z, 0.4) ||
+      Math.hypot(x - POND_CENTER[0], z - POND_CENTER[2]) < 1.46
+    )
+      continue;
+    const height = shoreGroundHeight(angle, radius, palette.rotation);
+    addPart(parts, new THREE.DodecahedronGeometry(1, 0), i % 3 ? palette.stone : '#a29c83', {
+      position: [x, height - 0.035, z],
+      scale: [0.19 + (i % 3) * 0.05, 0.15 + (i % 2) * 0.05, 0.32],
+      rotation: [0.15, -angle, 0.1 * Math.sin(i)],
     });
-    if (i % 2 === 0)
-      addFlowers(parts, [Math.cos(angle) * 8.35, -0.02, Math.sin(angle) * 8.35], palette, 7);
+    for (const side of [-1, 1]) {
+      const offset = angle + side * 0.044;
+      const verge = Math.min(radius - 0.1, shoreRadius(offset, palette.rotation) - 0.2);
+      addLeafSpray(
+        parts,
+        [
+          Math.cos(offset) * verge,
+          shoreGroundHeight(offset, verge, palette.rotation),
+          Math.sin(offset) * verge,
+        ],
+        palette,
+        0.64 + (i % 4) * 0.09,
+      );
+    }
+    if (i % 3 === 0)
+      addFlowers(parts, [Math.cos(angle) * 8.61, -0.026, Math.sin(angle) * 8.61], palette, 5);
   }
   // Four planted pockets: a soil middle, flowering layer and low leafy border.
   [
@@ -381,75 +591,7 @@ function landscapeSurface(palette: Palette): Surface {
       );
     }
   });
-  const pond = new THREE.Matrix4().compose(
-    new THREE.Vector3(6.75, 0, 5.0),
-    new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -0.7, 0)),
-    new THREE.Vector3(1, 1, 1),
-  );
-  for (const side of [-1, 1])
-    addPart(parts, new THREE.DodecahedronGeometry(1, 0), palette.stone, {
-      position: [side * 0.9, 0.03, side * 0.31],
-      scale: [0.4, 0.23, 0.32],
-      parent: pond,
-    });
-  addFlowers(parts, [-0.6, -0.02, -0.54], palette, 5, pond);
-  for (let i = 0; i < 11; i++) {
-    const angle = (i * Math.PI * 2) / 11;
-    addPart(parts, new THREE.DodecahedronGeometry(1, 0), i % 3 ? '#a6a48e' : palette.stone, {
-      position: [Math.cos(angle) * 1.15, 0.015, Math.sin(angle) * 0.66],
-      scale: [0.15 + (i % 2) * 0.05, 0.1, 0.12],
-      rotation: [0.1, angle, 0.12],
-      parent: pond,
-    });
-  }
-  for (let i = 0; i < 9; i++) {
-    const x = -0.88 + (i % 3) * 0.09,
-      z = -0.23 + Math.floor(i / 3) * 0.13;
-    const height = 0.35 + (i % 4) * 0.08;
-    addBranch(parts, [x, 0.04, z], [x + 0.04, height, z + 0.02], 0.012, palette.leaf, pond);
-    addPart(parts, new THREE.CylinderGeometry(0.026, 0.026, 0.12, 5), '#9c8160', {
-      position: [x + 0.04, height, z + 0.02],
-      parent: pond,
-    });
-    if (i % 2 === 0) addLeafSpray(parts, [x, 0.025, z], palette, 0.65, pond);
-  }
-  for (const [x, z, radius] of [
-    [0.26, 0.2, 0.17],
-    [0.65, -0.16, 0.13],
-    [-0.24, 0.28, 0.11],
-  ]) {
-    // A missing wedge gives the lily pad its characteristic open seam.
-    addPart(
-      parts,
-      new THREE.CylinderGeometry(radius!, radius!, 0.014, 12, 1, false, 0.18, Math.PI * 1.85),
-      palette.leaf,
-      {
-        position: [x!, 0.07, z!],
-        parent: pond,
-      },
-    );
-  }
-  for (let i = 0; i < 5; i++) {
-    const angle = (i * Math.PI * 2) / 5;
-    addPart(parts, new THREE.OctahedronGeometry(1, 0), i % 2 ? '#f2ead6' : palette.flower, {
-      position: [0.26 + Math.cos(angle) * 0.045, 0.095, 0.2 + Math.sin(angle) * 0.045],
-      scale: [0.055, 0.035, 0.026],
-      rotation: [0, -angle, 0],
-      parent: pond,
-    });
-  }
-  for (let i = 0; i < 3; i++)
-    addPart(
-      parts,
-      new THREE.TorusGeometry(0.21 + i * 0.15, 0.009, 3, 30, Math.PI * 1.6),
-      '#b9d0cc',
-      {
-        position: [0.15, 0.079 + i * 0.001, -0.02],
-        scale: [1, 0.58, 1],
-        rotation: [-Math.PI / 2, 0, i * 0.8],
-        parent: pond,
-      },
-    );
+  addPondGarden(parts, palette);
   const bridge = new THREE.Matrix4().compose(
     new THREE.Vector3(0, -0.04, 6.45),
     new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0.08, 0)),
@@ -623,70 +765,87 @@ function landscapeSurface(palette: Palette): Surface {
       rotation: [0, Math.PI / 4, 0],
     });
   }
-  // Faceted outcrops break the underside's silhouette without floating cloud meshes.
-  [
-    [-3.7, -1.6, 2.6, 1.1],
-    [3.4, -1.75, 2.7, 1.2],
-    [-1.5, -2.5, -2.2, 0.9],
-  ].forEach(([x, y, z, scale]) => {
-    addPart(parts, new THREE.DodecahedronGeometry(1, 0), palette.stone, {
-      position: [x!, y!, z!],
-      scale: [scale!, scale! * 1.15, scale!],
-      rotation: [0.2, palette.rotation, 0.1],
+  for (let i = 0; i < 12; i++) {
+    const angle = i * 2.399963 + palette.rotation;
+    const rim = shoreRadius(angle, palette.rotation);
+    for (const [offset, length] of [
+      [0, 0.62],
+      [0.018, 0.37],
+    ] as const) {
+      const bearing = angle + offset;
+      const x = Math.cos(bearing) * rim;
+      const z = Math.sin(bearing) * rim;
+      const tip: V3 = [x * 0.985, -0.19 - length, z * 0.985];
+      addBranch(parts, [x * 0.992, -0.17, z * 0.992], tip, 0.025, '#717858');
+      addLeafSpray(parts, tip, palette, 0.6);
+    }
+  }
+  const ray = new THREE.Raycaster();
+  const strata = new THREE.Color(palette.stone).lerp(new THREE.Color('#7c7b73'), 0.27);
+  const strataColor = `#${strata.getHexString()}`;
+  for (const [bearing, height, size] of [
+    [0.21, -1.57, 0.56],
+    [1.1, -2.3, 0.81],
+    [2.11, -1.85, 0.65],
+    [3.27, -2.3, 0.71],
+    [4.21, -2.4, 0.72],
+    [5.41, -1.9, 0.62],
+  ] as const) {
+    const angle = bearing + palette.rotation * 0.08;
+    const rock = pointOnCliff(cliff, ray, angle, height);
+    if (!rock) continue;
+    rock.addScaledVector(ray.ray.direction, size * 0.52);
+    addPart(parts, new THREE.DodecahedronGeometry(1, 0), strataColor, {
+      position: [rock.x, rock.y, rock.z],
+      scale: [size, size * 1.34, size * 1.11],
+      rotation: [Math.sin(angle) * 0.34, -angle, 0.27],
     });
-  });
-  for (let i = 0; i < 11; i++) {
-    const angle = (i * Math.PI * 2) / 11 + palette.rotation;
-    addPart(parts, new THREE.DodecahedronGeometry(1, 0), i % 3 ? palette.stone : '#a3a190', {
-      position: [Math.cos(angle) * 7.7, -1.05 - (i % 3) * 0.12, Math.sin(angle) * 7.7],
-      scale: [0.65 + (i % 2) * 0.2, 0.24, 0.42],
-      rotation: [0.1, -angle, -0.08],
-    });
-    if (i % 2 === 0) {
-      const rootX = Math.cos(angle) * 8.55,
-        rootZ = Math.sin(angle) * 8.55;
-      addBranch(
-        parts,
-        [rootX, -0.27, rootZ],
-        [rootX * 0.94, -0.82, rootZ * 0.94],
-        0.035,
-        '#8f9274',
-      );
-      addLeafSpray(parts, [rootX * 0.96, -0.55, rootZ * 0.96], palette, 0.65);
+  }
+  return finishSurface(parts);
+}
+
+function mineralSurface(cliff: THREE.Mesh, palette: Palette): Surface {
+  const parts: THREE.BufferGeometry[] = [];
+  const ray = new THREE.Raycaster();
+  for (let cluster = 0; cluster < 5; cluster++) {
+    const angle = 0.72 + (cluster * Math.PI * 2) / 5 + palette.rotation * 0.14;
+    for (let i = 0; i < 3; i++) {
+      const bearing = angle + (i - 1) * 0.026;
+      const crystal = pointOnCliff(cliff, ray, bearing, -1.3 - cluster * 0.19 - (i % 2) * 0.12);
+      if (!crystal) continue;
+      crystal.addScaledVector(ray.ray.direction, -0.075);
+      addPart(parts, new THREE.OctahedronGeometry(1, 0), i === 1 ? '#b5b3c9' : '#8c9ca9', {
+        position: [crystal.x, crystal.y, crystal.z],
+        scale: [0.09, i === 1 ? 0.24 : 0.16, 0.09],
+        rotation: [Math.sin(bearing) * 0.46, cluster * 1.4, -Math.cos(bearing) * 0.46],
+      });
     }
   }
   return finishSurface(parts);
 }
 
-function mineralSurface(): Surface {
-  const parts: THREE.BufferGeometry[] = [];
-  [
-    [-3.8, -2, 3],
-    [3.2, -2.1, 3.2],
-    [-0.7, -3.7, 1.3],
-    [-2.9, -2.1, -3.4],
-    [3.7, -1.8, -2.8],
-  ].forEach(([x, y, z], cluster) => {
-    for (let i = 0; i < 3; i++)
-      addPart(parts, new THREE.OctahedronGeometry(1, 0), i === 1 ? '#b4b1d0' : '#859bab', {
-        position: [x! + (i - 1) * 0.21, y! + (i % 2) * 0.2, z!],
-        scale: [0.12, 0.34 + (i % 2) * 0.2, 0.13],
-        rotation: [0.12, cluster * 1.4, (i - 1) * 0.2],
-      });
-  });
-  return finishSurface(parts);
-}
-
 export function IslandLandscape({
   workspaceId,
+  themeId,
   reduced,
 }: {
   workspaceId: string;
+  themeId?: IslandThemeId;
   reduced: boolean;
 }) {
-  const palette = useMemo(() => islandAppearance(workspaceId), [workspaceId]);
-  const surface = useMemo(() => landscapeSurface(palette), [palette]);
-  const minerals = useMemo(mineralSurface, []);
+  const palette = useMemo(() => islandAppearance(workspaceId, themeId), [workspaceId, themeId]);
+  const { surface, minerals } = useMemo(() => {
+    const material = new THREE.MeshBasicMaterial();
+    const cliff = new THREE.Mesh(createIslandTerrain(palette), material);
+    const minerals = mineralSurface(cliff, palette);
+    const surface = landscapeSurface(palette, cliff);
+    material.dispose();
+    return { surface, minerals };
+  }, [palette]);
+  const water = useMemo(() => createPondWater(palette.water), [palette.water]);
+  const ripples = useMemo(createPondRipples, []);
+  useEffect(() => () => water.dispose(), [water]);
+  useEffect(() => () => ripples.dispose(), [ripples]);
   return (
     <group name="island-landscape">
       <mesh castShadow receiveShadow>
@@ -704,13 +863,22 @@ export function IslandLandscape({
           flatShading
         />
       </mesh>
-      <group position={[6.75, 0, 5.0]} rotation={[0, -0.7, 0]}>
-        <mesh scale={[1.2, 0.07, 0.68]} receiveShadow>
-          <sphereGeometry args={[1, 24, 8]} />
-          <meshStandardMaterial color={palette.water} metalness={0.22} roughness={0.15} />
+      <group name="garden-pond" position={POND_CENTER} rotation={[0, POND_BEARING, 0]}>
+        <mesh geometry={water} receiveShadow renderOrder={1}>
+          <meshStandardMaterial
+            vertexColors
+            transparent
+            depthWrite={false}
+            metalness={0.13}
+            roughness={0.24}
+          />
+        </mesh>
+        <mesh geometry={ripples} renderOrder={2}>
+          <meshBasicMaterial vertexColors transparent depthWrite={false} />
         </mesh>
       </group>
       <Pennant position={[-7.2, 0, 4.1]} palette={palette} reduced={reduced} />
+      <TeaGardenDressing />
     </group>
   );
 }

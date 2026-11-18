@@ -21,6 +21,7 @@ function actor(id = 'mori') {
       active,
       reduced,
       capable,
+      visitingHarbor: !!walker.harborVisit,
       reservations,
     });
     advanceWalker(walker, 0.05, {
@@ -67,6 +68,26 @@ describe('automatic island leisure', () => {
         }
       }
     }
+  });
+
+  it('defers a new seat reservation until the avatar finishes the harbor visit', () => {
+    const a = actor();
+    a.state.wait = 0.02;
+    for (let i = 0; i < 40; i++) {
+      advanceLeisure(a.state, 0.05, {
+        position: a.walker.position,
+        idle: true,
+        active: true,
+        reduced: false,
+        capable: true,
+        visitingHarbor: true,
+        reservations: a.reservations,
+      });
+    }
+    expect(a.reservations.size).toBe(0);
+    expect(a.state.wait).toBe(0.02);
+    a.tick();
+    expect(a.reservations.get('garden-bench')).toBe('mori');
   });
 
   it('walks to a facility, sits smoothly, enjoys it, then stands and releases it', () => {

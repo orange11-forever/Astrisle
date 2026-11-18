@@ -56,6 +56,10 @@ test('idle companions move with real inferred bones and return to work without t
       { timeout: 20000 },
     )
     .toBeLessThan(0.04);
+  const activity = page.getByRole('region', { name: '委托动态' });
+  await activity.locator('summary', { hasText: '伙伴开始工作' }).click();
+  await activity.getByRole('button', { name: '查看任务 · 处理文件' }).click();
+  await expect(page.locator('.task-detail')).toContainText('workspace_read');
   expect(errors).toEqual([]);
 });
 test('reduced motion keeps idle characters still and completed work offers a replayable bounded celebration', async ({

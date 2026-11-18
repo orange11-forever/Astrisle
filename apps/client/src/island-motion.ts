@@ -1,4 +1,16 @@
 import { FACILITY_OBSTACLES } from './island-facilities';
+import {
+  atHarborRail,
+  harborBridge,
+  harborGardenLanding,
+  harborStops,
+  harborStreetZ,
+  harborToWorld,
+  onHarborBridge,
+  onHarborStreet,
+  worldToHarbor,
+  type HarborStop,
+} from './harbor-layout';
 
 export type GroundPoint = [number, number];
 export const ISLAND_RADIUS = 9;
@@ -31,26 +43,43 @@ const obstacles: [number, number, number][] = [
   ...FACILITY_OBSTACLES,
 ];
 const distance = (a: GroundPoint, b: GroundPoint) => Math.hypot(a[0] - b[0], a[1] - b[1]);
-export function isWalkable([x, z]: GroundPoint) {
+function isGardenWalkable([x, z]: GroundPoint) {
   return (
     Number.isFinite(x) &&
     Number.isFinite(z) &&
     Math.hypot(x, z) <= ISLAND_RADIUS - 0.65 &&
+    !atHarborRail(worldToHarbor([x, z])) &&
     obstacles.every(([ox, oz, r]) => Math.hypot(x - ox, z - oz) > r + 0.55)
   );
 }
-export function segmentIsWalkable(a: GroundPoint, b: GroundPoint) {
+
+export function isWalkable(point: GroundPoint) {
+  const local = worldToHarbor(point);
+  return onHarborBridge(local) || onHarborStreet(local) || isGardenWalkable(point);
+}
+
+function segmentStaysWithin(
+  a: GroundPoint,
+  b: GroundPoint,
+  walkable: (point: GroundPoint) => boolean,
+) {
+  if (!walkable(a) || !walkable(b)) return false;
   const steps = Math.ceil(distance(a, b) / 0.12);
-  for (let i = 0; i <= steps; i++) {
-    const t = steps ? i / steps : 0;
-    if (!isWalkable([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t])) return false;
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps;
+    if (!walkable([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t])) return false;
   }
   return true;
 }
+
+export function segmentIsWalkable(a: GroundPoint, b: GroundPoint) {
+  return segmentStaysWithin(a, b, isWalkable);
+}
+
 /** Small bounded visibility graph. Replanned only when a destination changes. */
-export function findIslandRoute(start: GroundPoint, goal: GroundPoint): GroundPoint[] {
-  if (!isWalkable(start) || !isWalkable(goal)) return [];
-  if (segmentIsWalkable(start, goal)) return [[...goal]];
+function findGardenRoute(start: GroundPoint, goal: GroundPoint): GroundPoint[] {
+  if (!isGardenWalkable(start) || !isGardenWalkable(goal)) return [];
+  if (segmentStaysWithin(start, goal, isGardenWalkable)) return [[...goal]];
   const nodes: GroundPoint[] = [start, goal];
   for (const [x, z, radius] of obstacles) {
     const radiusWithClearance = radius + 0.75;
@@ -60,7 +89,7 @@ export function findIslandRoute(start: GroundPoint, goal: GroundPoint): GroundPo
           x + Math.cos(angle) * radiusWithClearance,
           z + Math.sin(angle) * radiusWithClearance,
         ];
-      if (isWalkable(point)) nodes.push(point);
+      if (isGardenWalkable(point)) nodes.push(point);
     }
   }
   const scores = nodes.map(() => Infinity),
@@ -91,7 +120,7 @@ export function findIslandRoute(start: GroundPoint, goal: GroundPoint): GroundPo
     for (let i = 1; i < nodes.length; i++) {
       if (visited.has(i)) continue;
       const score = scores[current] + distance(nodes[current], nodes[i]);
-      if (score < scores[i] && segmentIsWalkable(nodes[current], nodes[i])) {
+      if (score < scores[i] && segmentStaysWithin(nodes[current], nodes[i], isGardenWalkable)) {
         scores[i] = score;
         previous[i] = current;
       }
@@ -99,6 +128,47 @@ export function findIslandRoute(start: GroundPoint, goal: GroundPoint): GroundPo
   }
   return [];
 }
+
+/** The bridge and street meet at one corner, away from water, stalls, and moorings. */
+function findHarborRoute(start: GroundPoint, goal: GroundPoint): GroundPoint[] {
+  if (segmentIsWalkable(start, goal)) return [[...goal]];
+  const from = worldToHarbor(start);
+  const to = worldToHarbor(goal);
+  const fromStreet = onHarborStreet(from);
+  const toStreet = onHarborStreet(to);
+  const route = [harborToWorld(fromStreet ? [from[0], harborStreetZ] : [harborBridge.x, from[1]])];
+  if (fromStreet !== toStreet) route.push(harborToWorld([harborBridge.x, harborStreetZ]));
+  route.push(harborToWorld(toStreet ? [to[0], harborStreetZ] : [harborBridge.x, to[1]]));
+  route.push([...goal]);
+  let previous = start;
+  const distinct: GroundPoint[] = [];
+  for (const point of route) {
+    if (distance(previous, point) < 1e-6) continue;
+    if (!segmentIsWalkable(previous, point)) return [];
+    distinct.push(point);
+    previous = point;
+  }
+  // Preserve the caller's precise final coordinate for standstill targets.
+  distinct[distinct.length - 1] = [...goal];
+  return distinct;
+}
+
+export function findIslandRoute(start: GroundPoint, goal: GroundPoint): GroundPoint[] {
+  if (!isWalkable(start) || !isWalkable(goal)) return [];
+  const inGarden = isGardenWalkable(start);
+  const toGarden = isGardenWalkable(goal);
+  if (inGarden && toGarden) return findGardenRoute(start, goal);
+  if (!inGarden && !toGarden) return findHarborRoute(start, goal);
+  const garden = inGarden
+    ? findGardenRoute(start, harborGardenLanding)
+    : findGardenRoute(harborGardenLanding, goal);
+  const harbor = inGarden
+    ? findHarborRoute(harborGardenLanding, goal)
+    : findHarborRoute(start, harborGardenLanding);
+  if (!garden.length || !harbor.length) return [];
+  return inGarden ? [...garden, ...harbor] : [...harbor, ...garden];
+}
+
 export interface Walker {
   position: GroundPoint;
   yaw: number;
@@ -110,6 +180,9 @@ export interface Walker {
   patrol: number;
   pause: number;
   personality: number;
+  harborDelay: number;
+  harborVisits: number;
+  harborVisit?: { stop: HarborStop; stage: 'outbound' | 'watching' | 'returning'; wait: number };
 }
 export function createWalker(id: string, home: GroundPoint): Walker {
   const personality = id === 'mori' ? 0 : id === 'luma' ? 1 : 2;
@@ -124,8 +197,50 @@ export function createWalker(id: string, home: GroundPoint): Walker {
     patrol: Math.round((Math.atan2(home[1], home[0]) / (Math.PI * 2)) * 24),
     pause: 0,
     personality,
+    harborDelay: 7.5 + personality * 4,
+    harborVisits: 0,
   };
 }
+
+const harborTour: HarborStop[] = ['market', 'mooring'];
+
+function turnTowards(state: Walker, yaw: number, dt: number) {
+  const angle = Math.atan2(Math.sin(yaw - state.yaw), Math.cos(yaw - state.yaw));
+  state.yaw += Math.max(-dt * 4, Math.min(dt * 4, angle));
+  return angle;
+}
+
+function advanceHarborVisit(state: Walker, dt: number) {
+  const visit = state.harborVisit;
+  if (!visit) {
+    state.harborDelay -= dt;
+    if (state.harborDelay > 0) return;
+    const stop = harborTour[(state.personality + state.harborVisits) % harborTour.length]!;
+    const route = findIslandRoute(state.position, harborStops[stop].point);
+    if (!route.length) {
+      state.harborDelay = 8;
+      return;
+    }
+    state.route = route;
+    state.harborVisits++;
+    state.harborVisit = { stop, stage: 'outbound', wait: 4.5 + state.personality * 0.5 };
+    return;
+  }
+  if (state.route.length) return;
+  if (visit.stage === 'returning') {
+    state.harborVisit = undefined;
+    state.harborDelay = 33 + state.personality * 7;
+    return;
+  }
+  visit.stage = 'watching';
+  turnTowards(state, harborStops[visit.stop].yaw, dt);
+  visit.wait -= dt;
+  if (visit.wait <= 0) {
+    state.route = findIslandRoute(state.position, harborGardenLanding);
+    visit.stage = 'returning';
+  }
+}
+
 export function advanceWalker(
   state: Walker,
   delta: number,
@@ -145,6 +260,7 @@ export function advanceWalker(
       if (isWalkable(options.target)) state.position = [...options.target];
       state.route = [];
       state.key = '';
+      state.harborVisit = undefined;
     }
     return state;
   }
@@ -152,13 +268,18 @@ export function advanceWalker(
   if (key !== state.key) {
     state.key = key;
     state.pause = 0;
+    if (!options.roaming && state.harborVisit) {
+      state.harborVisit = undefined;
+      state.harborDelay = 18 + state.personality * 6;
+    }
     state.route = options.roaming
       ? []
       : options.target
         ? findIslandRoute(state.position, options.target)
         : [];
   }
-  if (options.roaming && !state.route.length) {
+  if (options.roaming) advanceHarborVisit(state, dt);
+  if (options.roaming && !state.harborVisit && !state.route.length) {
     state.pause = Math.max(0, state.pause - dt);
     if (state.pause === 0) {
       for (let attempts = 0; attempts < 24; attempts++) {
@@ -181,10 +302,10 @@ export function advanceWalker(
   }
   const remaining = distance(state.position, next);
   const desiredYaw = Math.atan2(next[0] - state.position[0], next[1] - state.position[1]);
-  const angle = Math.atan2(Math.sin(desiredYaw - state.yaw), Math.cos(desiredYaw - state.yaw));
-  state.yaw += Math.max(-dt * 4, Math.min(dt * 4, angle));
+  const angle = turnTowards(state, desiredYaw, dt);
   const maximum = [0.72, 0.64, 0.58][state.personality];
-  const stopAtGoal = !options.roaming || (state.patrol + state.personality) % 5 === 0;
+  const stopAtGoal =
+    !options.roaming || !!state.harborVisit || (state.patrol + state.personality) % 5 === 0;
   const stopping =
     state.route.length === 1 && stopAtGoal ? Math.sqrt(2 * 1.6 * remaining) : maximum;
   const targetSpeed = Math.min(maximum, stopping) * Math.max(0.08, Math.cos(angle));
@@ -201,7 +322,8 @@ export function advanceWalker(
     state.route.shift();
     if (!state.route.length) {
       if (stopAtGoal) state.speed = 0;
-      if (options.roaming && stopAtGoal) state.pause = 2 + state.personality * 0.8;
+      if (options.roaming && !state.harborVisit && stopAtGoal)
+        state.pause = 2 + state.personality * 0.8;
     }
   }
   return state;

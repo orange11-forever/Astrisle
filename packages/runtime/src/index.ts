@@ -1169,11 +1169,17 @@ class Runtime implements RuntimeService {
       try {
         await this.runTask(id, taskId, signal);
         if (this.store.get(id).tasks.find((t) => t.id === taskId)?.status === 'running')
-          this.change(id, 'task_waiting', 'Task paused at a model-turn boundary', (s) => {
-            const t = s.tasks.find((t) => t.id === taskId)!;
-            t.status = 'queued';
-            waitForTaskRequests(s, t);
-          });
+          this.change(
+            id,
+            'task_waiting',
+            'Task paused at a model-turn boundary',
+            (s) => {
+              const t = s.tasks.find((t) => t.id === taskId)!;
+              t.status = 'queued';
+              waitForTaskRequests(s, t);
+            },
+            { taskId },
+          );
       } catch (e) {
         if (
           e instanceof OutcomeUnknownError &&
@@ -1199,6 +1205,7 @@ class Runtime implements RuntimeService {
               s.commission.summary = 'A task failed; inspect evidence before resuming';
             }
           },
+          { taskId },
         );
       }
     });
@@ -1381,9 +1388,15 @@ class Runtime implements RuntimeService {
       args: call.args,
       revision: s.commission.revision,
     });
-    this.change(id, 'tool_started', `Calling ${call.name}`, (s) => {
-      s.tasks.find((t) => t.id === taskId)!.step = call.name;
-    });
+    this.change(
+      id,
+      'tool_started',
+      `Calling ${call.name}`,
+      (s) => {
+        s.tasks.find((t) => t.id === taskId)!.step = call.name;
+      },
+      { taskId },
+    );
     let output;
     try {
       output = pinned.some((a) => before[a.versionId] !== a.sha256)
@@ -1454,6 +1467,7 @@ class Runtime implements RuntimeService {
           createdAt: now(),
         });
       },
+      { taskId },
     );
     if (unknown) {
       this.requireReconciliation(id, taskId, runId, call.name);
@@ -1634,29 +1648,35 @@ class Runtime implements RuntimeService {
         // a thrown I/O error cannot establish which writes reached the filesystem.
         integration = await integrateTaskWorkspace(s.workspace, workPath, changes);
         if (integration.ok)
-          this.change(id, 'task_completed', String(a.summary), (s) => {
-            const t = s.tasks.find((t) => t.id === taskId)!;
-            if (t.status !== 'running') return;
-            const versions = s.artifacts
-              .filter((a) => a.taskId === taskId && a.validity === 'current')
-              .map((a) => a.versionId);
-            const reviewed =
-              versions.length > 0 &&
-              versions.every((v) =>
-                s.evidence.some(
-                  (e) =>
-                    e.kind === 'review' &&
-                    e.status === 'passed' &&
-                    e.artifactVersionIds.includes(v),
-                ),
-              );
-            t.status =
-              s.tasks.some((r) => r.kind === 'review' && r.dependencies.includes(taskId)) &&
-              !reviewed
-                ? 'awaiting_review'
-                : 'passed';
-            t.step = String(a.summary);
-          });
+          this.change(
+            id,
+            'task_completed',
+            String(a.summary),
+            (s) => {
+              const t = s.tasks.find((t) => t.id === taskId)!;
+              if (t.status !== 'running') return;
+              const versions = s.artifacts
+                .filter((a) => a.taskId === taskId && a.validity === 'current')
+                .map((a) => a.versionId);
+              const reviewed =
+                versions.length > 0 &&
+                versions.every((v) =>
+                  s.evidence.some(
+                    (e) =>
+                      e.kind === 'review' &&
+                      e.status === 'passed' &&
+                      e.artifactVersionIds.includes(v),
+                  ),
+                );
+              t.status =
+                s.tasks.some((r) => r.kind === 'review' && r.dependencies.includes(taskId)) &&
+                !reviewed
+                  ? 'awaiting_review'
+                  : 'passed';
+              t.step = String(a.summary);
+            },
+            { taskId },
+          );
       } catch (error) {
         throw new OutcomeUnknownError(
           `Managed integration may be partial: ${this.safeError(error)}`,

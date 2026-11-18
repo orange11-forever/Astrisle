@@ -58,6 +58,8 @@ test('a paused commission budget can be edited through the real desktop UI and s
     await page.getByRole('button', { name: '展开项目与委托' }).click();
     await page.getByRole('button', { name: '预算续跑验证 已暂停' }).click();
     const panel = page.getByRole('region', { name: '委托预算' });
+    const activity = page.getByRole('region', { name: '委托动态' });
+    await expect(activity).toContainText('等待配置模型');
     await expect(panel).toContainText('0 / 10 步');
     await panel.getByRole('button', { name: '调整预算' }).click();
     await panel.getByLabel('总步数上限').fill('40');
@@ -67,6 +69,10 @@ test('a paused commission budget can be edited through the real desktop UI and s
     await panel.getByRole('button', { name: '保存预算' }).click();
     await expect(panel).toContainText('0 / 40 步');
     await expect(panel.getByLabel('总步数上限')).toHaveCount(0);
+    const latest = activity.getByRole('listitem').first();
+    await expect(latest).toContainText('已调整运行预算');
+    await latest.locator('summary').click();
+    await expect(latest.getByText(/40 steps, 15 minutes/)).toBeVisible();
     const snapshot = await page.evaluate((id) => window.astrisle!.snapshot(id), id);
     expect(snapshot.commission).toMatchObject({
       status: 'paused',
@@ -89,6 +95,17 @@ test('a paused commission budget can be edited through the real desktop UI and s
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole('button', { name: '展开项目与委托' }).click();
     await page.getByRole('button', { name: '预算续跑验证 已暂停' }).click();
+    await expect(activity.getByRole('listitem').first()).toContainText('已调整运行预算');
+    // Update through the host while the panel is open. Only a pushed snapshot can refresh it.
+    const updated = await page.evaluate(
+      (id) => window.astrisle!.updateBudget(id, { maxSteps: 42, maxMinutes: 16, maxRework: 5 }, 1),
+      id,
+    );
+    expect(updated.ok).toBe(true);
+    const pushed = activity.getByRole('listitem').first();
+    await expect(pushed).toContainText('42 steps, 16 minutes');
+    await pushed.locator('summary').click();
+    await expect(activity.getByText(/42 steps, 16 minutes/)).toBeVisible();
     await page.getByRole('button', { name: '调整预算' }).click();
     await expect(page.getByLabel('总步数上限')).toBeVisible();
     expect(

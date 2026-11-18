@@ -1,16 +1,7 @@
-import {
-  Component,
-  createContext,
-  Suspense,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
-import type { ReactNode, RefObject } from 'react';
+import { Component, Suspense, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { Html } from '@react-three/drei';
+import { Html, RoundedBox } from '@react-three/drei';
 import * as THREE from 'three';
 import { DEFAULT_CHARACTERS } from '@astrisle/contracts';
 import type { CharacterProfile, ProjectSnapshot, Task } from '@astrisle/contracts';
@@ -20,12 +11,27 @@ import { IslandLandscape } from './IslandLandscape';
 import { CharacterVisual } from './characters/CharacterVisual';
 import type { CharacterMotion } from './characters/CharacterVisual';
 import { CosmicBackdrop } from './CosmicBackdrop';
+import { OuterIslets } from './OuterIslets';
+import { IslandGlasshouse } from './IslandGlasshouse';
+import { HarborQuarter } from './HarborQuarter';
+import { harborStops, harborWalkingHeight } from './harbor-layout';
+import { HarborHorizon } from './HarborHorizon';
+import {
+  ArmillaryStand,
+  AtlasSheets,
+  BoundBooks as Books,
+  ReadingGallery,
+  StudioDeck,
+  WritingSet,
+} from './StudioWoodwork';
 import { SceneFrameBudget, useSceneActivity } from './render-budget';
 import { SceneQualityContext, useScenePixelRatio } from './render-quality';
 import type { SceneQuality } from './render-quality';
 import { advanceWalker, createWalker, STATION_POINTS } from './island-motion';
 import { Confetti } from './Confetti';
 import { IslandLeisure } from './IslandLeisure';
+import { islandAppearance } from './islands';
+import type { IslandThemeId } from './islands';
 import {
   advanceLeisure,
   createLeisure,
@@ -34,7 +40,8 @@ import {
   type LeisureWorld,
 } from './island-activities';
 import { FACILITIES, SWING_ROPE_LENGTH } from './island-facilities';
-import { CameraRig } from './StudioCamera';
+import { CameraRig, type StudioDistrict } from './StudioCamera';
+import { LabelPortal, ToolStation } from './ToolStation';
 
 const c = {
   paper: '#e7eef0',
@@ -134,7 +141,6 @@ function Ring({
     </mesh>
   );
 }
-const LabelPortal = createContext<RefObject<HTMLElement> | undefined>(undefined);
 function Label({
   position,
   children,
@@ -173,29 +179,14 @@ function Plant({ position, scale = 1 }: { position: V3; scale?: number }) {
     </group>
   );
 }
-function Books({ position, side = false }: { position: V3; side?: boolean }) {
-  return (
-    <group position={position} rotation={[0, side ? Math.PI / 2 : 0, 0]}>
-      {['#507474', '#c6b18a', '#7c8caa', '#c78776', '#e0d6bf'].map((color, i) => (
-        <Box
-          key={color}
-          position={[(i - 2) * 0.14, 0.22, 0]}
-          scale={[0.11, 0.4 + (i % 2) * 0.09, 0.29]}
-          color={color}
-          rotation={[0, 0, (i - 2) * 0.025]}
-        />
-      ))}
-    </group>
-  );
-}
 function Lamp({ position }: { position: V3 }) {
   return (
     <group position={position}>
       <Cylinder radius={0.17} height={0.05} color={c.brass} />
       <Cylinder position={[0, 0.35, 0]} radius={0.025} height={0.7} color={c.brass} />
-      <mesh position={[0, 0.75, 0]} rotation={[0, 0, 0.2]}>
-        <coneGeometry args={[0.28, 0.18, 24, 1, true]} />
-        <meshStandardMaterial color={c.brass} side={THREE.DoubleSide} />
+      <mesh position={[0, 0.72, 0]} rotation={[0, 0, 0.15]}>
+        <sphereGeometry args={[0.26, 24, 10, 0, Math.PI * 2, 0, Math.PI * 0.46]} />
+        <meshStandardMaterial color="#446d64" side={THREE.DoubleSide} roughness={0.4} />
       </mesh>
       <mesh position={[0, 0.69, 0]}>
         <sphereGeometry args={[0.08, 12, 8]} />
@@ -204,6 +195,18 @@ function Lamp({ position }: { position: V3 }) {
     </group>
   );
 }
+const deskPedestal = [
+  [0, 0.02],
+  [0.66, 0.02],
+  [0.7, 0.08],
+  [0.64, 0.16],
+  [0.48, 0.21],
+  [0.31, 0.38],
+  [0.28, 0.67],
+  [0.41, 0.92],
+  [0.69, 1.035],
+  [0, 1.06],
+].map(([r, y]) => new THREE.Vector2(r, y));
 function Desk({ x, onClick }: { x: number; onClick: () => void }) {
   return (
     <group
@@ -215,15 +218,13 @@ function Desk({ x, onClick }: { x: number; onClick: () => void }) {
       }}
     >
       <Cylinder position={[0, 1.12, 0]} radius={1.12} height={0.14} color={c.wood} />
-      <Cylinder position={[0, 0.57, 0]} radius={0.7} height={1} color="#81969b" />
-      <Ring radius={0.73} y={0.17} />
-      <Box position={[0, 1.22, 0.13]} scale={[0.82, 0.04, 0.55]} color="#edf0df" />
-      <Box
-        position={[0, 1.25, -0.1]}
-        scale={[0.4, 0.025, 0.25]}
-        color="#8da9af"
-        rotation={[0, 0.2, 0]}
-      />
+      <mesh>
+        <latheGeometry args={[deskPedestal, 40]} />
+        <meshStandardMaterial color="#648480" roughness={0.54} />
+      </mesh>
+      <Ring radius={0.66} y={0.12} />
+      <Ring radius={1.109} y={1.1} />
+      <WritingSet />
       <Books position={[-0.62, 1.2, -0.25]} />
       <Lamp position={[0.64, 1.21, -0.3]} />
       <Cylinder position={[0, 0.48, 1.16]} radius={0.39} height={0.12} color="#597b7f" />
@@ -247,7 +248,7 @@ function StarTable({ active, onClick }: { active: boolean; onClick: () => void }
         onClick();
       }}
     >
-      <Cylinder position={[0, 0.55, 0]} radius={0.58} height={1.08} color="#748e98" />
+      <ArmillaryStand />
       {[0, 1, 2].map((i) => (
         <group key={i} rotation={[0, (i * Math.PI * 2) / 3, 0]}>
           <mesh position={[0, 1.12, 0]} rotation={[-Math.PI / 2, 0, 0]} castShadow receiveShadow>
@@ -265,21 +266,18 @@ function StarTable({ active, onClick }: { active: boolean; onClick: () => void }
                 },
               ]}
             />
-            <meshStandardMaterial color={i === 1 ? '#cfdddd' : '#e6e4d7'} roughness={0.6} />
+            <meshStandardMaterial color="#c0a377" metalness={0.24} roughness={0.52} />
           </mesh>
-          <Box
-            position={[0, 1.25, 1.24]}
-            scale={[0.57, 0.02, 0.7]}
-            rotation={[0, 0, 0]}
-            color={active ? '#cfbd96' : '#a9c0c4'}
-          />
+          <mesh
+            position={[0, 1.252, -0.075]}
+            rotation={[-Math.PI / 2, 0, 0]}
+            scale={[0.95, 0.93, 1]}
+          >
+            <shapeGeometry args={[petal, 24]} />
+            <meshStandardMaterial color={active ? '#3a7374' : '#547e7b'} roughness={0.47} />
+          </mesh>
         </group>
       ))}
-      <Ring radius={0.55} y={1.28} />
-      <mesh position={[0, 1.45, 0]} rotation={[Math.PI / 2, 0, 0]}>
-        <octahedronGeometry args={[0.19]} />
-        <meshStandardMaterial color={c.brass} metalness={0.65} roughness={0.2} />
-      </mesh>
     </group>
   );
 }
@@ -356,6 +354,7 @@ function Avatar({
       reduced: reduced || preview,
       active: activity,
       capable: motion.current.leisureCapable ?? false,
+      visitingHarbor: !!walker.current.harborVisit,
       reservations: life.reservations,
     });
     const facility = leisure.facility ? FACILITIES[leisure.facility] : undefined;
@@ -373,7 +372,7 @@ function Avatar({
     root.current.position.set(
       THREE.MathUtils.lerp(state.position[0], facility?.position[0] ?? state.position[0], weight) +
         Math.sin(facility?.yaw ?? 0) * sway,
-      home[1] + lift,
+      home[1] + (preview ? 0 : harborWalkingHeight(state.position)) + lift,
       THREE.MathUtils.lerp(state.position[1], facility?.position[1] ?? state.position[1], weight) +
         Math.cos(facility?.yaw ?? 0) * sway,
     );
@@ -409,6 +408,15 @@ function Avatar({
     root.current.userData.activity = facility?.activity ?? 'walk';
     root.current.userData.activityStage = leisure.stage;
     root.current.userData.activityBlend = weight;
+    const visit = state.harborVisit;
+    root.current.userData.harborStage = visit?.stage;
+    const walkingLabel = !visit
+      ? '散步'
+      : visit.stage === 'watching'
+        ? harborStops[visit.stop].name
+        : visit.stage === 'outbound'
+          ? '走向花港'
+          : '返回花园';
     const description =
       leisure.stage === 'approaching'
         ? `走向${facility!.name}`
@@ -424,7 +432,7 @@ function Avatar({
                   : '小憩'
               : reduced
                 ? '空闲'
-                : '散步';
+                : walkingLabel;
     if (label.current !== description) {
       label.current = description;
       setLeisureLabel(description);
@@ -474,22 +482,26 @@ function Avatar({
 }
 function World({
   workspaceId,
+  themeId,
   snapshot,
   onPanel,
   reduced,
   reset,
   fixed,
   focus,
+  district,
   characters,
   celebration,
 }: {
   workspaceId: string;
+  themeId?: IslandThemeId;
   snapshot?: ProjectSnapshot;
   onPanel: (panel: Panel) => void;
   reduced: boolean;
   reset: number;
   fixed: boolean;
   focus?: CharacterFocus;
+  district?: StudioDistrict;
   characters?: CharacterProfile[];
   celebration?: number | null;
 }) {
@@ -559,52 +571,43 @@ function World({
   return (
     <>
       <CosmicBackdrop reduced={reduced} />
-      <ambientLight intensity={0.9} />
-      <hemisphereLight args={['#c6d9ff', '#64557c', 1.35]} />
-      <directionalLight position={[-6, 12, 8]} intensity={2.3} color="#ffe8c8" />
-      <directionalLight position={[6, 3, -8]} intensity={1.1} color="#98a9ed" />
-      <CameraRig reset={reset} fixed={fixed} focus={focus} reduced={reduced} />
-      <IslandLandscape workspaceId={workspaceId} reduced={reduced} />
+      <HarborHorizon />
+      <OuterIslets reduced={reduced} />
+      <HarborQuarter snapshot={snapshot} onPanel={onPanel} />
+      <IslandGlasshouse />
+      <ambientLight intensity={0.6} />
+      <hemisphereLight args={['#d3e5fe', '#71637d', 1.12]} />
+      <directionalLight position={[-8, 9, 6]} intensity={2.58} color="#ffe5bf" />
+      <directionalLight position={[6, 4, -8]} intensity={0.92} color="#a9c1f4" />
+      <CameraRig reset={reset} fixed={fixed} focus={focus} reduced={reduced} district={district} />
+      <IslandLandscape workspaceId={workspaceId} themeId={themeId} reduced={reduced} />
       <IslandLeisure life={life} />
       {celebration != null && !reduced && <Confetti key={celebration} burst={celebration} />}
-      <group position={[0, -0.38, 0]}>
-        <mesh receiveShadow>
-          <cylinderGeometry args={[6.1, 5.4, 0.55, 80]} />
-          <meshStandardMaterial color="#a5b4b5" />
-        </mesh>
-        <Cylinder position={[0, 0.3, 0]} radius={5.97} height={0.13} color="#b9ad97" />
-        <Ring radius={5.78} y={0.39} />
-        {Array.from({ length: 19 }, (_, i) => (
-          <Box
-            key={i}
-            position={[(i - 9) * 0.58, 0.375, 0]}
-            scale={[0.016, 0.006, Math.sqrt(Math.max(0, 35 - ((i - 9) * 0.58) ** 2)) * 2]}
-            color="#a89b85"
-          />
-        ))}
-      </group>
+      <StudioDeck />
       <group position={[0, 0, -0.65]} scale={0.82}>
         <StarTable active={!!snapshot} onClick={() => onPanel('goal')} />
       </group>
       <Desk x={-3.6} onClick={() => onPanel('tasks')} />
       <Desk x={3.6} onClick={() => onPanel('tasks')} />
-      <group position={[0, 0, -3.55]} onClick={() => onPanel('evidence')}>
+      <ToolStation
+        position={[0, 0, -3.55]}
+        labelPosition={[0, 2.6, 0]}
+        label="对照架 · 检查记录"
+        onActivate={() => onPanel('evidence')}
+      >
         <Box position={[0, 1.5, 0]} scale={[2.2, 1.7, 0.13]} color={c.wood} />
-        <Box position={[-0.55, 1.52, 0.085]} scale={[0.94, 1.4, 0.025]} color="#dce4de" />
-        <Box position={[0.55, 1.52, 0.085]} scale={[0.94, 1.4, 0.025]} color="#c7d8dc" />
+        <AtlasSheets />
         {[-0.78, 0.78].map((x) => (
           <Cylinder key={x} position={[x, 0.6, 0]} radius={0.04} height={1.2} color={c.brass} />
         ))}
-        <mesh position={[0, 1.5, 0.25]} rotation={[Math.PI / 2, 0, 0]}>
-          <torusGeometry args={[0.3, 0.025, 8, 32]} />
-          <meshStandardMaterial color={c.brass} />
-        </mesh>
-        <Label position={[0, 2.6, 0]} onClick={() => onPanel('evidence')}>
-          对照架 · 检查记录
-        </Label>
-      </group>
+      </ToolStation>
       <group position={[-3.3, 0, -3.55]} rotation={[0, 0.37, 0]}>
-        <Box position={[0, 1.25, 0]} scale={[2.1, 2.5, 0.55]} color="#8a9085" />
+        <Box position={[0, 1.23, -0.22]} scale={[2.1, 2.46, 0.09]} color="#656f63" />
+        <Box position={[0, 0.23, 0.04]} scale={[2.18, 0.46, 0.67]} color="#9a856a" />
+        <Box position={[0, 2.48, 0.04]} scale={[2.24, 0.105, 0.71]} color="#9f886a" />
+        {[-1, 1].map((x) => (
+          <Box key={x} position={[x, 1.25, 0.04]} scale={[0.09, 2.46, 0.63]} color="#a89374" />
+        ))}
         {[0.5, 1.2, 1.9].map((y) => (
           <group key={y}>
             <Box position={[0, y, 0.1]} scale={[2.15, 0.08, 0.67]} color={c.wood} />
@@ -614,32 +617,54 @@ function World({
         ))}
       </group>
       <group position={[2.75, 0, -3.75]} rotation={[0, -0.25, 0]}>
-        <Box position={[0, 0.43, 0]} scale={[2.3, 0.5, 0.85]} color="#719093" />
-        <Box position={[0, 0.85, -0.35]} scale={[2.3, 0.75, 0.22]} color="#77999a" />
-        <Box
-          position={[-0.63, 0.91, 0]}
-          scale={[0.55, 0.55, 0.17]}
-          color="#d5bdb2"
-          rotation={[0, 0, 0.12]}
-        />
-        <Box
-          position={[0.45, 0.9, 0]}
-          scale={[0.6, 0.5, 0.18]}
-          color="#d2d7ca"
-          rotation={[0, 0, -0.13]}
-        />
+        <Box position={[0, 0.28, 0]} scale={[2.32, 0.17, 0.85]} color="#9b8063" />
+        <RoundedBox
+          position={[0, 0.81, -0.34]}
+          args={[2.32, 0.93, 0.32]}
+          radius={0.14}
+          smoothness={3}
+        >
+          <meshStandardMaterial color="#688b88" roughness={0.96} />
+        </RoundedBox>
+        {[-1, 1].map((side) => (
+          <group key={side}>
+            <RoundedBox
+              args={[1.12, 0.28, 0.82]}
+              position={[side * 0.565, 0.5, 0.04]}
+              radius={0.1}
+              smoothness={3}
+            >
+              <meshStandardMaterial color="#7c9c96" roughness={0.95} />
+            </RoundedBox>
+            <RoundedBox
+              args={[0.5, 0.5, 0.2]}
+              position={[side * 0.68, 0.83, -0.01]}
+              rotation={[-0.17, 0, -side * 0.17]}
+              radius={0.09}
+              smoothness={3}
+            >
+              <meshStandardMaterial color={side < 0 ? '#c89b87' : '#b4c6ae'} roughness={0.96} />
+            </RoundedBox>
+          </group>
+        ))}
       </group>
-      <group position={[-4.2, 0, 2.7]} onClick={() => onPanel('requests')}>
+      <ToolStation
+        position={[-4.2, 0, 2.7]}
+        labelPosition={[-0.4, 0.85, 0.65]}
+        label={`回信匣 · ${snapshot?.requests.some((r) => r.status === 'open') ? '需要你' : '输入与审批'}`}
+        onActivate={() => onPanel('requests')}
+      >
         <Cylinder radius={0.55} height={0.12} position={[0, 0.12, 0]} color={c.wood} />
         <Cylinder radius={0.04} height={0.95} position={[0, 0.6, 0]} color={c.brass} />
         <Box position={[0, 1.18, 0]} scale={[0.8, 0.67, 0.24]} color="#d3dfdc" />
         <Box position={[0, 1.22, 0.14]} scale={[0.49, 0.06, 0.03]} color={c.ink} />
-        <Label position={[-0.4, 0.85, 0.65]} onClick={() => onPanel('requests')}>
-          回信匣
-          {snapshot?.requests.some((r) => r.status === 'open') ? ' · 需要你' : ' · 输入与审批'}
-        </Label>
-      </group>
-      <group position={[4.2, 0, 2.7]} onClick={() => onPanel('artifacts')}>
+      </ToolStation>
+      <ToolStation
+        position={[4.2, 0, 2.7]}
+        labelPosition={[0, 0.95, 0.9]}
+        label={`交付港 · ${snapshot?.artifacts.length ? `${snapshot.artifacts.length} 项成果` : '等待成果'}`}
+        onActivate={() => onPanel('artifacts')}
+      >
         <Box position={[0, 0.12, 0]} scale={[2, 0.2, 1.5]} color={c.wood} />
         <Box position={[0, 0.48, 0]} scale={[1.25, 0.56, 0.8]} color="#dce0d1" />
         {[-0.57, 0.57].map((x) => (
@@ -651,10 +676,7 @@ function World({
         >
           <Box position={[0, 0.04, 0.4]} scale={[1.3, 0.1, 0.86]} color="#e3e4d7" />
         </group>
-        <Label position={[0, 0.95, 0.9]} onClick={() => onPanel('artifacts')}>
-          交付港 · {snapshot?.artifacts.length ? `${snapshot.artifacts.length} 项成果` : '等待成果'}
-        </Label>
-      </group>
+      </ToolStation>
       {[
         [-5, 0, 2],
         [-5, 0, -2],
@@ -664,24 +686,7 @@ function World({
       ].map((p, i) => (
         <Plant key={i} position={p as V3} scale={i > 2 ? 0.8 : 1} />
       ))}
-      <group position={[0, 0, -0.1]}>
-        {[0, 0.5, 1].map((y, i) => (
-          <mesh
-            key={i}
-            position={[0, y * 2.4 + 0.45, 0]}
-            rotation={[-Math.PI / 2, 0.0, Math.PI * 0.05]}
-          >
-            <torusGeometry args={[Math.sqrt(37 - (y * 2.4) ** 2), 0.055, 8, 80, Math.PI * 0.96]} />
-            <meshStandardMaterial color={c.wood} />
-          </mesh>
-        ))}
-        {[-2.3, -1.15, 0, 1.15, 2.3].map((a, i) => (
-          <mesh key={i} rotation={[Math.PI / 2, 0, a]} position={[0, 0.4, 0]}>
-            <torusGeometry args={[5.9, 0.045, 6, 60, Math.PI * 0.46]} />
-            <meshStandardMaterial color={c.brass} transparent opacity={0.55} />
-          </mesh>
-        ))}
-      </group>
+      <ReadingGallery />
       <Avatar
         id="mori"
         life={life}
@@ -737,12 +742,14 @@ class SceneBoundary extends Component<{ children: ReactNode }, { error: boolean 
 }
 export function StudioScene(props: {
   workspaceId: string;
+  themeId?: IslandThemeId;
   snapshot?: ProjectSnapshot;
   onPanel: (panel: Panel) => void;
   reduced: boolean;
   reset: number;
   fixed: boolean;
   focus?: CharacterFocus;
+  district?: StudioDistrict;
   characters?: CharacterProfile[];
   quality?: SceneQuality;
   celebration?: number | null;
@@ -753,7 +760,11 @@ export function StudioScene(props: {
   const dpr = useScenePixelRatio(quality, portal);
   return (
     <SceneBoundary>
-      <div className="studio-canvas" style={{ position: 'absolute', inset: 0 }}>
+      <div
+        className="studio-canvas"
+        data-island-theme={islandAppearance(props.workspaceId, props.themeId).id}
+        style={{ position: 'absolute', inset: 0 }}
+      >
         <div
           ref={portal}
           className="scene-label-layer"
