@@ -53,6 +53,7 @@ export function advanceLeisure(
     active: boolean;
     reduced: boolean;
     capable: boolean;
+    visitingHarbor?: boolean;
     reservations: Map<FacilityId, string>;
   },
 ): LeisureState {
@@ -74,7 +75,7 @@ export function advanceLeisure(
   }
   state.elapsed += dt;
   if (state.stage === 'roaming') {
-    if (!options.idle) return state;
+    if (!options.idle || options.visitingHarbor) return state;
     state.wait -= dt;
     if (state.wait > 0) return state;
     const index = state.cycle % order.length;

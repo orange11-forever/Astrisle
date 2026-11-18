@@ -75,6 +75,25 @@ test('overview pans on the island plane and bounds the target', async ({ page })
   await reset(page);
 });
 
+test('harbor view frames the waterfront and restores free studio navigation', async ({ page }) => {
+  const view = page.getByLabel('场景视角与角色特写');
+  await view.selectOption('harbor');
+  await expect(page.getByRole('heading', { name: '花港街景' })).toBeVisible();
+  await expect
+    .poll(async () => (await cameraState(page))?.target.map((value) => +value.toFixed(6)))
+    .toEqual([-5.38, 0.65, -11.25]);
+  const framed = (await cameraState(page))!;
+  await drag(page, 0.12, 0.06, 'right');
+  await expect.poll(async () => (await cameraState(page))?.target[0]).not.toBe(framed.target[0]);
+  await view.selectOption('garden');
+  await expect(page.getByRole('heading', { name: '温室花园' })).toBeVisible();
+  await expect.poll(async () => (await cameraState(page))?.target).toEqual([-6.95, 0.62, 5.25]);
+  await reset(page);
+  await expect(view).toHaveValue('');
+  await view.selectOption('mori');
+  await expect.poll(async () => (await cameraState(page))?.target).toEqual([-3.45, 0.95, 1.2]);
+});
+
 test('overview zooms closer and preserves orbit on resize with accessible narrow controls', async ({
   page,
 }) => {

@@ -14,6 +14,7 @@ import { Html, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import type { Workspace } from '@astrisle/contracts';
 import { islandAppearance, islandPosition } from './islands';
+import type { IslandThemeId } from './islands';
 import { IslandTree, Pennant } from './IslandLandscape';
 import { CosmicBackdrop } from './CosmicBackdrop';
 import { SceneFrameBudget, useSceneActivity } from './render-budget';
@@ -23,6 +24,7 @@ import type { SceneQuality } from './render-quality';
 const LabelPortal = createContext<RefObject<HTMLElement> | undefined>(undefined);
 function MiniIsland({
   workspace,
+  themeId,
   index,
   count,
   selected,
@@ -30,13 +32,14 @@ function MiniIsland({
   onSelect,
 }: {
   workspace: Workspace;
+  themeId?: IslandThemeId;
   index: number;
   count: number;
   selected: boolean;
   reduced: boolean;
   onSelect: (id: string) => void;
 }) {
-  const palette = useMemo(() => islandAppearance(workspace.id), [workspace.id]);
+  const palette = useMemo(() => islandAppearance(workspace.id, themeId), [workspace.id, themeId]);
   const portal = useContext(LabelPortal);
   const root = useRef<THREE.Group>(null);
   useFrame(({ clock }) => {
@@ -151,7 +154,13 @@ function MiniIsland({
   );
 }
 class OverviewBoundary extends Component<
-  { children: ReactNode; workspaces: Workspace[]; onSelect: (id: string) => void },
+  {
+    children: ReactNode;
+    workspaces: Workspace[];
+    themeOverrides: ReadonlyMap<string, IslandThemeId>;
+    selectedId: string;
+    onSelect: (id: string) => void;
+  },
   { error: boolean }
 > {
   state = { error: false };
@@ -163,8 +172,15 @@ class OverviewBoundary extends Component<
       <div className="island-access-list">
         <p>3D 总览暂时不可用，可以直接选择岛屿。</p>
         {this.props.workspaces.map((w) => (
-          <button key={w.id} onClick={() => this.props.onSelect(w.id)}>
+          <button
+            key={w.id}
+            aria-pressed={w.id === this.props.selectedId}
+            onClick={() => this.props.onSelect(w.id)}
+          >
             {w.name}
+            <small className="island-theme-label">
+              {islandAppearance(w.id, this.props.themeOverrides.get(w.id)).name}
+            </small>
           </button>
         ))}
       </div>
@@ -175,12 +191,14 @@ class OverviewBoundary extends Component<
 }
 export function Archipelago({
   workspaces,
+  themeOverrides,
   selectedId,
   onSelect,
   reduced,
   quality = 'clear',
 }: {
   workspaces: Workspace[];
+  themeOverrides: ReadonlyMap<string, IslandThemeId>;
   selectedId: string;
   onSelect: (id: string) => void;
   reduced: boolean;
@@ -192,7 +210,12 @@ export function Archipelago({
   const rows = Math.ceil(workspaces.length / 3);
   const distance = Math.max(17, rows * 4.6 + 9);
   return (
-    <OverviewBoundary workspaces={workspaces} onSelect={onSelect}>
+    <OverviewBoundary
+      workspaces={workspaces}
+      themeOverrides={themeOverrides}
+      selectedId={selectedId}
+      onSelect={onSelect}
+    >
       <div className="archipelago-canvas" aria-label="持久项目的 3D 群岛总览">
         <div
           ref={portal}
@@ -224,6 +247,7 @@ export function Archipelago({
                 <MiniIsland
                   key={w.id}
                   workspace={w}
+                  themeId={themeOverrides.get(w.id)}
                   index={i}
                   count={workspaces.length}
                   selected={w.id === selectedId}

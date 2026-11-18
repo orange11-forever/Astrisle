@@ -1,4 +1,5 @@
 import type { Page } from '@playwright/test';
+import type { ProjectEvent } from '@astrisle/contracts';
 
 export async function seedIslandLife(page: Page, model?: number[]) {
   await page.addInitScript((bytes) => {
@@ -39,7 +40,7 @@ export async function seedIslandLife(page: Page, model?: number[]) {
       tasks: [],
       artifacts: [],
       evidence: [],
-      events: [],
+      events: [] as ProjectEvent[],
       requests: [],
       lastSequence: 0,
     };
@@ -114,6 +115,16 @@ export async function seedIslandLife(page: Page, model?: number[]) {
         updatedAt: commission.createdAt,
       });
       commission.status = 'active';
+      snapshot.events.push({
+        id: 'life-work-start',
+        commissionId: commission.id,
+        type: 'task_started',
+        sequence: ++snapshot.lastSequence,
+        agentId: 'mori',
+        taskId: 'real-task',
+        message: 'Agent started task',
+        createdAt: new Date().toISOString(),
+      });
       listeners.forEach((listener) => listener(structuredClone(snapshot)));
     };
   }, model);

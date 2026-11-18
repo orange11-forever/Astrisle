@@ -282,6 +282,15 @@ it('executes real file tools, unblocks artifact review before author pass, verif
   expect(published.taskId).toBe(artifact.taskId);
   expect(published.agentId).toBe('mori');
   expect(published.artifactVersionId).toBe(artifact.versionId);
+  for (const type of ['tool_started', 'tool_finished', 'task_completed']) {
+    const events = snapshot.events.filter((event) => event.type === type);
+    expect(events.length).toBeGreaterThan(0);
+    for (const event of events) {
+      const owner = snapshot.tasks.find((task) => task.id === event.taskId);
+      expect(owner).toBeDefined();
+      expect(event.agentId).toBe(owner!.agentId);
+    }
+  }
   expect((await runtime.accept(id, [artifact.id])).ok).toBe(true);
   expect((await runtime.snapshot(id)).commission.status).toBe('accepted');
   expect((await runtime.revise(id, 'Add a new constraint', snapshot.commission.revision)).ok).toBe(

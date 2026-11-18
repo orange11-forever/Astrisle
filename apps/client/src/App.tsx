@@ -14,7 +14,6 @@ import {
   Inbox,
   Layers,
   Maximize2,
-  Moon,
   Pause,
   Play,
   Plus,
@@ -22,15 +21,15 @@ import {
   Send,
   Settings2,
   ShieldCheck,
-  Sparkles,
   Square,
   X,
   ZoomIn,
-  Map,
+  Map as MapIcon,
   PanelRightOpen,
   ListTodo,
   PartyPopper,
 } from 'lucide-react';
+import astrisleMark from '../../../docs/assets/astrisle-logo.svg';
 import type {
   ApplyPreview,
   ArtifactPreview,
@@ -43,13 +42,23 @@ import type {
 } from '@astrisle/contracts';
 import { DEFAULT_CHARACTERS } from '@astrisle/contracts';
 import { StudioScene } from './Scene';
+import type { StudioDistrict } from './StudioCamera';
 import { Archipelago } from './Archipelago';
 import { BudgetPanel } from './BudgetPanel';
+import { CommissionActivity } from './CommissionActivity';
 import { WritebackHistory, WritebackPreview } from './WritebackHistory';
 import { SceneQualitySelect, type SceneQuality } from './render-quality';
 import type { CharacterFocus, Panel } from './Scene';
 import { useCompletionCelebration } from './celebration';
+import {
+  islandAppearance,
+  islandThemes,
+  isIslandThemeId,
+  parseIslandThemeOverrides,
+} from './islands';
+import type { IslandThemeId } from './islands';
 
+const islandThemeStorageKey = 'astrisle-island-themes';
 const labels: Record<string, string> = {
   draft: '草稿',
   active: '进行中',
@@ -103,7 +112,6 @@ function Status({ value }: { value: string }) {
 function Empty({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="empty">
-      <Compass size={31} strokeWidth={1.2} />
       <h3>{title}</h3>
       <p>{children}</p>
     </div>
@@ -150,6 +158,15 @@ export function App() {
   const [snapshot, setSnapshot] = useState<ProjectSnapshot>();
   const [commissionId, setCommissionId] = useState('');
   const selected = useRef('');
+  const receiveSnapshot = useCallback((incoming: ProjectSnapshot) => {
+    if (incoming.commission.id !== selected.current) return;
+    setSnapshot((previous) =>
+      previous?.commission.id === incoming.commission.id &&
+      previous.lastSequence > incoming.lastSequence
+        ? previous
+        : incoming,
+    );
+  }, []);
   const [workspaceId, setWorkspaceId] = useState('');
   const celebration = useCompletionCelebration(snapshot?.commission, workspaceId);
   const [panel, setPanel] = useState<Panel>('goal');
@@ -165,6 +182,25 @@ export function App() {
   const [navOpen, setNavOpen] = useState(false);
   const [flat, setFlat] = useState(false);
   const [fixed, setFixed] = useState(false);
+  const [islandThemeOverrides, setIslandThemeOverrides] = useState(() => {
+    try {
+      return parseIslandThemeOverrides(localStorage.getItem(islandThemeStorageKey));
+    } catch {
+      return new Map<string, IslandThemeId>();
+    }
+  });
+  const islandTheme = islandThemeOverrides.get(workspaceId);
+  const changeIslandTheme = (themeId?: IslandThemeId) => {
+    const next = new Map(islandThemeOverrides);
+    if (themeId) next.set(workspaceId, themeId);
+    else next.delete(workspaceId);
+    setIslandThemeOverrides(next);
+    try {
+      localStorage.setItem(islandThemeStorageKey, JSON.stringify(Object.fromEntries(next)));
+    } catch {
+      setNotice('主题已应用到当前会话。无法保存到本机。');
+    }
+  };
   const [sceneQuality, setSceneQuality] = useState<SceneQuality>(() => {
     try {
       return localStorage.getItem('astrisle-scene-quality') === 'balanced' ? 'balanced' : 'clear';
@@ -181,7 +217,10 @@ export function App() {
     }
   };
   const [reset, setReset] = useState(0);
-  const [characterFocus, setCharacterFocus] = useState<CharacterFocus>();
+  const [viewpoint, setViewpoint] = useState<CharacterFocus | StudioDistrict>();
+  const characterFocus = viewpoint === 'harbor' || viewpoint === 'garden' ? undefined : viewpoint;
+  const district = viewpoint === 'harbor' || viewpoint === 'garden' ? viewpoint : undefined;
+  const districtTitle = district === 'harbor' ? '花港街景' : '温室花园';
   const [reduced, setReduced] = useState(
     () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || false,
   );
@@ -210,18 +249,16 @@ export function App() {
     if (host && commissionId)
       host
         .snapshot(commissionId)
-        .then((s) => {
-          if (selected.current === s.commission.id) setSnapshot(s);
-        })
+        .then(receiveSnapshot)
         .catch((e) => setNotice(String(e)));
-  }, [commissionId, host]);
+  }, [commissionId, host, receiveSnapshot]);
   useEffect(
     () =>
       host?.onSnapshot((s) => {
-        if (selected.current === s.commission.id) setSnapshot(s);
+        receiveSnapshot(s);
         refresh().catch(() => {});
       }),
-    [host, refresh],
+    [host, refresh, receiveSnapshot],
   );
   const run = async (action: () => Promise<CommandResult | unknown>, success?: string) => {
     setBusy(true);
@@ -234,7 +271,7 @@ export function App() {
       await refresh();
       if (host && selected.current) {
         const s = await host.snapshot(selected.current);
-        if (s.commission.id === selected.current) setSnapshot(s);
+        receiveSnapshot(s);
       }
       return result;
     } catch (e) {
@@ -282,15 +319,13 @@ export function App() {
           }}
           aria-label="Astrisle 星岛工作室"
         >
-          <span className="brand-orbit">
-            <Sparkles size={21} />
-          </span>
+          <img className="brand-orbit" src={astrisleMark} alt="" width={30} height={30} />
           <span>
             Astrisle<small>星岛工作室</small>
           </span>
         </a>
         <div className="island-switcher">
-          <Map size={16} />
+          <MapIcon size={16} />
           <select
             aria-label="切换岛屿"
             value={workspaceId}
@@ -346,7 +381,7 @@ export function App() {
       <aside className="navigator">
         <div className="rail-tools">
           <button aria-label="查看群岛" title="查看群岛" onClick={showOverview}>
-            <Map size={19} />
+            <MapIcon size={19} />
           </button>
           <button
             aria-label="展开项目与委托"
@@ -412,11 +447,7 @@ export function App() {
               </button>
             ))}
           {!bootstrap?.commissions.some((c) => c.workspaceId === workspaceId) && (
-            <p className="nav-empty">
-              把一个想法交给伙伴，
-              <br />
-              从这里开始协作。
-            </p>
+            <p className="nav-empty">暂无委托</p>
           )}
         </div>
         <div className="nav-spacer" />
@@ -445,10 +476,6 @@ export function App() {
             </button>
           ))}
         </nav>
-        <div className="navigator-foot">
-          <Moon size={15} />
-          <span>本地工作室</span>
-        </div>
       </aside>
       <main
         className={`stage ${!flat && !characterFocus ? 'stage-cosmic' : ''}`}
@@ -461,22 +488,20 @@ export function App() {
                 ? '你的群岛'
                 : characterFocus && !flat
                   ? `${characterName(characterFocus)}的角色特写`
-                  : snapshot?.commission.title || workspace?.name || '星岛工作室'}
+                  : district && !flat
+                    ? districtTitle
+                    : snapshot?.commission.title || workspace?.name || '星岛工作室'}
             </h1>
-            <p>
-              {overview
-                ? '每座岛屿对应一个独立项目；选择小岛，再进入工作室。'
-                : characterFocus && !flat
-                  ? characters.find((profile) => profile.id === characterFocus)?.model?.filename ||
-                    '蓝色大肥鱼娘 · Q 版鲸鱼伙伴'
-                  : snapshot
-                    ? '查看任务、检查成果，或回复伙伴的问题。'
-                    : `${characterName('mori')} 和 ${characterName('luma')} 正在岛上自由活动。新建委托即可开始工作。`}
-            </p>
+            {!overview && characterFocus && !flat && (
+              <p>
+                {characters.find((profile) => profile.id === characterFocus)?.model?.filename ||
+                  '内置鲸鱼角色'}
+              </p>
+            )}
           </div>
-          {snapshot && (
+          {snapshot && !overview && !characterFocus && (
             <div className="stage-actions">
-              {snapshot.commission.status === 'accepted' && !overview && !characterFocus && (
+              {snapshot.commission.status === 'accepted' && (
                 <button className="celebration-action" onClick={celebration.celebrate}>
                   <PartyPopper size={16} />
                   庆祝一下
@@ -495,6 +520,7 @@ export function App() {
           <Archipelago
             quality={sceneQuality}
             workspaces={bootstrap?.workspaces || []}
+            themeOverrides={islandThemeOverrides}
             selectedId={workspaceId}
             onSelect={switchWorkspace}
             reduced={reduced}
@@ -504,12 +530,14 @@ export function App() {
             quality={sceneQuality}
             key={workspaceId || 'preview'}
             workspaceId={workspaceId || 'preview'}
+            themeId={islandTheme}
             snapshot={snapshot}
             onPanel={openPanel}
             reduced={reduced}
             reset={reset}
             fixed={fixed}
             focus={characterFocus}
+            district={district}
             characters={characters}
             celebration={celebration.burst}
           />
@@ -526,13 +554,14 @@ export function App() {
                     onClick={() => switchWorkspace(w.id)}
                   >
                     {w.name}
+                    <small className="island-theme-label">
+                      {islandAppearance(w.id, islandThemeOverrides.get(w.id)).name}
+                    </small>
                   </button>
                 ))}
               </div>
             )}
-            <p>
-              {snapshot?.commission.goal || '还没有开始委托。新建一个项目，告诉伙伴你想完成什么。'}
-            </p>
+            <p>{snapshot?.commission.goal || '尚未选择委托。'}</p>
             <div className="flat-links">
               <button onClick={() => openPanel('tasks')}>
                 <Layers />
@@ -570,7 +599,7 @@ export function App() {
             aria-label="回到全景"
             title="回到全景"
             onClick={() => {
-              setCharacterFocus(undefined);
+              setViewpoint(undefined);
               setReset((r) => r + 1);
             }}
           >
@@ -579,14 +608,16 @@ export function App() {
           <span />
           {!flat && !overview && (
             <select
-              aria-label="角色特写"
-              value={characterFocus ?? ''}
+              aria-label="场景视角与角色特写"
+              value={viewpoint ?? ''}
               onChange={(event) => {
-                setCharacterFocus((event.target.value || undefined) as CharacterFocus | undefined);
+                setViewpoint((event.target.value || undefined) as typeof viewpoint);
                 setFixed(false);
               }}
             >
-              <option value="">角色特写</option>
+              <option value="">工作室全景</option>
+              <option value="harbor">花港街景</option>
+              <option value="garden">温室花园</option>
               {characters.map((profile) => (
                 <option key={profile.id} value={profile.id}>
                   {profile.displayName}
@@ -610,12 +641,14 @@ export function App() {
         {overview ? (
           <div className="archipelago-dock">
             <div>
-              <strong>{workspace?.name || '建立你的第一座岛屿'}</strong>
-              <p>
-                {workspace
-                  ? '岛屿就是项目，委托和文件保存在对应工作副本中。'
-                  : '创建岛屿不需要模型或密钥；工作委托再按需连接 API。'}
-              </p>
+              <strong>{workspace?.name || '暂无岛屿'}</strong>
+              {workspace && (
+                <p>
+                  {bootstrap?.commissions.filter((entry) => entry.workspaceId === workspace.id)
+                    .length ?? 0}{' '}
+                  份委托
+                </p>
+              )}
             </div>
             <button disabled={!host || busy} onClick={() => setModal('workspace')}>
               <Plus size={15} />
@@ -635,18 +668,16 @@ export function App() {
             )}
           </div>
         ) : (
-          <div className="commission-dock">
-            <div className="dock-star">
-              <ListTodo size={24} strokeWidth={1.4} />
-            </div>
-            <div>
-              <strong>{snapshot ? '当前委托' : '开始一项工作'}</strong>
-              <p>
-                {snapshot
-                  ? `${snapshot.tasks.filter((t) => t.status === 'passed').length} 项任务通过，${openRequests.length} 项待回复`
-                  : '填写目标和验收要求，交给伙伴处理。'}
-              </p>
-            </div>
+          <div className={`commission-dock${snapshot ? '' : ' empty-dock'}`}>
+            {snapshot && (
+              <div>
+                <strong>
+                  已完成 {snapshot.tasks.filter((t) => t.status === 'passed').length} /{' '}
+                  {snapshot.tasks.length} 项任务
+                </strong>
+                {openRequests.length > 0 && <p>{openRequests.length} 项待回复</p>}
+              </div>
+            )}
             <button
               className="primary"
               disabled={!host || busy}
@@ -666,7 +697,6 @@ export function App() {
       >
         <header className="inspector-header">
           <div>
-            <span className="inspector-mark" />
             <h2>{panelNames[panel]}</h2>
           </div>
           <div>
@@ -689,41 +719,28 @@ export function App() {
               onReduced={setReduced}
               quality={sceneQuality}
               onQuality={changeSceneQuality}
+              workspace={workspace}
+              islandTheme={islandTheme}
+              onIslandTheme={changeIslandTheme}
               run={run}
               host={host}
               characters={characters}
             />
           ) : !snapshot ? (
             <>
-              <Empty title={host ? '一份委托，一个起点' : '在桌面版开始协作'}>
+              <Empty title={host ? '尚未选择委托' : '在桌面版开始协作'}>
                 {host
-                  ? '选择已有委托，或新建项目后写下你的目标。伙伴会按你的权限范围工作。'
-                  : '当前是浏览器场景预览。请在 Astrisle 桌面版中创建项目、连接模型并执行任务。'}
+                  ? '从左侧选择已有委托，或新建一份。'
+                  : '浏览器可以浏览岛屿。创建项目和执行任务需要使用桌面版。'}
               </Empty>
               {host && (
                 <button
                   className="primary wide"
                   onClick={() => setModal(workspace ? 'commission' : 'workspace')}
                 >
-                  开始第一份委托
-                  <ArrowRight size={16} />
+                  {workspace ? '新建委托' : '创建岛屿'}
                 </button>
               )}
-              <div className="partner-note">
-                <span className="partner-initial mori">{[...characterName('mori')][0]}</span>
-                <div>
-                  <b>{characterName('mori')}</b>
-                  <p>铺开线索，探索解决方案。</p>
-                </div>
-              </div>
-              <div className="partner-note">
-                <span className="partner-initial luma">{[...characterName('luma')][0]}</span>
-                <div>
-                  <b>{characterName('luma')}</b>
-                  <p>理清脉络，逐项核对细节。</p>
-                </div>
-              </div>
-              <p className="quiet">两位伙伴可以互换任务，所有成果都需经过实际检查。</p>
             </>
           ) : (
             <>
@@ -734,6 +751,15 @@ export function App() {
                     <h3>{snapshot.commission.title}</h3>
                     <p>{snapshot.commission.goal}</p>
                   </div>
+                  <CommissionActivity
+                    key={commissionId}
+                    snapshot={snapshot}
+                    characterName={characterName}
+                    onTask={(id) => {
+                      setTaskId(id);
+                      openPanel('tasks');
+                    }}
+                  />
                   <h4>验收条件</h4>
                   <ul className="criteria">
                     {snapshot.commission.criteria.map((c) => (
@@ -826,11 +852,8 @@ export function App() {
               )}
               {panel === 'tasks' && (
                 <>
-                  <p className="panel-intro">
-                    工作状态来自运行记录。选择任务查看依赖、输入版本与当前步骤。
-                  </p>
                   {snapshot.tasks.length === 0 ? (
-                    <Empty title="还没有任务">委托开始后，实际计划会出现在这里。</Empty>
+                    <Empty title="还没有任务">计划生成后可查看每项任务的进度。</Empty>
                   ) : (
                     snapshot.tasks.map((t) => (
                       <button
@@ -946,9 +969,6 @@ export function App() {
               )}
               {panel === 'evidence' && (
                 <>
-                  <p className="panel-intro">
-                    证据保留实际工具、测试与复核输出。未运行的检查不会计为通过。
-                  </p>
                   {snapshot.evidence.length === 0 ? (
                     <Empty title="还没有检查记录">
                       实际检查完成后，结果和完整输出会保存在这里。
@@ -976,7 +996,7 @@ export function App() {
                 <>
                   <p className="panel-intro">先检查成果，再选择接受。导出和写回原项目分别执行。</p>
                   {snapshot.artifacts.length === 0 ? (
-                    <Empty title="交付港还空着">伙伴实际保存的文件会出现在这里。</Empty>
+                    <Empty title="暂无成果">文件提交后可在这里预览、验收和导出。</Empty>
                   ) : (
                     snapshot.artifacts.map((a) => (
                       <div className="artifact-row" key={a.versionId}>
@@ -1085,12 +1105,6 @@ export function App() {
             </>
           )}
         </div>
-        <footer className="inspector-footer">
-          <ShieldCheck size={14} />
-          <span>
-            {provider?.configured ? '模型已配置 · 按授权范围工作' : '连接自己的模型 API 后开始工作'}
-          </span>
-        </footer>
       </aside>
       {notice && (
         <div className="notice" role="status">
@@ -1214,10 +1228,7 @@ function WorkspaceModal({
           onCreate(String(new FormData(e.currentTarget).get('name')), path || undefined);
         }}
       >
-        <p className="modal-intro">
-          一座岛屿对应一个独立项目。可以从空白开始，或导入已有目录；伙伴会在工作副本中完成修改。创建岛屿不需要模型
-          API。
-        </p>
+        <p className="modal-intro">新建空白项目，或从本地目录导入工作副本。</p>
         <label htmlFor="workspace-name">岛屿名称</label>
         <input
           id="workspace-name"
@@ -1308,16 +1319,14 @@ function CommissionModal({
     });
   };
   return (
-    <Modal title="告诉伙伴，你想完成什么" onClose={onClose}>
+    <Modal title="新建委托" onClose={onClose}>
       <form onSubmit={submit}>
-        <p className="modal-intro">
-          项目：{workspace.name}。写清结果与检查方式，伙伴会据此拆解工作。
-        </p>
+        <p className="modal-intro">{workspace.name}</p>
         <label htmlFor="goal">工作目标</label>
         <textarea
           id="goal"
           name="goal"
-          placeholder="例如：为这个项目增加登录页；或整理资料，生成一份带图表的月度报告…"
+          placeholder="例如，整理本月销售记录，生成一份带图表的报告"
           required
           rows={4}
           autoFocus
@@ -1383,6 +1392,50 @@ function CommissionModal({
     </Modal>
   );
 }
+function IslandThemeSelect({
+  workspace,
+  themeId,
+  onChange,
+}: {
+  workspace: Workspace;
+  themeId?: IslandThemeId;
+  onChange: (themeId?: IslandThemeId) => void;
+}) {
+  const palette = islandAppearance(workspace.id, themeId);
+  const automatic = islandAppearance(workspace.id);
+  return (
+    <section className="island-theme-settings">
+      <label htmlFor="island-theme">岛屿主题</label>
+      <div className="island-theme-picker">
+        <select
+          id="island-theme"
+          aria-describedby="island-theme-scope"
+          value={themeId ?? ''}
+          onChange={(event) => {
+            const value = event.target.value;
+            onChange(isIslandThemeId(value) ? value : undefined);
+          }}
+        >
+          <option value="">自动（{automatic.name}）</option>
+          {islandThemes.map((theme) => (
+            <option key={theme.id} value={theme.id}>
+              {theme.name}
+            </option>
+          ))}
+        </select>
+        <div className="island-theme-swatches" aria-hidden="true">
+          {[palette.grass, palette.water, palette.flower, palette.flag].map((color) => (
+            <span key={color} style={{ backgroundColor: color }} />
+          ))}
+        </div>
+      </div>
+      <p className="quiet" id="island-theme-scope">
+        仅应用于「{workspace.name}」并保存在本机。
+      </p>
+    </section>
+  );
+}
+
 function SettingsPanel({
   provider,
   busy,
@@ -1390,6 +1443,9 @@ function SettingsPanel({
   onReduced,
   quality,
   onQuality,
+  workspace,
+  islandTheme,
+  onIslandTheme,
   run,
   host,
   characters,
@@ -1400,6 +1456,9 @@ function SettingsPanel({
   onReduced: (v: boolean) => void;
   quality: SceneQuality;
   onQuality: (quality: SceneQuality) => void;
+  workspace?: Workspace;
+  islandTheme?: IslandThemeId;
+  onIslandTheme: (themeId?: IslandThemeId) => void;
   run: (fn: () => Promise<unknown>, message?: string) => Promise<unknown>;
   host: Window['astrisle'];
   characters: CharacterProfile[];
@@ -1417,8 +1476,59 @@ function SettingsPanel({
   }, [provider]);
   return (
     <>
-      <p className="panel-intro">
-        使用你自己的模型 API。密钥仅通过桌面主进程保存，不会出现在任务或历史记录中。
+      <nav className="settings-index" aria-label="设置分区">
+        {(
+          [
+            ['scene-preferences', '岛屿与场景'],
+            ['character-preferences', '角色外观'],
+            ['model-preferences', '模型连接'],
+          ] as const
+        ).map(([id, name]) => (
+          <a
+            key={id}
+            href={`#${id}`}
+            onClick={(event) => {
+              event.preventDefault();
+              const heading = document.getElementById(id);
+              heading?.focus({ preventScroll: true });
+              heading?.scrollIntoView({ block: 'start' });
+            }}
+          >
+            {name}
+          </a>
+        ))}
+      </nav>
+      <h4 id="scene-preferences" tabIndex={-1} className="settings-heading">
+        岛屿与场景
+      </h4>
+      {workspace && (
+        <IslandThemeSelect workspace={workspace} themeId={islandTheme} onChange={onIslandTheme} />
+      )}
+      <SceneQualitySelect value={quality} onChange={onQuality} />
+      <label className="check-label">
+        <input type="checkbox" checked={reduced} onChange={(e) => onReduced(e.target.checked)} />
+        减少角色动作
+      </label>
+      <h4 id="character-preferences" tabIndex={-1} className="settings-heading">
+        角色外观与名称
+      </h4>
+      <p className="field-hint">所有岛屿共用这组角色。</p>
+      <details className="model-format-help">
+        <summary>支持的模型格式</summary>
+        <p>
+          支持 GLB、自包含 glTF 2、3MF、STL、OBJ 和 FBX。模型与资源合计上限 100 MB。OBJ 的 MTL、OBJ
+          和 FBX 的贴图应放在模型目录中。STL 主要保留几何，3MF 和 OBJ 不含角色骨骼动画。暂不支持
+          Draco、Meshopt、KTX2 和部分 3MF 扩展。
+        </p>
+      </details>
+      {characters.map((profile) => (
+        <CharacterSettings key={profile.id} profile={profile} busy={busy} host={host} run={run} />
+      ))}
+      <h4 id="model-preferences" tabIndex={-1} className="settings-heading">
+        模型连接
+      </h4>
+      <p className="field-hint">
+        {provider?.configured ? `当前模型　${provider.model}` : '尚未配置模型服务'}
       </p>
       <form
         onSubmit={(e) => {
@@ -1479,6 +1589,7 @@ function SettingsPanel({
           autoComplete="new-password"
           placeholder={provider?.hasApiKey ? '留空保留已有密钥' : '输入你的 API 密钥'}
         />
+        <p className="field-hint">密钥保存在本机，不写入委托记录。</p>
         <div className="button-row">
           <button className="primary" disabled={!host || busy} type="submit">
             保存设置
@@ -1492,24 +1603,6 @@ function SettingsPanel({
           </button>
         </div>
       </form>
-      <h4>角色外观与名称</h4>
-      <p className="quiet">
-        角色名称和外观适用于所有岛屿。支持 GLB、自包含 glTF 2、3MF、STL、OBJ、FBX，
-        模型及资源总计不超过 100 MB。OBJ 的 MTL 和贴图、FBX 的贴图请放在模型文件夹内； STL
-        主要保留几何，3MF/OBJ 没有角色骨骼动画。暂不支持 Draco、Meshopt、KTX2 和部分 3MF 扩展。
-      </p>
-      {characters.map((profile) => (
-        <CharacterSettings key={profile.id} profile={profile} busy={busy} host={host} run={run} />
-      ))}
-      <h4>场景偏好</h4>
-      <SceneQualitySelect value={quality} onChange={onQuality} />
-      <label className="check-label">
-        <input type="checkbox" checked={reduced} onChange={(e) => onReduced(e.target.checked)} />
-        减少角色动作
-      </label>
-      <p className="quiet">可使用场景右下方的 2D 模式，直接查看全部任务与成果。</p>
-      <h4>工具能力</h4>
-      <p className="quiet">运行权限由每一份委托单独决定。</p>
     </>
   );
 }
