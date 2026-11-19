@@ -1,4 +1,5 @@
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { launchIsolatedElectron } from '../fixtures/electron';
 import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { makeGlb, characterBytes, characterDocument } from '../fixtures/character-model';
@@ -23,15 +24,8 @@ test('main rejects invalid staged geometry despite forged metadata and uses its 
     ['embedded.gltf', Buffer.from(JSON.stringify(gltf)), 0],
   ] as const;
   for (const [name, bytes] of embeddedSources) await writeFile(join(dataRoot, name), bytes);
-  const app = await electron.launch({
-    args: [resolve('.')],
-    env: { ...process.env, ASTRISLE_DATA_ROOT: dataRoot, ASTRISLE_DEV_URL: '' },
-    timeout: 30_000,
-  });
+  const app = await launchIsolatedElectron(dataRoot);
   try {
-    await app.evaluate(({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows().forEach((window) => window.hide()),
-    );
     const page = await app.firstWindow();
     await page.waitForFunction(() => !!window.astrisle);
     const choose = (path: string) =>

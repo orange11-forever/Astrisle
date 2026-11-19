@@ -1,24 +1,28 @@
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { mkdtemp, mkdir, rm, writeFile, unlink, readdir, readFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { makeGlb } from '../fixtures/character-model';
+import { launchIsolatedElectron } from '../fixtures/electron';
 
 test('desktop starts with a real isolated runtime and preserves workspace across renderer reload', async () => {
   await mkdir(resolve('test-results'), { recursive: true });
   const dataRoot = await mkdtemp(resolve('test-results', 'desktop-data-'));
   const modelSource = join(dataRoot, 'source-model.glb');
   await writeFile(modelSource, makeGlb());
-  const app = await electron.launch({
-    args: [resolve('.')],
-    env: { ...process.env, ASTRISLE_DATA_ROOT: dataRoot, ASTRISLE_DEV_URL: '' },
-    timeout: 30_000,
-  });
+  const app = await launchIsolatedElectron(dataRoot);
   try {
-    await app.evaluate(({ BrowserWindow }) => {
-      for (const window of BrowserWindow.getAllWindows()) window.hide();
-    });
     const page = await app.firstWindow();
     await page.waitForFunction(() => !!window.astrisle);
+    expect(
+      await app.evaluate(({ BrowserWindow }) => {
+        const window = BrowserWindow.getAllWindows()[0];
+        return {
+          visible: window.isVisible(),
+          focused: window.isFocused(),
+          title: window.getTitle(),
+        };
+      }),
+    ).toEqual({ visible: false, focused: false, title: 'Astrisle · 自动化测试' });
     const before = await page.evaluate(() => window.astrisle!.bootstrap());
     expect(before.workspaces).toHaveLength(0);
     expect(before.provider.configured).toBe(false);
@@ -109,3 +113,123 @@ test('desktop starts with a real isolated runtime and preserves workspace across
     await rm(dataRoot, { recursive: true, force: true });
   }
 });
+
+type WindowProbe = {
+  windows: {
+    requestedVisible: boolean;
+    nativeVisibleAtCreation: boolean;
+    requestedTitle: string;
+    requestedFocusable: boolean;
+    showed: number;
+    focused: number;
+    hid: number;
+  }[];
+  tray?: {
+    emit: (event: string) => void;
+    menu: { items: { click: () => void }[] };
+    title: string;
+  };
+  balloons: number;
+  singleInstanceLocks: number;
+};
+
+for (const launch of ['automation', 'studio', 'demo'] as const) {
+  test(`desktop respects ${launch} window and tray behavior at native startup`, async ({}, testInfo) => {
+    const dataRoot = testInfo.outputPath('isolated-profile');
+    const app = await launchIsolatedElectron(dataRoot, launch);
+    try {
+      const page = await app.firstWindow();
+      await page.waitForFunction(() => !!window.astrisle);
+      const state = await app.evaluate(({ app, BrowserWindow }, mode) => {
+        const probe = (globalThis as unknown as { astrisleWindowProbe: WindowProbe })
+          .astrisleWindowProbe;
+        const window = BrowserWindow.getAllWindows()[0];
+        const title = window.getTitle();
+        const accessibleTitle = window.accessibleTitle;
+        const trayTitle = probe.tray?.title;
+        const before = window.isVisible();
+        app.emit('second-instance', {}, [], '');
+        const showedBeforeReveal = probe.windows[0].showed;
+        let quits = 0;
+        const quit = app.quit;
+        if (mode === 'demo') {
+          window.show();
+          window.focus();
+          app.quit = () => {
+            quits++;
+          };
+        }
+        try {
+          window.close();
+        } finally {
+          app.quit = quit;
+        }
+        if (mode === 'studio') {
+          probe.tray?.emit('double-click');
+          probe.tray?.menu.items[0].click();
+        }
+        return {
+          title,
+          accessibleTitle,
+          trayTitle,
+          before,
+          windowRetained: !window.isDestroyed(),
+          after: window.isVisible(),
+          ...probe.windows[0],
+          balloons: probe.balloons,
+          locks: probe.singleInstanceLocks,
+          showedBeforeReveal,
+          quits,
+        };
+      }, launch);
+      expect(state).toMatchObject({
+        nativeVisibleAtCreation: false,
+        before: false,
+        after: false,
+        windowRetained: true,
+        hid: launch === 'demo' ? 0 : 1,
+      });
+      if (launch === 'automation') {
+        expect(state).toMatchObject({
+          requestedVisible: false,
+          title: 'Astrisle · 自动化测试',
+          requestedFocusable: false,
+          accessibleTitle: 'Astrisle · 自动化测试',
+          showed: 0,
+          focused: 0,
+          balloons: 0,
+          locks: 0,
+        });
+        expect(state.trayTitle).toBeUndefined();
+      } else if (launch === 'demo') {
+        expect(state).toMatchObject({
+          requestedVisible: false,
+          title: 'Astrisle · 当前角色演示',
+          requestedFocusable: true,
+          accessibleTitle: 'Astrisle · 当前角色演示',
+          showedBeforeReveal: 0,
+          showed: 1,
+          focused: 1,
+          balloons: 0,
+          locks: 1,
+          quits: 1,
+        });
+        expect(state.trayTitle).toBeUndefined();
+      } else {
+        expect(state).toMatchObject({
+          requestedVisible: true,
+          requestedTitle: 'Astrisle · 星岛工作室',
+          title: 'Astrisle · 生命周期自动化测试',
+          accessibleTitle: 'Astrisle · 生命周期自动化测试',
+          trayTitle: 'Astrisle · 星岛工作室',
+          showed: 3,
+          focused: 1,
+          balloons: 1,
+          locks: 1,
+        });
+      }
+    } finally {
+      await app.close();
+    }
+  });
+}

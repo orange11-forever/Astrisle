@@ -15,9 +15,9 @@
 [![pnpm](https://img.shields.io/badge/pnpm-4A4A4A?style=flat-square&logo=pnpm&logoColor=F69220)](https://pnpm.io/)
 [![Vitest](https://img.shields.io/badge/Vitest-6E9F18?style=flat-square&logo=vitest&logoColor=white)](https://vitest.dev/)
 
-Astrisle 是一个面向 Windows 的多 Agent 桌面工作台。目标是让伙伴从零创建项目、修改已有代码、处理办公资料，并通过自动分工、交接、复核与返工推进工作。3D 场景呈现协作关系，普通面板提供文件、证据、权限和进度的具体信息。
+Astrisle 是一个面向 Windows 的多 Agent 桌面工作台。伙伴可以从零创建项目、修改代码、撰写报告和演示稿，并通过分工、交接、复核与返工推进委托。3D 场景呈现协作关系，工作面板提供文件、证据、权限和进度。
 
-**当前为第十一阶段开发预览。** 工作室环道连接温室花园和花港小镇。沿街可以逛花市、看停泊的船，在港务所查看委托，在交付码头查收成果。目标面板显示实时委托动态，每座岛也可以在本机保存自己的配色。[第十一阶段记录](docs/development/stage-11.md)
+**第十二阶段开发预览。** 在花港码头可以查看成果的版本历史、比较两版内容、对当前版本提返工要求。文档和演示稿共用 Markdown 源稿，表格使用 CSV 或 TSV。伙伴能在委托中生成成品，你也可以从任意一个可读取的源稿版本另存可编辑文件。[第十二阶段记录](docs/development/stage-12.md)
 
 第二至第五阶段已由 [PR #2：任务续跑、运行时保护与星岛角色配置](https://github.com/orange11-forever/Astrisle/pull/2) 合并。第六、七阶段已由 [PR #3：Windows 进程监督、岛屿散步与验收庆祝](https://github.com/orange11-forever/Astrisle/pull/3) 合并。自由视角和角色休闲见[第八阶段](docs/development/stage-8.md)，模型实测与角色导入见[第九阶段](docs/development/stage-9.md)，Windows 原项目写回与恢复见[第十阶段](docs/development/stage-10.md)。
 
@@ -42,7 +42,8 @@ Astrisle 是一个面向 Windows 的多 Agent 桌面工作台。目标是让伙�
 | 委托与协作 | SQLite 持久化、幂等派单、动态任务图、两位伙伴、版本化交接、复核与返工、持久化动作回执与重启续接、运行时独占与调用代次校验 |
 | 模型适配 | OpenAI-compatible Chat Completions、OpenAI Responses、Anthropic Messages、Gemini generateContent 四种协议 |
 | 工作工具 | 文件检索/读取/写入/局部修改、明确授权的本机进程、Windows Job 进程树停止确认、按域名授权的网页读取 |
-| 办公 | DOCX、XLSX、PPTX 常用创建与局部修改；文件回读、来源记录和独立数值检查 |
+| 成果审阅 | 历史版本、逐行差异、版本复核证据、定向返工和受影响成果重建 |
+| 源稿发布 | Markdown 生成 Word 或 PowerPoint，CSV/TSV 生成 Excel。成品绑定源稿版本，支持结构回读与数据表独立数值核对 |
 | 前端 | 360° 环绕与平移、花园星岛、自动坐椅／喝茶／荡秋千、散步与工位寻路、群岛管理、角色特写、验收彩纸礼炮、按需渲染、2D 模式和减少动效 |
 | 角色配置 | GLB／自包含 glTF、3MF、STL、OBJ、FBX 导入，伴随资源复制、独立解析检查、自动居中与尺寸归一化、四方向调整、跨岛屿保存与资源共享 |
 | 运行预算 | 累计模型步数与活动时间、暂停后调整总额度、并发调用限额、预算恢复和返工续接 |
@@ -72,7 +73,7 @@ pnpm.cmd build
 pnpm.cmd start
 ```
 
-PowerShell 下使用 `.cmd`，避免系统禁用 `.ps1` 时无法启动 pnpm。依赖脚本在安装时关闭，再明确执行 esbuild 和 Electron 的安装器。Python 办公环境位于项目 `.venv`，不修改系统 Python 包。
+PowerShell 下使用 `.cmd`，避免系统禁用 `.ps1` 时无法启动 pnpm。依赖脚本在安装时关闭，再明确执行 esbuild 和 Electron 的安装器。项目 `.venv` 中的 `pypandoc_binary` 自带 Pandoc。已有工作区更新到本阶段后，再运行一次上面的 `pip install -r workers\office\requirements.txt`，然后重启桌面应用。
 
 Electron 下载较慢时，可仅在当前 PowerShell 会话设置镜像后重试安装器：
 
@@ -87,7 +88,9 @@ node node_modules/electron/install.js
 pnpm.cmd dev
 ```
 
-此命令构建桌面进程、启动 Vite 和 Electron。前端支持热更新；修改桌面或运行时代码后需重启开发命令。单独访问 Vite 页面只是浏览器预览，会明确显示“桌面连接未就绪”，不会获得本机工具权限。
+此命令构建桌面进程、启动 Vite 和 Electron。前端支持热更新；修改桌面或运行时代码后需重启开发命令。单独访问 Vite 页面会标明“浏览器预览（内置角色）”。
+
+**演示当前角色**时运行 `pnpm.cmd demo`。演示入口从正常桌面数据目录读取角色配置，只复制引用到的模型到临时演示空间。启动器核对模型文件哈希，等 Electron 画布实际绘制出配置中的角色后再显示窗口。日常使用 `pnpm.cmd start` 打开原工作区。
 
 ## 开始工作
 
@@ -96,6 +99,10 @@ pnpm.cmd dev
 3. 创建委托，填写目标、验收要求和授权范围。默认不授予本机程序执行和网络访问。
 4. 从伙伴、任务与证据面板查看实际执行，回复必要的问题；查看具体产物后可分项接受和导出。
 5. 导入项目的全部当前成果验收后，可在“成果与验收”预览写回。核对原目录和文件内容，再通过系统确认应用。中断时从“写回记录”核查并准备恢复；后续外部修改或无法判定的部分字节不会被备份自动覆盖。
+
+**审阅和返工。** 在“成果与验收”展开一份成果的“版本历史”，选择“对比版本”查看增删行。需要调整时，在可返工的当前版本上填写要求。对已有关联源稿的成品，可直接回到源稿提出修改，再检查新版对应的独立复核记录。
+
+**生成交付文件。** 预览 `.md` 或 `.markdown` 成果，选择“生成 Word”或“生成 PPTX”。演示稿用 `##` 标题分隔幻灯片。同样地，预览 `.csv` 或 `.tsv` 后可选择“生成 XLSX”。保存窗口使用你刚选定的那一版，可直接从历史版本出一份副本。
 
 右下角的视角选择器可以切换工作室全景、花港街景、温室花园或某位角色的特写。各区支持环绕、缩放，“回到全景”恢复工作室视角。工具说明在指向模型或使用键盘聚焦时显示，点击模型或触屏点按可直接打开面板。
 
@@ -125,7 +132,7 @@ pnpm.cmd dev
 
 **本机程序执行属于可信宿主模式，不是安全沙箱。** 允许后，程序可能访问宿主文件和网络；文件工具、网页工具的作用域不能限制任意子程序。当前版本只适合明确授权的可信项目。
 
-Windows 下，进程工具和 Office worker 从创建时就属于受监督的 Job。取消、超时、输出超限或主进程退出会清理剩余普通后代，活动进程数归零才确认停止。监督程序崩溃或回执丢失时保留未知结果。停止进程不会回滚已发生的文件或网络操作，也不限制外部服务代理的工作。
+Windows 下，进程工具和源稿转换器从创建时就属于受监督的 Job。取消、超时、输出超限或主进程退出会清理剩余普通后代，活动进程数归零才确认停止。监督程序崩溃或回执丢失时保留未知结果。停止进程不会回滚已发生的文件或网络操作，也不限制外部服务代理的工作。
 
 关闭窗口会进入托盘，工作运行时继续存在；从托盘选择“退出 Astrisle”才执行关闭流程。开发数据位于 `.astrisle-dev/`，其中包括项目副本、SQLite 状态、产物、加密配置、`characters.json` 和 `character-assets/`，已从 Git 忽略。不要把该目录当成可随意删除的构建缓存。
 
@@ -134,7 +141,7 @@ Windows 下，进程工具和 Office worker 从创建时就属于受监督的 Jo
 ```powershell
 pnpm.cmd typecheck
 pnpm.cmd test
-pnpm.cmd test:office
+pnpm.cmd test:publishing
 pnpm.cmd build
 pnpm.cmd test:ui
 ```
@@ -151,7 +158,7 @@ UI 测试当前使用 Microsoft Edge；桌面测试使用真实 Electron 和独�
 
 - 写回仅支持已验收的新增/修改和本机固定 NTFS 普通文件；未复核删除、UNC、重解析路径、硬链接和被占用文件会拒绝。多文件更新不保证整体原子性；歧义中断字节或后续修改需人工核查，恢复后空目录、备份与记录保留。
 - 已有真实模型编程与办公样例验证，样本数量和复杂度仍有限，不能据此承诺任意开放式委托都能成功。
-- Office 验证目前覆盖结构回读和数值核对；没有完成 Microsoft Office/LibreOffice 打开、公式引擎重算及版式验收。复杂对象、宏和外部链接可能被拒绝。
+- 文档发布的自动化检查覆盖结构回读和数值核对。本阶段已用 PowerPoint 和 Excel 打开合成样本，核对幻灯片与单元格。Word 原生版式、复杂模板和公式引擎重算仍待进一步验收。
 - 当前任务隔离采用独立文件副本与基线清单，尚未采用内部 Git worktree。已实现本机运行时独占、调用代次校验与 Windows 普通后代进程树停止确认；逐任务 worker 租约、完整恢复及长期资源控制仍需完善。上述机制不替代不可信代码隔离，也不支持跨机器共享数据目录。
 - 外部模型的外观取决于文件本身；静态模型的基础步态依靠保守轮廓推断，不能代替专业绑骨、服饰权重、布料模拟或跨骨骼重定向。默认程序化角色和场景仍为开发资产。
 - 3D 绘制开销已经降低，但短时后台测量不等于完整桌面性能验收；启动包体、长期内存与不同硬件仍需后续检查。
@@ -169,9 +176,9 @@ packages/runtime/     模型、任务循环、调度与控制
 packages/domain/      任务图、依赖与版本规则
 packages/persistence/ SQLite 状态、回执、事件与调用记录
 packages/artifacts/   不可变产物与哈希核验
-packages/executor/    文件、进程、网络和办公工具
+packages/executor/    文件、进程、网页读取和源稿发布工具
 packages/workspace/   副本、基线、整合与导出
-workers/office/       Python 文档、表格和演示稿处理
+workers/office/       Markdown、CSV 和 TSV 的原生格式转换与结构回读
 workers/process/      Windows Job Object 进程监督辅助程序
 tests/                集成与桌面端到端测试
 docs/                 产品设计、概念图、计划和阶段记录
@@ -187,8 +194,9 @@ docs/                 产品设计、概念图、计划和阶段记录
 - [岛屿散步与角色动作设计](docs/superpowers/specs/2026-11-14-island-life-design.md)
 - [概念图生成说明](docs/concepts/astrisle-star-island-prompt.md)
 - [鲸鱼角色参考、署名与使用条件](docs/concepts/blue-whale-girl-references.md)：角色视觉资产保留上游 CC BY-NC-SA 4.0 的署名、非商业与相同方式共享条件，具体范围见该文档。
-- [最新阶段与下次交接](docs/development/stage-10.md)
+- [花港小镇与跨区行走](docs/development/stage-11.md)
+- [最新阶段与下次交接](docs/development/stage-12.md)
 - [用户确认的后续现代化功能](docs/development/modern-features-backlog.md)
 - README Logo 沿用软件现有标志，内侧星形使用 Lucide Sparkles；[许可说明](docs/assets/LICENSE-lucide.txt)。
 
-从 `main` 创建功能分支，在分支内实现、验证和提交，再推送并通过 PR 审查。前九阶段已合并，第九阶段见 [PR #5](https://github.com/orange11-forever/Astrisle/pull/5)；第十阶段在 `feat/safe-writeback` 开发。开发预览不等于正式发布。
+从 `main` 创建功能分支，在分支内实现和验证，再通过 PR 审查。第十一阶段已合并，见 [PR #7](https://github.com/orange11-forever/Astrisle/pull/7)。

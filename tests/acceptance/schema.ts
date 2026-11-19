@@ -31,7 +31,8 @@ export const checkSchema = z.discriminatedUnion('kind', [
     .strict(),
   z
     .object({
-      kind: z.literal('office'),
+      // Older scenario files called this read-only structural check "office".
+      kind: z.enum(['delivery', 'office']),
       path: relativePath,
       assertions: z.array(assertion).min(1).max(100),
       sums: z
@@ -46,18 +47,6 @@ export const scenarioSchema = z
     id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),
     title: z.string().min(1).max(200),
     seed: z.record(relativePath, z.string().max(65536)).default({}),
-    officeSeed: z
-      .array(
-        z
-          .object({
-            path: relativePath,
-            format: z.enum(['docx', 'xlsx', 'pptx']),
-            content: z.record(z.string(), z.unknown()),
-          })
-          .strict(),
-      )
-      .max(10)
-      .default([]),
     stages: z
       .array(
         z

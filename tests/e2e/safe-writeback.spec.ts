@@ -1,4 +1,5 @@
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { launchIsolatedElectron } from '../fixtures/electron';
 import { mkdtemp, realpath, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { createWorkspaceStorage } from '../../packages/workspace/src/index';
@@ -77,17 +78,9 @@ test('desktop requires native confirmation, writes accepted files and restores w
   store.addWorkspace(workspace);
   store.save(snapshot);
   store.close();
-  const app = await electron.launch({
-    args: [resolve('.')],
-    env: { ...process.env, ASTRISLE_DATA_ROOT: dataRoot, ASTRISLE_DEV_URL: '' },
-    timeout: 30000,
-  });
+  const app = await launchIsolatedElectron(dataRoot);
   try {
-    await app.evaluate(({ BrowserWindow, dialog }) => {
-      for (const window of BrowserWindow.getAllWindows()) {
-        window.setTitle('Astrisle · 自动化写回测试');
-        window.hide();
-      }
+    await app.evaluate(({ dialog }) => {
       (globalThis as any).confirmation = 0;
       dialog.showMessageBox = async (first: any, options?: any) => {
         (globalThis as any).lastConfirmation = options ?? first;

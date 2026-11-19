@@ -6,7 +6,7 @@ test('browser preview is honest, 3D renders, panels and 2D remain accessible', a
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.stack || e.message));
   await page.goto(url);
-  await expect(page.getByText('桌面连接未就绪')).toBeVisible();
+  await expect(page.getByText('浏览器预览（内置角色）')).toBeVisible();
   await expect(page.getByRole('complementary', { name: '目标与计划' })).toBeHidden();
   await page.getByRole('button', { name: '打开工作面板', exact: true }).click();
   await expect(page.getByRole('heading', { name: '在桌面版开始协作' })).toBeVisible();

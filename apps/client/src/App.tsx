@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import {
   Archive,
@@ -9,7 +9,6 @@ import {
   CircleHelp,
   Compass,
   FileCheck2,
-  FileText,
   FolderOpen,
   Inbox,
   Layers,
@@ -36,6 +35,7 @@ import type {
   Bootstrap,
   CharacterProfile,
   CommandResult,
+  HostAPI,
   ProjectSnapshot,
   ProviderInput,
   Workspace,
@@ -45,6 +45,9 @@ import { StudioScene } from './Scene';
 import type { StudioDistrict } from './StudioCamera';
 import { Archipelago } from './Archipelago';
 import { BudgetPanel } from './BudgetPanel';
+import { ArtifactReview } from './ArtifactReview';
+import { ArtifactSourceExport } from './ArtifactSourceExport';
+import { artifactVersionFamilies } from '../../../packages/artifacts/src/history';
 import { CommissionActivity } from './CommissionActivity';
 import { WritebackHistory, WritebackPreview } from './WritebackHistory';
 import { SceneQualitySelect, type SceneQuality } from './render-quality';
@@ -78,7 +81,7 @@ const labels: Record<string, string> = {
   passed: '通过',
   not_run: '未运行',
   current: '当前版本',
-  stale: '版本已过期',
+  stale: '历史版本',
   missing: '文件缺失',
 };
 const panelNames: Record<Panel, string> = {
@@ -155,6 +158,8 @@ function Modal({
 export function App() {
   const host = window.astrisle;
   const [bootstrap, setBootstrap] = useState<Bootstrap>();
+  const [loadError, setLoadError] = useState('');
+  const refreshOrder = useRef({ issued: 0, applied: 0 });
   const [snapshot, setSnapshot] = useState<ProjectSnapshot>();
   const [commissionId, setCommissionId] = useState('');
   const selected = useRef('');
@@ -233,13 +238,22 @@ export function App() {
   }, []);
   const refresh = useCallback(async () => {
     if (!host) return;
+    const request = ++refreshOrder.current.issued;
     const next = await host.bootstrap();
+    if (!next.characters && host.getCharacters) next.characters = await host.getCharacters();
+    if (request < refreshOrder.current.applied) return;
+    refreshOrder.current.applied = request;
+    setLoadError('');
     setBootstrap(next);
     setWorkspaceId((current) => current || next.workspaces[0]?.id || '');
   }, [host]);
-  useEffect(() => {
-    refresh().catch((e) => setNotice(String(e)));
+  const loadStudio = useCallback(() => {
+    setLoadError('');
+    refresh().catch((error) =>
+      setLoadError(error instanceof Error ? error.message : String(error)),
+    );
   }, [refresh]);
+  useEffect(loadStudio, [loadStudio]);
   useEffect(() => {
     selected.current = commissionId;
     setSnapshot(undefined);
@@ -288,7 +302,56 @@ export function App() {
   const characters = bootstrap?.characters || [...DEFAULT_CHARACTERS];
   const characterName = (id: string) =>
     characters.find((profile) => profile.id === id)?.displayName || id;
+  const artifactFamilies = useMemo(
+    () => (snapshot ? artifactVersionFamilies(snapshot) : []),
+    [snapshot],
+  );
   const currentArtifacts = snapshot?.artifacts.filter((a) => a.validity === 'current') || [];
+  const selectableArtifactIds = new Set(
+    currentArtifacts
+      .filter(
+        (artifact) =>
+          !snapshot?.commission.acceptedArtifactIds.includes(artifact.id) &&
+          snapshot?.evidence.some(
+            (evidence) =>
+              evidence.kind === 'review' &&
+              evidence.status === 'passed' &&
+              evidence.artifactVersionIds.includes(artifact.versionId),
+          ),
+      )
+      .map((artifact) => artifact.id),
+  );
+  const selectedArtifactIds = new Set(accepted.filter((id) => selectableArtifactIds.has(id)));
+  const openArtifactPreview = async (id: string) => {
+    if (!host || !snapshot) return;
+    const idAtOpen = snapshot.commission.id;
+    setBusy(true);
+    try {
+      const artifact = await host.artifact(id);
+      if (selected.current === idAtOpen) {
+        setPreview(artifact);
+        setNotice('');
+      }
+    } catch {
+      if (selected.current === idAtOpen) setNotice('无法读取该版本的成果文件。');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const requestArtifactRework: HostAPI['requestArtifactRework'] = async (input) => {
+    setBusy(true);
+    try {
+      const response = await host!.requestArtifactRework(input);
+      void host!
+        .snapshot(input.commissionId)
+        .then(receiveSnapshot)
+        .catch(() => {});
+      if (response.ok) void refresh().catch(() => {});
+      return response;
+    } finally {
+      setBusy(false);
+    }
+  };
   const openPanel = (next: Panel) => {
     setPanel(next);
     setInspectorOpen(true);
@@ -357,7 +420,7 @@ export function App() {
           </button>
           <span className={`connection ${host ? 'connected' : ''}`}>
             <i />
-            {host ? '桌面已连接' : '桌面连接未就绪'}
+            {host ? '桌面已连接' : '浏览器预览（内置角色）'}
           </span>
           <button
             className="icon-button"
@@ -516,7 +579,18 @@ export function App() {
             委托已完成
           </div>
         )}
-        {overview && !flat ? (
+        {host && !bootstrap && !flat ? (
+          <div className="scene-loading" role="status">
+            {loadError ? (
+              <>
+                <span>工作室加载失败：{loadError}</span>
+                <button onClick={loadStudio}>重新加载</button>
+              </>
+            ) : (
+              '正在读取工作室和角色配置…'
+            )}
+          </div>
+        ) : overview && !flat ? (
           <Archipelago
             quality={sceneQuality}
             workspaces={bootstrap?.workspaces || []}
@@ -573,7 +647,7 @@ export function App() {
               </button>
               <button onClick={() => openPanel('artifacts')}>
                 <Archive />
-                成果 {snapshot?.artifacts.length || 0}
+                成果 {artifactFamilies.length}
               </button>
             </div>
           </div>
@@ -994,66 +1068,54 @@ export function App() {
               )}
               {panel === 'artifacts' && (
                 <>
-                  <p className="panel-intro">先检查成果，再选择接受。导出和写回原项目分别执行。</p>
                   {snapshot.artifacts.length === 0 ? (
                     <Empty title="暂无成果">文件提交后可在这里预览、验收和导出。</Empty>
                   ) : (
-                    snapshot.artifacts.map((a) => (
-                      <div className="artifact-row" key={a.versionId}>
-                        <input
-                          aria-label={`选择成果 ${a.name}`}
-                          type="checkbox"
-                          disabled={
-                            a.validity !== 'current' ||
-                            snapshot.commission.acceptedArtifactIds.includes(a.id)
-                          }
-                          checked={
-                            accepted.includes(a.id) ||
-                            snapshot.commission.acceptedArtifactIds.includes(a.id)
-                          }
-                          onChange={(e) =>
-                            setAccepted((ids) =>
-                              e.target.checked ? [...ids, a.id] : ids.filter((id) => id !== a.id),
-                            )
-                          }
-                        />
-                        <button
-                          className="artifact-name"
-                          onClick={() =>
-                            run(async () => {
-                              setPreview(await host!.artifact(a.id));
-                              setNotice('');
-                            })
-                          }
-                        >
-                          <FileText size={19} />
-                          <span>
-                            <b>{a.name}</b>
-                            <small>{a.relativePath}</small>
-                            <Status value={a.validity} />
-                          </span>
-                        </button>
-                      </div>
-                    ))
+                    <ArtifactReview
+                      key={snapshot.commission.id}
+                      snapshot={snapshot}
+                      families={artifactFamilies}
+                      busy={busy}
+                      selectable={selectableArtifactIds}
+                      selected={selectedArtifactIds}
+                      onSelect={(id, checked) =>
+                        setAccepted((ids) =>
+                          checked ? [...ids, id] : ids.filter((item) => item !== id),
+                        )
+                      }
+                      onPreview={(id) => void openArtifactPreview(id)}
+                      onTask={(id) => {
+                        setTaskId(id);
+                        openPanel('tasks');
+                      }}
+                      compare={(input) => host!.compareArtifacts(input)}
+                      submitRework={requestArtifactRework}
+                    />
                   )}
                   {currentArtifacts.length > 0 && (
                     <>
                       <div className="accept-note">
-                        {snapshot.commission.status === 'awaiting_acceptance'
-                          ? '成果已进入待验收阶段。'
-                          : '已有成果，仍可能有待办；可以先接受选中的项目。'}
+                        {selectableArtifactIds.size > 0
+                          ? '请选择已通过复核的当前版本。'
+                          : currentArtifacts.every((artifact) =>
+                                snapshot.commission.acceptedArtifactIds.includes(artifact.id),
+                              )
+                            ? '当前成果均已接受。'
+                            : '当前成果通过复核后可以接受。'}
                       </div>
                       <button
                         className="primary wide"
-                        disabled={busy || !accepted.length}
+                        disabled={busy || selectedArtifactIds.size === 0}
                         onClick={() =>
-                          run(() => host!.accept(commissionId, accepted)).then((result) => {
-                            if (result) setAccepted([]);
-                          })
+                          run(() => host!.accept(commissionId, [...selectedArtifactIds])).then(
+                            (result) => {
+                              if (result) setAccepted([]);
+                            },
+                          )
                         }
                       >
                         <Check size={16} />
-                        接受选中成果（{accepted.length}）
+                        接受选中成果（{selectedArtifactIds.size}）
                       </button>
                       <div className="button-row">
                         <button
@@ -1174,6 +1236,12 @@ export function App() {
               在系统中打开
             </button>
           </div>
+          <ArtifactSourceExport
+            key={preview.artifact.versionId}
+            artifact={preview.artifact}
+            disabled={busy}
+            exportSource={(input) => host!.exportSourceArtifact(input)}
+          />
         </Modal>
       )}
       {applyPreview && (

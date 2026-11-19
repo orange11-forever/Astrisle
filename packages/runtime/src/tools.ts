@@ -105,7 +105,7 @@ export const planTool: ToolDefinition = {
             },
             kind: {
               type: 'string',
-              enum: ['investigate', 'implement', 'office', 'review', 'integrate'],
+              enum: ['investigate', 'implement', 'review', 'integrate'],
             },
             agentId: {
               type: 'string',

@@ -103,49 +103,34 @@ const definitions: ToolDefinition[] = [
     parameters: schema({ url: stringSchema }, ['url']),
   },
   {
-    name: 'office_inspect',
+    name: 'render_source',
     description:
-      'Inspect DOCX/XLSX/PPTX structure; detects macros, external links and unsupported objects. Read-only. Returns real parsed content.',
+      'Publish UTF-8 Markdown to editable DOCX or PPTX (each level-2 heading starts a slide), or CSV/TSV to a Data worksheet in XLSX. Images must be PNG/JPEG base64 data URIs, up to 8 references, 384 KiB each, 512 KiB total, and 2048 pixels per side. Web/file images, raw HTML and local links are unsupported. Numeric cells are typed; identifiers and formula-like text stay literal. The source stays unchanged. Rerender may replace the target inside the task copy. Returns source and output SHA-256 hashes.',
+    effect: 'write',
+    parameters: schema({ source: stringSchema, output: stringSchema }, ['source', 'output']),
+  },
+  {
+    name: 'inspect_delivery',
+    description:
+      'Read back structure from a DOCX, XLSX or PPTX. Optionally verify independent sums over XLSX numeric source cells using checks:[{sheet,range,sum,tolerance?}]. Returns parsed document and verification evidence. Read-only.',
     effect: 'read',
-    parameters: schema({ source: stringSchema }, ['source']),
-  },
-  {
-    name: 'office_create',
-    description:
-      'Create a NEW Office file. content: DOCX {paragraphs:string[],tables:string[][][]}; XLSX {sheets:[{name,rows:scalar[][],cells:{A1:value},styles:{A1:{bold,numberFormat,fill}}}]}; PPTX {slides:[{title,body,chart?:{categories:string[],series:[{name,values:number[]}]}}]}. Output never overwrites an existing file.',
-    effect: 'write',
-    parameters: schema(
-      {
-        format: { enum: ['docx', 'xlsx', 'pptx'] },
-        output: stringSchema,
-        content: { type: 'object' },
-        inputVersionIds: { type: 'array', items: { type: 'string' } },
-      },
-      ['format', 'output', 'content'],
-    ),
-  },
-  {
-    name: 'office_edit',
-    description:
-      'Create a new edited Office version, preserving source. changes: DOCX {paragraphs:[{index,text}],cells:[{table,row,column,text}],appendParagraphs:string[]}; XLSX {cells:[{sheet,cell,value,style?}]}; PPTX {texts:[{slide,shape,text}],charts:[{slide,shape,categories,series:[{name,values}]}]}. Rejects unsupported complexity before saving.',
-    effect: 'write',
     parameters: schema(
       {
         source: stringSchema,
-        output: stringSchema,
-        changes: { type: 'object' },
-        inputVersionIds: { type: 'array', items: { type: 'string' } },
+        checks: {
+          type: 'array',
+          maxItems: 100,
+          items: schema(
+            {
+              sheet: stringSchema,
+              range: stringSchema,
+              sum: { type: 'number' },
+              tolerance: { type: 'number', minimum: 0 },
+            },
+            ['sheet', 'range', 'sum'],
+          ),
+        },
       },
-      ['source', 'output', 'changes'],
-    ),
-  },
-  {
-    name: 'office_verify',
-    description:
-      'Reopen Office file and independently check numeric source cells. checks:[{sheet,range,sum:number,tolerance?:number}]. Does not claim formula recalculation or application rendering.',
-    effect: 'read',
-    parameters: schema(
-      { source: stringSchema, checks: { type: 'array', maxItems: 100, items: { type: 'object' } } },
       ['source'],
     ),
   },
@@ -165,7 +150,7 @@ async function readText(file: string) {
     throw new ToolError('SIZE_LIMIT', 'Text read requires a regular file no larger than 1 MiB');
   const data = await fs.readFile(file);
   if (data.includes(0))
-    throw new ToolError('BINARY_FILE', 'Binary data requires an artifact preview or Office tool');
+    throw new ToolError('BINARY_FILE', 'Binary data requires artifact preview or inspect_delivery');
   return data.toString('utf8');
 }
 function numeric(value: unknown, fallback: number, max: number) {
@@ -241,23 +226,50 @@ export function createExecutor(options: {
       '.venv',
       process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python',
     );
+  const worker = path.join(options.projectRoot, 'workers/office/worker.py');
+  const workerArgs = ['-I', worker];
+  let publishingProbe: Promise<{ available: boolean; detail: string }> | undefined;
+  async function publishingCapability() {
+    try {
+      await Promise.all([fs.access(python), fs.access(worker)]);
+      const probe = await runProcess(python, workerArgs, {
+        cwd: options.projectRoot,
+        supervisorPath,
+        signal: AbortSignal.timeout(5000),
+        timeoutMs: 5000,
+        input: JSON.stringify({ operation: 'capabilities', schemaVersion: 1 }),
+        outputLimit: 4096,
+      });
+      const receipt = JSON.parse(probe.output);
+      if (!probe.reason && probe.exitCode === 0 && receipt?.ok && receipt.available === true)
+        return {
+          available: true,
+          detail:
+            'Bundled Pandoc and local Python render Markdown to DOCX/PPTX and CSV/TSV to XLSX; read back structure and independently check numeric source cells.',
+        };
+    } catch {
+      // Report missing local setup or a failed worker probe.
+    }
+    return {
+      available: false,
+      detail: 'Install workers/office/requirements.txt in the project-local Python environment.',
+    };
+  }
   return {
     definitions: () => structuredClone(definitions),
     async capabilities(): Promise<Capability[]> {
-      let office = false;
       const supervised =
         process.platform !== 'win32' ||
         (await fs.stat(supervisorPath).then(
           (stat) => stat.isFile(),
           () => false,
         ));
-      try {
-        await fs.access(python);
-        await fs.access(path.join(options.projectRoot, 'workers/office/worker.py'));
-        office = supervised;
-      } catch {
-        /* accurate unavailable report */
-      }
+      const publishing = supervised
+        ? await (publishingProbe ??= publishingCapability())
+        : {
+            available: false,
+            detail: 'Build the Windows process supervisor before using local publishing.',
+          };
       return [
         {
           id: 'workspace',
@@ -277,12 +289,9 @@ export function createExecutor(options: {
               : 'Requires explicit allowProcess. No OS sandbox; minimal environment, bounded logs, process-group stop with unknown retained when unconfirmed.',
         },
         {
-          id: 'office',
-          name: 'Office worker',
-          available: office,
-          detail: office
-            ? 'Project-local Python; DOCX/XLSX/PPTX structural reread and independent numeric checks. Application rendering is a separate verification level.'
-            : 'Project-local Python, Office worker or Windows process supervisor is missing.',
+          id: 'source_publishing',
+          name: 'Local document publishing',
+          ...publishing,
         },
         {
           id: 'safe_apply',
@@ -351,33 +360,29 @@ export function createExecutor(options: {
             metadata: { ...result, output: undefined, mode: 'trusted_host', cwd },
           };
         }
-        if (name.startsWith('office_')) {
-          const operation = name.slice(7),
-            request: Record<string, unknown> = { ...args, operation, schemaVersion: 1 };
-          if (args.source !== undefined)
-            request.source = await guardPath(str(args, 'source'), context, false);
-          if (operation === 'create' || operation === 'edit') {
+        if (name === 'render_source' || name === 'inspect_delivery') {
+          const source = await guardPath(str(args, 'source'), context, false);
+          const request: Record<string, unknown> = {
+            ...args,
+            source,
+            operation: name,
+            schemaVersion: 1,
+          };
+          if (name === 'render_source')
             request.output = await guardPath(str(args, 'output'), context, true);
-            await fs.mkdir(path.dirname(request.output as string), { recursive: true });
-            await assertPlainPath(request.output as string, true);
-          }
           active(context);
-          const result = await runProcess(
-            python,
-            [path.join(options.projectRoot, 'workers/office/worker.py')],
-            {
-              cwd: context.workPath,
-              supervisorPath,
-              signal: context.signal,
-              timeoutMs: 60000,
-              input: JSON.stringify(request),
-              outputLimit: 1024 * 1024,
-            },
-          );
+          const result = await runProcess(python, workerArgs, {
+            cwd: context.workPath,
+            supervisorPath,
+            signal: context.signal,
+            timeoutMs: 60000,
+            input: JSON.stringify(request),
+            outputLimit: 1024 * 1024,
+          });
           if (result.reason)
             return {
               ok: false,
-              output: 'Office worker stopped; reconcile output before retry.',
+              output: 'Publishing worker stopped; reconcile output before retry.',
               code:
                 result.stopStatus === 'outcome_unknown'
                   ? 'OUTCOME_UNKNOWN'
@@ -391,7 +396,16 @@ export function createExecutor(options: {
               result.exitCode !== 0 ||
               !parsed ||
               Array.isArray(parsed) ||
-              typeof parsed.ok !== 'boolean'
+              typeof parsed.ok !== 'boolean' ||
+              (name === 'render_source' &&
+                parsed.ok &&
+                (typeof parsed.sourceSha256 !== 'string' ||
+                  !/^[a-f0-9]{64}$/.test(parsed.sourceSha256) ||
+                  typeof parsed.outputSha256 !== 'string' ||
+                  !/^[a-f0-9]{64}$/.test(parsed.outputSha256) ||
+                  !Array.isArray(parsed.files) ||
+                  parsed.files.length !== 1 ||
+                  parsed.files[0] !== request.output))
             )
               throw new Error(
                 'Worker did not return a successful process exit and structured response',
@@ -400,17 +414,14 @@ export function createExecutor(options: {
             return {
               ok: false,
               code: 'WORKER_FAILED',
-              output: `Invalid Office worker response or process exit (${result.exitCode}): ${bounded(result.output)}`,
+              output: `Invalid publishing worker response or process exit (${result.exitCode}): ${bounded(result.output)}`,
               metadata: { ...result, output: undefined },
             };
           }
           return {
             ok: parsed.ok === true,
             output: bounded(redact(JSON.stringify(parsed))),
-            files:
-              parsed.ok && (operation === 'create' || operation === 'edit')
-                ? [request.output as string]
-                : [],
+            files: parsed.ok && name === 'render_source' ? [request.output as string] : [],
             code: typeof parsed.code === 'string' ? parsed.code : undefined,
             metadata: {
               ...parsed,

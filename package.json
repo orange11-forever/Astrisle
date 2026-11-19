@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "demo": "node scripts/demo.mjs",
     "build": "tsc --noEmit && vite build && node scripts/build-desktop.mjs",
     "build:desktop": "node scripts/build-desktop.mjs",
     "start": "electron .",
@@ -16,6 +17,7 @@
     "test": "node scripts/build-process-supervisor.mjs && node scripts/build-safe-apply.mjs && vitest run",
     "test:ui": "playwright test",
     "test:office": "node scripts/test-office.mjs",
+    "test:publishing": "node scripts/test-office.mjs",
     "acceptance": "node scripts/run-acceptance.mjs",
     "format": "prettier --write apps packages scripts tests *.ts *.json",
     "format:check": "prettier --check apps packages scripts tests *.ts *.json"

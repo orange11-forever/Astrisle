@@ -1,8 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 import { humanoidGlb, seedIslandLife } from '../fixtures/island-life';
 
-async function sceneState(page: Page) {
-  return page.evaluate(async () => {
+async function sceneState(page: Page, advanceToDesk = false) {
+  return page.evaluate(async (advanceToDesk) => {
     const moduleUrl = performance
       .getEntriesByType('resource')
       .find((entry) => entry.name.includes('/@react-three_fiber.js'))?.name;
@@ -12,13 +12,26 @@ async function sceneState(page: Page) {
     if (!state) return null;
     const avatar = state.scene.getObjectByName('avatar-mori'),
       thigh = avatar?.getObjectByName('gait-left-thigh');
+    let maxStep = 0;
+    if (advanceToDesk && avatar) {
+      // The walker caps each active frame at 50 ms. A slow software GPU can spend
+      // 20 wall-clock seconds rendering only a small fraction of the return trip.
+      for (let frame = 0; frame < 700; frame++) {
+        const { x, z } = avatar.position;
+        for (const subscriber of state.internal.subscribers) subscriber.ref.current(state, 0.05);
+        maxStep = Math.max(maxStep, Math.hypot(avatar.position.x - x, avatar.position.z - z));
+        if (Math.hypot(avatar.position.x + 3.45, avatar.position.z - 1.2) < 0.04) break;
+      }
+      state.invalidate();
+    }
     return {
       position: avatar?.position.toArray(),
+      maxStep,
       thigh: thigh?.rotation.x,
       confetti: state.scene.getObjectByName('completion-confetti')?.count ?? 0,
       frame: state.gl.info.render.frame,
     };
-  });
+  }, advanceToDesk);
 }
 async function selectCommission(page: Page) {
   await page.getByRole('button', { name: '展开项目与委托' }).click();
@@ -47,15 +60,10 @@ test('idle companions move with real inferred bones and return to work without t
   await page.evaluate(() => (window as any).setLifeWorking());
   const after = (await sceneState(page))!.position;
   expect(Math.hypot(after[0] - before[0], after[2] - before[2])).toBeLessThan(0.3);
-  await expect
-    .poll(
-      async () => {
-        const p = (await sceneState(page))!.position;
-        return Math.hypot(p[0] + 3.45, p[2] - 1.2);
-      },
-      { timeout: 20000 },
-    )
-    .toBeLessThan(0.04);
+  await expect(page.locator('.scene-label').filter({ hasText: 'Mori' })).toContainText('工作中');
+  const returned = (await sceneState(page, true))!;
+  expect(returned.maxStep).toBeLessThan(0.07);
+  expect(Math.hypot(returned.position[0] + 3.45, returned.position[2] - 1.2)).toBeLessThan(0.04);
   const activity = page.getByRole('region', { name: '委托动态' });
   await activity.locator('summary', { hasText: '伙伴开始工作' }).click();
   await activity.getByRole('button', { name: '查看任务 · 处理文件' }).click();

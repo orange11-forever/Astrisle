@@ -32,7 +32,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node node_modules/electron/install.js
           exit $LASTEXITCODE
-      - name: Install Office worker environment
+      - name: Install source publishing dependencies
         shell: pwsh
         run: |
           python -m venv .venv
@@ -46,7 +46,7 @@ jobs:
         run: |
           node --input-type=module -e "import { tmpdir } from 'node:os'; import { realpath } from 'node:fs/promises'; console.log(JSON.stringify({ temp: tmpdir(), canonicalTemp: await realpath(tmpdir()) }));"
           pnpm.cmd test
-      - name: Office tests
+      - name: Source publishing roundtrips
         run: .venv/Scripts/python.exe -m pytest workers/office/tests -q --basetemp=workers/office/.test-tmp
       - name: Build desktop application
         run: pnpm.cmd build

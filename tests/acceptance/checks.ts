@@ -92,7 +92,7 @@ export async function checkDeliverables(options: {
         detail = `Node exit=${result.exitCode}; stop=${result.stopStatus}; ${passed ? 'output matched' : 'check failed'}${result.reason ? `; ${result.reason}` : ''}`;
       } else {
         const result = await options.executor.execute(
-          'office_verify',
+          'inspect_delivery',
           { source: check.path, checks: check.sums },
           context,
         );

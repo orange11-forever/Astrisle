@@ -1,4 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
+import { scenarios } from '../acceptance/scenarios';
 import { mkdtemp, mkdir, writeFile, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -32,39 +33,25 @@ it('executes candidate Node output with bounded processes and independent expect
     (await checkDeliverables({ ...options, allowProcess: false, checks: [good] }))[0].status,
   ).toBe('failed');
 });
-it('reopens real Office output and fails an incorrect source-cell sum', async () => {
+it('reopens a source-published workbook and rejects an incorrect source-cell sum', async () => {
   const options = await setup();
   const context = checkContext(options.root, options.signal);
   context.scope.writeRoots = [options.root];
+  await writeFile(join(options.root, 'values.csv'), 'Item,Value\nA,10\nB,20\n');
   const created = await options.executor.execute(
-    'office_create',
-    {
-      format: 'xlsx',
-      output: 'values.xlsx',
-      content: {
-        sheets: [
-          {
-            name: 'Data',
-            rows: [
-              ['Item', 'Value'],
-              ['A', 10],
-              ['B', 20],
-            ],
-          },
-        ],
-      },
-    },
+    'render_source',
+    { source: 'values.csv', output: 'values.xlsx' },
     context,
   );
   expect(created.ok, created.output).toBe(true);
   const check = checkSchema.parse({
-    kind: 'office',
+    kind: 'delivery',
     path: 'values.xlsx',
     assertions: [{ at: ['sheets', 0, 'name'], equals: 'Data' }],
     sums: [{ sheet: 'Data', range: 'B2:B3', sum: 30 }],
   });
   expect((await checkDeliverables({ ...options, checks: [check] }))[0].status).toBe('passed');
-  if (check.kind !== 'office') throw new Error('fixture');
+  if (check.kind !== 'delivery') throw new Error('fixture');
   expect(
     (
       await checkDeliverables({
@@ -74,6 +61,22 @@ it('reopens real Office output and fails an incorrect source-cell sum', async ()
     )[0].status,
   ).toBe('failed');
 });
+it('can satisfy the built-in publishing scenario with the same Markdown for Word and slides', async () => {
+  const options = await setup();
+  const checks = scenarios.find((s) => s.id === 'source-publishing')!.stages[0]!.checks;
+  const context = checkContext(options.root, options.signal);
+  context.scope.writeRoots = [options.root];
+  for (const check of checks) {
+    if (check.kind === 'text') await writeFile(join(options.root, check.path), check.equals);
+  }
+  for (const output of ['brief.docx', 'deck.pptx', 'budget.xlsx']) {
+    const source = output.endsWith('.xlsx') ? 'budget.csv' : 'brief.md';
+    const rendered = await options.executor.execute('render_source', { source, output }, context);
+    expect(rendered.ok, rendered.output).toBe(true);
+  }
+  const result = await checkDeliverables({ ...options, checks });
+  expect(result.filter((record) => record.status !== 'passed')).toEqual([]);
+}, 45000);
 it('does not read or execute checks outside the export root', async () => {
   const options = await setup();
   await mkdir(join(options.root, 'export'));

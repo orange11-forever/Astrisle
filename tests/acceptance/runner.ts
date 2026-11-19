@@ -133,11 +133,12 @@ export async function runAcceptanceScenario(options: AcceptanceOptions): Promise
         'Code scenarios require --allow-process for trusted host execution',
       );
     if (
-      scenario.officeSeed.length ||
-      scenario.stages.some((s) => s.checks.some((c) => c.kind === 'office'))
+      scenario.stages.some((s) =>
+        s.checks.some((c) => c.kind === 'delivery' || c.kind === 'office'),
+      )
     ) {
-      const capability = capabilities.find((c) => c.id === 'office');
-      if (!capability?.available) throw new StopRun('not_run', 'Office worker is unavailable');
+      const capability = capabilities.find((c) => c.id === 'source_publishing');
+      if (!capability?.available) throw new StopRun('not_run', 'Source publishing is unavailable');
     }
     if (options.signal?.aborted) throw new StopRun('cancelled', 'Cancelled before starting');
     await mkdir(source);
@@ -147,18 +148,6 @@ export async function runAcceptanceScenario(options: AcceptanceOptions): Promise
       const destination = await guardPath(path, context, true);
       await mkdir(dirname(destination), { recursive: true });
       await writeFile(destination, text, { flag: 'wx' });
-    }
-    for (const seed of scenario.officeSeed) {
-      const result = await executor.execute(
-        'office_create',
-        { format: seed.format, output: seed.path, content: seed.content },
-        context,
-      );
-      if (!result.ok)
-        throw new StopRun(
-          'not_run',
-          `Could not prepare Office input: ${result.code ?? result.output}`,
-        );
     }
     report.inputHashes = await fileHashes(source);
     runtime = createRuntime({

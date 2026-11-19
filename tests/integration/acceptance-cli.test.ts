@@ -53,7 +53,7 @@ it('lists scenarios without a provider or a network request', async () => {
   const result = await run(['--list']);
   expect(result.code).toBe(0);
   expect(result.output).toContain('code-new');
-  expect(result.output).toContain('office');
+  expect(result.output).toContain('source-publishing');
 });
 it('preflight accepts hidden-stdin credentials without exposing them or contacting the endpoint', async () => {
   const result = await run(

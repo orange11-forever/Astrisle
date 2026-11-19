@@ -3,7 +3,10 @@ import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import type {
   Artifact,
+  ArtifactComparison,
+  ArtifactComparisonInput,
   ArtifactPreview,
+  ArtifactReworkInput,
   ApplyPreview,
   ApplyOperation,
   Bootstrap,
@@ -20,6 +23,10 @@ import type {
 import { RuntimeStore } from '../../persistence/src/index';
 import { agents, invalidateLineage, ready, validatePlan } from '../../domain/src/index';
 import { blobPath, hash, publishArtifact, readArtifact } from '../../artifacts/src/index';
+import { compareArtifactVersions } from '../../artifacts/src/compare';
+import { saveSourceExport } from './source-export';
+import { findArtifactVersion } from '../../contracts/src/index';
+import type { SourceExportInput } from '../../contracts/src/index';
 import {
   createWorkspaceStorage,
   createTaskWorkspace,
@@ -34,6 +41,13 @@ import { planTool, runtimeTools } from './tools';
 import { buildTaskContinuation, summarizeTaskEvidence } from './task-context';
 import { budgetExhausted, validBudget } from './budget';
 import { RuntimeOwnership } from './ownership';
+import {
+  directedReworkOutputs,
+  pathComparisonKey,
+  previousTaskIds,
+  previousTaskOutputs,
+  scheduleArtifactRework,
+} from './artifact-rework';
 export interface RuntimeService {
   bootstrap(): Promise<Bootstrap>;
   createWorkspace(input: NewWorkspaceInput): Promise<Workspace>;
@@ -43,8 +57,11 @@ export interface RuntimeService {
   updateBudget(id: string, budget: Budget, expectedBudgetRevision: number): Promise<CommandResult>;
   answer(requestId: string, answer: string, approve?: boolean): Promise<CommandResult>;
   revise(id: string, instruction: string, expectedRevision: number): Promise<CommandResult>;
+  requestArtifactRework(input: ArtifactReworkInput): Promise<CommandResult>;
   accept(id: string, artifactIds: string[]): Promise<CommandResult>;
   artifact(id: string): Promise<ArtifactPreview>;
+  compareArtifacts(input: ArtifactComparisonInput): Promise<ArtifactComparison>;
+  exportSourceArtifact(input: SourceExportInput, destination: string): Promise<CommandResult>;
   resolveArtifactPath(id: string): Promise<string>;
   exportWorkspace(id: string, destination: string): Promise<CommandResult>;
   prepareApply(id: string): Promise<ApplyPreview>;
@@ -127,8 +144,11 @@ export function createRuntime(options: RuntimeOptions): RuntimeService {
     updateBudget: command(runtime.updateBudget),
     answer: command(runtime.answer),
     revise: command(runtime.revise),
+    requestArtifactRework: command(runtime.requestArtifactRework),
     accept: command(runtime.accept),
     artifact: command(runtime.artifact),
+    compareArtifacts: command(runtime.compareArtifacts),
+    exportSourceArtifact: command(runtime.exportSourceArtifact),
     resolveArtifactPath: command(runtime.resolveArtifactPath),
     exportWorkspace: command(runtime.exportWorkspace),
     prepareApply: command(runtime.prepareApply),
@@ -154,6 +174,42 @@ export function createRuntime(options: RuntimeOptions): RuntimeService {
 }
 class OutcomeUnknownError extends Error {}
 const interruptedTitle = 'Inspect interrupted task';
+const artifactInspectionTools = new Set([
+  'workspace_read',
+  'inspect_delivery',
+  // Saved evidence can refer to tools that are no longer offered for new calls.
+  'office_inspect',
+  'office_verify',
+]);
+type RenderedOutput = { path: string; sha256: string; sourceVersionId: string };
+
+function renderedPublication(
+  snapshot: ProjectSnapshot,
+  taskId: string,
+  workPath: string,
+  outputPath: string,
+): RenderedOutput | null | undefined {
+  let attempted = false;
+  for (const evidence of snapshot.evidence.slice().reverse()) {
+    if (evidence.taskId !== taskId || evidence.kind !== 'tool') continue;
+    try {
+      const detail = JSON.parse(evidence.detail);
+      if (
+        detail?.name !== 'render_source' ||
+        typeof detail.args?.output !== 'string' ||
+        relative(workPath, resolve(workPath, detail.args.output)).replaceAll('\\', '/') !==
+          outputPath
+      )
+        continue;
+      attempted = true;
+      if (evidence.status === 'passed' && detail.renderedOutput?.path === outputPath)
+        return detail.renderedOutput;
+    } catch {
+      // Older tool evidence may contain only free text.
+    }
+  }
+  return attempted ? null : undefined;
+}
 function pendingTaskRequest(snapshot: ProjectSnapshot, taskId: string) {
   const requests = snapshot.requests.filter((r) => r.taskId === taskId && r.status === 'open');
   return requests.find((r) => r.kind === 'approval') ?? requests[0];
@@ -166,6 +222,7 @@ function waitForTaskRequests(snapshot: ProjectSnapshot, task: Task): boolean {
   return true;
 }
 class Runtime implements RuntimeService {
+  private waitingForAgent = new Set<string>();
   private store: RuntimeStore;
   private ownership: RuntimeOwnership;
   private listeners = new Set<(snapshot: ProjectSnapshot) => void>();
@@ -455,6 +512,21 @@ class Runtime implements RuntimeService {
   async exportWorkspace(id: string, destination: string): Promise<CommandResult> {
     await exportWorkspaceStorage(this.store.get(id).workspace, destination);
     return result(true, '项目候选版本已导出到新目录');
+  }
+  async exportSourceArtifact(
+    input: SourceExportInput,
+    destination: string,
+  ): Promise<CommandResult> {
+    const snapshot = this.store.get(input.commissionId);
+    const source = findArtifactVersion(snapshot, input.versionId);
+    return saveSourceExport(
+      this.options.dataRoot,
+      this.options.executor,
+      source,
+      input.format,
+      destination,
+      this.store.workspaces(),
+    );
   }
   async prepareApply(id: string): Promise<ApplyPreview> {
     const snapshot = this.store.get(id);
@@ -801,6 +873,178 @@ class Runtime implements RuntimeService {
     this.kick(id);
     return result(true, 'Requirements revised');
   }
+  async requestArtifactRework(input: ArtifactReworkInput): Promise<CommandResult> {
+    if (
+      !input ||
+      typeof input.commissionId !== 'string' ||
+      !input.commissionId.trim() ||
+      typeof input.artifactId !== 'string' ||
+      !input.artifactId.trim() ||
+      typeof input.versionId !== 'string' ||
+      !input.versionId.trim() ||
+      typeof input.requestId !== 'string' ||
+      !input.requestId.trim() ||
+      input.requestId.length > 200 ||
+      !Number.isSafeInteger(input.revision) ||
+      input.revision < 1 ||
+      typeof input.instruction !== 'string' ||
+      !input.instruction.trim() ||
+      input.instruction.trim().length > 4000
+    )
+      return result(
+        false,
+        'A current version and a rework instruction of up to 4000 characters are required',
+        'invalid_input',
+      );
+    input = { ...input, instruction: input.instruction.trim() };
+    const payload = canonical({ ...input, type: 'artifact_rework' });
+    const receipt = () => {
+      const saved = this.store.receipt(input.requestId);
+      if (saved)
+        return saved.payload === payload
+          ? saved.result
+          : result(false, 'Request ID already has a different payload', 'request_conflict');
+    };
+    const existing = receipt();
+    if (existing) return existing;
+    const initial = this.store.findProject(input.commissionId);
+    if (!initial) return result(false, 'Commission not found', 'not_found');
+    const candidate = this.artifactReworkCandidate(initial, input);
+    if ('ok' in candidate) return candidate;
+    try {
+      await readArtifact(this.options.dataRoot, candidate);
+    } catch {
+      return receipt() ?? result(false, 'Artifact file missing or corrupted', 'invalid_artifact');
+    }
+    let committed: ProjectSnapshot | undefined;
+    const response = this.store.transaction(() => {
+      const existing = receipt();
+      if (existing) return existing;
+      const snapshot = this.store.get(input.commissionId);
+      const target = this.artifactReworkCandidate(snapshot, input);
+      if ('ok' in target) return target;
+      if (target.sha256 !== candidate.sha256)
+        return result(false, 'Artifact bytes changed during rework validation', 'stale_version');
+      const author = snapshot.tasks.find((task) => task.id === target.taskId)!;
+      const reviewer = agents.find((agent) => agent.id !== author.agentId)!;
+      const schedule = scheduleArtifactRework(
+        snapshot,
+        target,
+        author,
+        reviewer.id,
+        input.instruction,
+        input.requestId,
+        now(),
+      );
+      if ('code' in schedule) {
+        if (schedule.code === 'path_conflict')
+          return result(
+            false,
+            `Another current artifact already owns ${schedule.path}`,
+            schedule.code,
+          );
+        return result(
+          false,
+          'Resolve open requests on affected tasks before reworking',
+          schedule.code,
+        );
+      }
+      const rework = schedule.task;
+      const paused = snapshot.commission.status === 'paused';
+      snapshot.commission.status = paused ? 'paused' : 'active';
+      snapshot.commission.summary = paused
+        ? 'Artifact rework queued; resume to start work'
+        : 'Reworking the selected artifact version';
+      this.event(
+        snapshot,
+        'rework_created',
+        `Linked ${rework.id} to ${author.id}`,
+        rework,
+        target.versionId,
+      );
+      const success = {
+        ...result(true, 'Artifact rework scheduled'),
+        commissionId: input.commissionId,
+        requestId: input.requestId,
+      };
+      this.store.save(snapshot);
+      this.store.addReceipt(input.requestId, payload, success);
+      committed = snapshot;
+      return success;
+    });
+    if (committed) {
+      this.syncClock(committed);
+      this.emit(committed);
+      this.kick(input.commissionId);
+    }
+    return response;
+  }
+  private artifactReworkCandidate(
+    s: ProjectSnapshot,
+    input: ArtifactReworkInput,
+  ): Artifact | CommandResult {
+    if (this.closing) return result(false, 'Runtime is closing', 'closing');
+    if (s.commission.revision !== input.revision)
+      return result(false, 'Commission revision changed', 'stale_revision');
+    const artifact = s.artifacts.find((a) => a.id === input.artifactId);
+    if (artifact?.versionId !== input.versionId || artifact.validity !== 'current')
+      return result(false, 'The selected artifact version is no longer current', 'stale_version');
+    if (s.commission.acceptedArtifactIds.includes(artifact.id))
+      return result(false, 'The selected artifact has already been accepted', 'artifact_accepted');
+    if (['accepted', 'cancelled', 'failed'].includes(s.commission.status))
+      return result(false, 'Commission is terminal', 'terminal');
+    if (artifact.renderedFromVersionId) {
+      const source = s.artifacts.find((a) => a.versionId === artifact.renderedFromVersionId);
+      return result(
+        false,
+        `Request content changes on the editable source${source ? ` ${source.relativePath}` : ''} so the native deliverable can be regenerated`,
+        'source_rework_required',
+      );
+    }
+    if (s.requests.some((r) => r.status === 'open' && r.title === interruptedTitle))
+      return result(
+        false,
+        'Resolve unknown tool outcomes before requesting rework',
+        'outcome_unknown',
+      );
+    if (s.requests.some((r) => r.status === 'open' && r.kind === 'approval'))
+      return result(false, 'Resolve open approvals before requesting rework', 'approval_required');
+    if (
+      !['paused', 'awaiting_acceptance'].includes(s.commission.status) ||
+      [...this.running.values()].some((r) => r.commissionId === s.commission.id)
+    )
+      return result(
+        false,
+        'Pause and wait for current calls to stop before requesting rework',
+        'task_running',
+      );
+    const applyBlock = this.writebackBlock(s.workspace.id);
+    if (applyBlock) return applyBlock;
+    const author = s.tasks.find((t) => t.id === artifact.taskId);
+    if (
+      !author ||
+      !['awaiting_review', 'passed'].includes(author.status) ||
+      author.kind === 'review'
+    )
+      return result(
+        false,
+        'The producing task must finish publishing before rework',
+        'invalid_artifact',
+      );
+    if (budgetExhausted(s.commission, this.elapsed(s)))
+      return result(
+        false,
+        'Increase the step or time budget before requesting rework',
+        'budget_exhausted',
+      );
+    if (s.events.filter((e) => e.type === 'rework_created').length >= s.commission.budget.maxRework)
+      return result(
+        false,
+        'Increase the rework limit before requesting rework',
+        'rework_budget_exhausted',
+      );
+    return artifact;
+  }
   async accept(id: string, artifactIds: string[]): Promise<CommandResult> {
     const s = this.store.get(id);
     if (
@@ -900,7 +1144,7 @@ class Runtime implements RuntimeService {
     const bytes = await readArtifact(this.options.dataRoot, artifact);
     const text =
       /^(text\/|application\/(json|javascript|xml))/.test(artifact.mediaType) ||
-      /\.(md|txt|json|ts|tsx|js|py|css|html|csv)$/.test(artifact.relativePath);
+      /\.(md|markdown|txt|json|ts|tsx|js|py|css|html|csv|tsv)$/i.test(artifact.relativePath);
     return {
       artifact,
       format: text ? 'text' : 'binary',
@@ -912,6 +1156,23 @@ class Runtime implements RuntimeService {
           }
         : {}),
     };
+  }
+  async compareArtifacts(input: ArtifactComparisonInput): Promise<ArtifactComparison> {
+    if (
+      !input ||
+      typeof input.commissionId !== 'string' ||
+      !input.commissionId ||
+      typeof input.fromVersionId !== 'string' ||
+      !input.fromVersionId ||
+      typeof input.toVersionId !== 'string' ||
+      !input.toVersionId
+    )
+      throw new Error('A commission and two artifact versions are required');
+    return compareArtifactVersions(
+      this.options.dataRoot,
+      this.store.get(input.commissionId),
+      input,
+    );
   }
   async testProvider(): Promise<CommandResult> {
     const settings = await this.options.getCredentials();
@@ -940,6 +1201,7 @@ class Runtime implements RuntimeService {
     if (this.closing) return;
     queueMicrotask(() => {
       if (this.closing || this.closed) return;
+      this.waitingForAgent.delete(id);
       let s = this.store.get(id);
       if (s.commission.status !== 'active') return;
       if (
@@ -960,13 +1222,21 @@ class Runtime implements RuntimeService {
         finished.every((t) => t.status === 'passed') &&
         ![...this.running.values()].some((r) => r.commissionId === id)
       ) {
+        const current = s.artifacts.filter((artifact) => artifact.validity === 'current');
+        const accepted =
+          current.length > 0 &&
+          current.every((a) => s.commission.acceptedArtifactIds.includes(a.id));
         this.change(
           id,
           'delivery_ready',
-          'All tasks independently verified; awaiting user acceptance',
+          accepted
+            ? 'All current artifact versions were independently reviewed and accepted'
+            : 'All tasks independently verified; awaiting user acceptance',
           (s) => {
-            s.commission.status = 'awaiting_acceptance';
-            s.commission.summary = 'Verified results are ready for acceptance';
+            s.commission.status = accepted ? 'accepted' : 'awaiting_acceptance';
+            s.commission.summary = accepted
+              ? 'All current versions are accepted'
+              : 'Verified results are ready for acceptance';
           },
         );
         return;
@@ -985,9 +1255,10 @@ class Runtime implements RuntimeService {
         return;
       }
       for (const agent of agents) {
-        if (this.running.has(agent.id)) continue;
         const task = s.tasks.find((t) => t.agentId === agent.id && ready(t, s));
-        if (task) this.startTask(id, task.id, agent.id);
+        if (!task) continue;
+        if (this.running.has(agent.id)) this.waitingForAgent.add(id);
+        else this.startTask(id, task.id, agent.id);
       }
     });
   }
@@ -1013,6 +1284,9 @@ class Runtime implements RuntimeService {
             s.commission.status = 'cancelled';
             for (const t of s.tasks) if (t.status !== 'passed') t.status = 'cancelled';
           });
+        if (!key.startsWith('plan:')) {
+          for (const waiting of this.waitingForAgent) if (waiting !== id) this.kick(waiting);
+        }
         this.kick(id);
       });
     this.running.set(key, {
@@ -1043,7 +1317,7 @@ class Runtime implements RuntimeService {
           {
             role: 'system',
             content:
-              'You plan real project work, never a fixed demonstration. You must call propose_plan, not write a prose plan. Produce a DAG of 2+ tasks across mori and luma. Task kind must be investigate, implement, office, review, or integrate; author is a role, not a task kind. Every author, including investigate, must publish actual files and have a different reviewer DIRECTLY depending on that author and covering its criteria. Transitive dependency alone does not review preparatory outputs. Review tasks are read-only and finish with submit_review; never assign them report-file creation. Review dependencies use artifact_available. An author can consume a predecessor via artifact_available, or via task_passed after a separate earlier review; do not create a review-wait deadlock. Use only registered capabilities. Keep graph as small as the goal permits: prefer one author and one reviewer for tightly coupled outputs. Parallel author tasks must own disjoint output paths; specify each task scope clearly.',
+              'You plan real project work, never a fixed demonstration. You must call propose_plan, not write a prose plan. Produce a DAG of 2+ tasks across mori and luma. Task kind must be investigate, implement, review, or integrate; author is a role, not a task kind. Every author, including investigate, must publish actual files and have a different reviewer DIRECTLY depending on that author and covering its criteria. Transitive dependency alone does not review preparatory outputs. Review tasks are read-only and finish with submit_review; never assign them report-file creation. Review dependencies use artifact_available. An author can consume a predecessor via artifact_available, or via task_passed after a separate earlier review; do not create a review-wait deadlock. Use only registered capabilities. Write reviewable Markdown, CSV or TSV sources for document and data work when appropriate. For a requested native document, publish the source first, then render the published source with render_source and publish the native output. This can be one author task, or a downstream renderer task with the published source as a dependency. Review both files. If only the source is requested, publish the source. Keep the graph as small as the goal permits. Parallel author tasks must own disjoint output paths; specify each task scope clearly.',
           },
           {
             role: 'user',
@@ -1213,24 +1487,34 @@ class Runtime implements RuntimeService {
   private async runTask(id: string, taskId: string, signal: AbortSignal): Promise<void> {
     const initial = this.store.get(id),
       task = initial.tasks.find((t) => t.id === taskId)!;
-    let workPath = this.store.taskPath(taskId);
-    if (!workPath) {
-      workPath = await createTaskWorkspace(initial.workspace, task.id);
-      this.store.setTaskPath(taskId, workPath);
-    }
+    const existingPath = this.store.taskPath(taskId);
+    const workPath = existingPath ?? (await createTaskWorkspace(initial.workspace, task.id));
+    if (!existingPath) this.store.setTaskPath(taskId, workPath);
+    const reworkOutputs = directedReworkOutputs(initial, task);
+    const reworkBase = reworkOutputs.find((a) => a.id === task.artifactRework?.artifactId);
+    if (task.artifactRework && !reworkBase) throw new Error('Previous rework version is missing');
     const inputs = initial.artifacts.filter(
-      (a) => a.validity === 'current' && task.dependencies.includes(a.taskId),
+      (a) =>
+        a.validity === 'current' &&
+        task.dependencies.includes(a.taskId) &&
+        !reworkOutputs.some((output) => output.relativePath === a.relativePath),
     );
+    const pin = async (a: Artifact) => {
+      const path = resolve(workPath, a.relativePath);
+      const rel = relative(workPath, path);
+      if (!rel || rel.startsWith('..') || isAbsolute(rel))
+        throw new Error('Invalid artifact input path');
+      await assertPlainPath(path, true);
+      await mkdir(dirname(path), { recursive: true });
+      await assertPlainPath(path, true);
+      await writeFile(path, await readArtifact(this.options.dataRoot, a));
+    };
     for (const a of inputs) {
       if (task.inputVersions.includes(a.versionId)) continue;
-      const path = resolve(workPath, a.relativePath),
-        rel = relative(workPath, path);
-      if (rel.startsWith('..') || isAbsolute(rel)) throw new Error('Invalid artifact input path');
-      await mkdir(dirname(path), {
-        recursive: true,
-      });
-      await writeFile(path, await readArtifact(this.options.dataRoot, a));
+      await pin(a);
     }
+    if (reworkBase && !initial.events.some((e) => e.type === 'task_inputs' && e.taskId === taskId))
+      await pin(reworkBase);
     this.change(
       id,
       'task_inputs',
@@ -1243,10 +1527,11 @@ class Runtime implements RuntimeService {
       },
     );
     const evidence = initial.evidence.filter((e) => e.taskId === taskId);
+    const answerTaskIds = previousTaskIds(initial, task).add(taskId);
     const messages: Message[] = [
       {
         role: 'system',
-        content: `You are ${task.agentId}, carrying out your assigned task in an isolated task workspace. The task description and criterionIds define your scope; the overall project goal is context, not an instruction to perform other partners' tasks. Only create and publish files owned by this task. Use registered tools. All paths are relative to your workspace. Do not claim execution or tests without tool output. Publish all final files with submit_artifact, then call complete_task once the entire author handoff is ready; do not republish unchanged versions. A reviewer must inspect every pinned input version with workspace_read or Office inspection tools, then perform applicable checks and submit_review with the real evidence IDs and every input version ID. Process output alone does not establish which file version was inspected. Insufficient evidence is unable_to_verify. Never approve your own work. User rejections must be respected. Tools may not access runtime state files.`,
+        content: `You are ${task.agentId}, carrying out your assigned task in an isolated task workspace. The task description and criterionIds define your scope; the overall project goal is context, not an instruction to perform other partners' tasks. Only create and publish files owned by this task. Use registered tools. All paths are relative to your workspace. Do not claim execution or tests without tool output. Publish all final files with submit_artifact, then call complete_task once the handoff is ready. Before using render_source, publish the source or use the exact published input supplied by your dependency. For a targeted replacement, publish the selected file and the specifically listed regenerated files. Remove temporary changes before completion. A reviewer must inspect every pinned input version with workspace_read or inspect_delivery, then perform applicable checks and submit_review with the real evidence IDs and every input version ID. Process output alone does not establish which file version was inspected. Insufficient evidence is unable_to_verify. Never approve your own work. User rejections must be respected. Tools may not access runtime state files.`,
       },
       {
         role: 'user',
@@ -1257,7 +1542,13 @@ class Runtime implements RuntimeService {
           environment: executionEnvironment(initial.commission.scope),
           capabilities: await this.options.executor.capabilities(),
           inputs,
-          userAnswers: initial.requests.filter((r) => r.taskId === taskId && r.status !== 'open'),
+          previousArtifact: reworkBase,
+          ...(reworkOutputs.length > 1 && {
+            previousRenderedArtifacts: reworkOutputs.filter((a) => a.id !== reworkBase?.id),
+          }),
+          userAnswers: initial.requests.filter(
+            (r) => r.taskId && answerTaskIds.has(r.taskId) && r.status !== 'open',
+          ),
           pendingRequests: initial.requests.filter(
             (r) => r.status === 'open' && (!r.taskId || r.taskId === taskId),
           ),
@@ -1267,7 +1558,10 @@ class Runtime implements RuntimeService {
           continuation: await buildTaskContinuation(
             workPath,
             this.store.recentTaskCalls(id, taskId),
-            inputs.concat(initial.artifacts.filter((a) => a.taskId === taskId)),
+            inputs.concat(
+              initial.artifacts.filter((a) => a.taskId === taskId),
+              reworkOutputs,
+            ),
           ),
         }),
       },
@@ -1377,10 +1671,20 @@ class Runtime implements RuntimeService {
       throw new Error(
         'Review workspaces are read-only; author changes require a separate rework task',
       );
+    const source = call.args.path ?? call.args.source;
+    const render = call.name === 'render_source';
+    const inputs = s.artifacts.filter((a) => task.inputVersions.includes(a.versionId));
     const pinned =
       task.kind === 'review'
-        ? s.artifacts.filter((a) => task.inputVersions.includes(a.versionId))
-        : [];
+        ? inputs
+        : render && typeof source === 'string'
+          ? s.artifacts.filter(
+              (a) =>
+                a.validity === 'current' &&
+                (a.taskId === taskId || task.inputVersions.includes(a.versionId)) &&
+                resolve(workPath, source) === resolve(workPath, a.relativePath),
+            )
+          : [];
     const before = await this.pinnedHashes(workPath, pinned);
     this.store.startCall(runId, id, taskId, {
       kind: 'tool',
@@ -1399,23 +1703,33 @@ class Runtime implements RuntimeService {
     );
     let output;
     try {
-      output = pinned.some((a) => before[a.versionId] !== a.sha256)
-        ? {
-            ok: false,
-            code: 'REVIEW_INPUT_CHANGED',
-            output: 'Pinned artifact bytes changed before tool execution',
-          }
-        : await this.options.executor.execute(call.name, call.args, {
-            commissionId: id,
-            taskId,
-            runId,
-            workPath,
-            scope: {
-              ...s.commission.scope,
-              writeRoots: [workPath],
-            },
-            signal,
-          });
+      output =
+        render && pinned.length !== 1
+          ? {
+              ok: false,
+              code: 'RENDER_SOURCE_NOT_PINNED',
+              output:
+                'Publish the source with submit_artifact or use a published source pinned from a dependency, then retry rendering',
+            }
+          : pinned.some((a) => before[a.versionId] !== a.sha256)
+            ? {
+                ok: false,
+                code: render ? 'RENDER_SOURCE_CHANGED' : 'REVIEW_INPUT_CHANGED',
+                output: render
+                  ? 'Use the published source bytes, or publish the edited source before rendering'
+                  : 'Pinned artifact bytes changed before tool execution',
+              }
+            : await this.options.executor.execute(call.name, call.args, {
+                commissionId: id,
+                taskId,
+                runId,
+                workPath,
+                scope: {
+                  ...s.commission.scope,
+                  writeRoots: [workPath],
+                },
+                signal,
+              });
     } catch (e) {
       output = {
         ok: false,
@@ -1433,11 +1747,36 @@ class Runtime implements RuntimeService {
       output = {
         ...output,
         ok: false,
-        code: 'REVIEW_INPUT_CHANGED',
+        code: render ? 'RENDER_SOURCE_CHANGED' : 'REVIEW_INPUT_CHANGED',
         output: 'Pinned artifact bytes changed during tool execution',
       };
-    const source = call.args.path ?? call.args.source;
-    const qualifying = ['workspace_read', 'office_inspect', 'office_verify'].includes(call.name);
+    let renderedOutput: RenderedOutput | undefined;
+    if (render && output.ok) {
+      const target = call.args.output;
+      const sha256 = output.metadata?.outputSha256;
+      const renderedSource = matching[0];
+      if (
+        renderedSource &&
+        renderedSource.sha256 === output.metadata?.sourceSha256 &&
+        typeof target === 'string' &&
+        typeof sha256 === 'string' &&
+        /^[a-f0-9]{64}$/.test(sha256)
+      ) {
+        renderedOutput = {
+          path: relative(workPath, resolve(workPath, target)).replaceAll('\\', '/'),
+          sha256,
+          sourceVersionId: renderedSource.versionId,
+        };
+      } else {
+        output = {
+          ...output,
+          ok: false,
+          code: 'RENDER_PROVENANCE_MISMATCH',
+          output: 'Could not bind the generated file to the exact published source version',
+        };
+      }
+    }
+    const qualifying = artifactInspectionTools.has(call.name);
     const consumed =
       output.ok && qualifying && typeof source === 'string'
         ? matching.filter((a) => resolve(workPath, source) === resolve(workPath, a.relativePath))
@@ -1459,6 +1798,7 @@ class Runtime implements RuntimeService {
             args: call.args,
             result: output,
             verifiedInputs: consumed.map((a) => ({ versionId: a.versionId, sha256: a.sha256 })),
+            renderedOutput,
           }),
           status: unknown ? 'not_run' : output.ok ? 'passed' : 'failed',
           taskId,
@@ -1576,27 +1916,92 @@ class Runtime implements RuntimeService {
     }
     if (call.name === 'submit_artifact') {
       if (task.kind === 'review') throw new Error('Review tasks cannot replace author artifacts');
-      const artifact = await publishArtifact(this.options.dataRoot, workPath, String(a.path), {
+      const path = String(a.path);
+      const replacementPaths = task.artifactRework
+        ? directedReworkOutputs(s, task)
+        : previousTaskOutputs(s, task);
+      const relativePath = relative(workPath, resolve(workPath, path)).replaceAll('\\', '/');
+      const previousVersion = replacementPaths
+        .filter((a) => a.relativePath === relativePath)
+        .at(-1);
+      if ((task.artifactRework || replacementPaths.length) && !previousVersion)
+        throw new Error('Only the previous artifact output paths may be published during rework');
+      if (
+        task.replacesTaskId &&
+        s.artifacts.some(
+          (a) =>
+            a.validity === 'current' &&
+            a.taskId !== taskId &&
+            pathComparisonKey(a.relativePath) === pathComparisonKey(relativePath),
+        )
+      )
+        throw new Error('The output path belongs to a different current artifact');
+      if (task.replacesTaskId) await assertPlainPath(resolve(workPath, path));
+      const artifact = await publishArtifact(this.options.dataRoot, workPath, path, {
         commissionId: id,
         taskId,
-        name: String(a.name),
-        mediaType: String(a.mediaType),
+        name: task.artifactRework && previousVersion ? previousVersion.name : String(a.name),
+        mediaType:
+          task.artifactRework && previousVersion ? previousVersion.mediaType : String(a.mediaType),
         inputVersions: task.inputVersions,
       });
+      if (previousVersion && artifact.relativePath !== previousVersion.relativePath)
+        throw new Error('Published path differs from the requested replacement path');
+      if (
+        task.artifactRework &&
+        previousVersion?.versionId === task.artifactRework.versionId &&
+        artifact.sha256 === previousVersion.sha256
+      )
+        throw new Error('The requested replacement must change the previous artifact bytes');
+      const renderEvidence = renderedPublication(s, taskId, workPath, relativePath);
+      if (renderEvidence === null)
+        throw new Error(
+          'Render the deliverable successfully from the pinned source before publishing',
+        );
+      if (renderEvidence) {
+        const source = s.artifacts.find(
+          (a) => a.versionId === renderEvidence.sourceVersionId && a.validity === 'current',
+        );
+        if (
+          renderEvidence.path !== artifact.relativePath ||
+          renderEvidence.sha256 !== artifact.sha256 ||
+          !source ||
+          (source.taskId !== taskId && !task.inputVersions.includes(source.versionId))
+        )
+          throw new Error('Generated file changed since it was rendered from the pinned source');
+        artifact.renderedFromVersionId = source.versionId;
+        artifact.inputVersions = [...new Set([...artifact.inputVersions, source.versionId])];
+      }
       this.change(
         id,
         'artifact_available',
         `Published ${artifact.name}`,
         (s) => {
-          const previous = s.artifacts.filter(
-            (x) =>
-              x.taskId === taskId &&
-              x.relativePath === artifact.relativePath &&
-              x.validity === 'current',
+          if (
+            artifact.inputVersions.some(
+              (version) =>
+                !s.artifacts.some((a) => a.versionId === version && a.validity === 'current'),
+            )
+          )
+            throw new Error('Task input versions changed before publication');
+          if (
+            task.replacesTaskId &&
+            s.artifacts.some(
+              (a) =>
+                a.validity === 'current' &&
+                a.taskId !== taskId &&
+                pathComparisonKey(a.relativePath) === pathComparisonKey(artifact.relativePath),
+            )
+          )
+            throw new Error('The output path belongs to a different current artifact');
+          const versions = s.artifacts.filter(
+            (x) => x.taskId === taskId && x.relativePath === artifact.relativePath,
           );
+          const parent = versions.at(-1) ?? previousVersion;
+          if (parent) artifact.previousVersionId = parent.versionId;
           invalidateLineage(
             s,
-            previous.map((x) => x.versionId),
+            versions.filter((x) => x.validity === 'current').map((x) => x.versionId),
           );
           s.artifacts.push(artifact);
           s.tasks.find((t) => t.id === taskId)!.outputArtifactIds.push(artifact.id);
@@ -1617,15 +2022,56 @@ class Runtime implements RuntimeService {
       if (task.kind === 'review') throw new Error('Reviewer must submit_review');
       if (!task.outputArtifactIds.length)
         throw new Error('Publish actual deliverables before completion');
-      for (const artifact of s.artifacts.filter(
-        (a) => a.taskId === taskId && a.validity === 'current',
-      )) {
+      const published = s.artifacts.filter((a) => a.taskId === taskId && a.validity === 'current');
+      for (const artifact of published) {
         if (hash(await readFile(resolve(workPath, artifact.relativePath))) !== artifact.sha256)
           throw new Error(
             'Task files changed after publication; publish the current bytes before integrating',
           );
       }
       const changes = await previewTaskWorkspaceChanges(s.workspace, workPath);
+      if (task.artifactRework) {
+        const previous = directedReworkOutputs(s, task);
+        const target = previous.find((a) => a.versionId === task.artifactRework!.versionId)!;
+        const source = published.find((a) => a.relativePath === target.relativePath);
+        if (
+          !source ||
+          previous.some(
+            (expected) =>
+              expected.id !== target.id &&
+              !published.some(
+                (output) =>
+                  output.relativePath === expected.relativePath &&
+                  output.renderedFromVersionId === source.versionId,
+              ),
+          )
+        )
+          throw new Error(
+            'Publish the selected file and regenerate every listed output from its new version',
+          );
+        if (changes.some((change) => !previous.some((a) => a.relativePath === change.path)))
+          throw new Error('The replacement task may integrate only the listed artifact paths');
+      }
+      if (task.replacesTaskId && !task.artifactRework) {
+        const previous = previousTaskOutputs(s, task);
+        if (
+          previous.some((expected) => {
+            const output = published.find((a) => a.relativePath === expected.relativePath);
+            if (!output) return true;
+            if (!expected.renderedFromVersionId) return false;
+            const oldSource = s.artifacts.find(
+              (a) => a.versionId === expected.renderedFromVersionId,
+            );
+            const source = s.artifacts.find(
+              (a) => a.versionId === output.renderedFromVersionId && a.validity === 'current',
+            );
+            return !source || source.relativePath !== oldSource?.relativePath;
+          })
+        )
+          throw new Error(
+            'Republish every affected deliverable, regenerating native files from their current source',
+          );
+      }
       for (const change of changes) {
         if (change.action === 'delete')
           throw new Error(
@@ -1750,7 +2196,7 @@ class Runtime implements RuntimeService {
             )
               return false;
             const path = detail.args.path ?? detail.args.source;
-            if (['workspace_read', 'office_inspect', 'office_verify'].includes(detail.name))
+            if (artifactInspectionTools.has(detail.name))
               return (
                 typeof path === 'string' &&
                 path.replaceAll('\\', '/').replace(/^\.\//, '') === artifact.relativePath
@@ -1805,6 +2251,48 @@ class Runtime implements RuntimeService {
             s.commission.summary = 'Rework limit reached';
             return;
           }
+          const targetedAuthor = authors.length === 1 ? authors[0] : undefined;
+          if (targetedAuthor?.artifactRework) {
+            const previous = s.artifacts.find(
+              (a) => a.versionId === targetedAuthor.artifactRework!.versionId,
+            );
+            const target = s.artifacts.find(
+              (a) =>
+                a.taskId === targetedAuthor.id &&
+                a.validity === 'current' &&
+                a.relativePath === previous?.relativePath,
+            );
+            const schedule =
+              target &&
+              scheduleArtifactRework(
+                s,
+                target,
+                targetedAuthor,
+                t.agentId,
+                `${targetedAuthor.artifactRework.instruction}\nIndependent review feedback: ${String(args.summary)}`,
+                targetedAuthor.artifactRework.requestId,
+                now(),
+              );
+            if (target && schedule && 'task' in schedule) {
+              const rework = schedule.task;
+              this.event(
+                s,
+                'rework_created',
+                `Linked ${rework.id} to ${targetedAuthor.id}`,
+                rework,
+                target.versionId,
+              );
+              return;
+            }
+            t.status = 'failed';
+            t.step = 'Awaiting further rework';
+            s.commission.status = 'paused';
+            s.commission.summary =
+              schedule && 'path' in schedule
+                ? `Another current artifact already owns ${schedule.path}`
+                : 'Resolve affected task requests before reworking';
+            return;
+          }
           t.status = 'queued';
           for (const author of authors) {
             const old = s.tasks.find((t) => t.id === author.id)!;
@@ -1816,6 +2304,8 @@ class Runtime implements RuntimeService {
             const rework = {
               ...structuredClone(old),
               id: randomUUID(),
+              ...(old.replacesTaskId && { replacesTaskId: old.id }),
+              kind: old.kind === 'office' ? ('implement' as const) : old.kind,
               title: `Rework: ${old.title}`,
               description: `${old.description}\nReview feedback: ${String(args.summary)}\nReworks task ${old.id}`,
               status: 'queued' as const,
@@ -1827,10 +2317,21 @@ class Runtime implements RuntimeService {
               updatedAt: now(),
             };
             s.tasks.push(rework);
-            t.dependencies = t.dependencies.map((dep) => (dep === old.id ? rework.id : dep));
-            if (t.dependencyKinds?.[old.id]) {
-              t.dependencyKinds[rework.id] = t.dependencyKinds[old.id];
-              delete t.dependencyKinds[old.id];
+            for (const dependent of s.tasks) {
+              if (
+                !dependent.dependencies.includes(old.id) ||
+                (dependent.id !== t.id &&
+                  (!old.replacesTaskId ||
+                    !['queued', 'waiting_dependency'].includes(dependent.status)))
+              )
+                continue;
+              dependent.dependencies = dependent.dependencies.map((dep) =>
+                dep === old.id ? rework.id : dep,
+              );
+              if (dependent.dependencyKinds?.[old.id]) {
+                dependent.dependencyKinds[rework.id] = dependent.dependencyKinds[old.id];
+                delete dependent.dependencyKinds[old.id];
+              }
             }
             this.event(s, 'rework_created', `Linked ${rework.id} to ${old.id}`, rework);
           }
