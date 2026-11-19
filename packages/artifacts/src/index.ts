@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
 import { mkdir, open, readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import type { Artifact } from '../../contracts/src/index';
@@ -53,4 +54,56 @@ export async function readArtifact(dataRoot: string, artifact: Artifact): Promis
   const bytes = await readFile(blobPath(dataRoot, artifact.sha256));
   if (hash(bytes) !== artifact.sha256) throw new Error('Artifact hash mismatch');
   return bytes;
+}
+
+type ReadFailure = 'missing-version' | 'read-failed' | 'integrity-mismatch' | 'input-limit';
+
+export async function readVerifiedFile(
+  path: string,
+  digest: unknown,
+  limit: number,
+  expectedSize?: number,
+): Promise<Buffer | ReadFailure> {
+  if (typeof digest !== 'string' || !/^[a-f0-9]{64}$/.test(digest)) return 'integrity-mismatch';
+  try {
+    const flags =
+      process.platform === 'win32'
+        ? 'r'
+        : constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
+    const file = await open(path, flags);
+    try {
+      const info = await file.stat();
+      if (!info.isFile()) return 'read-failed';
+      if (expectedSize !== undefined && info.size !== expectedSize) return 'integrity-mismatch';
+      if (info.size > limit) return 'input-limit';
+      const buffer = Buffer.alloc(info.size + 1);
+      let length = 0;
+      while (length < buffer.length) {
+        const { bytesRead } = await file.read(buffer, length, buffer.length - length, length);
+        if (!bytesRead) break;
+        length += bytesRead;
+      }
+      const bytes = buffer.subarray(0, length);
+      return length === info.size && hash(bytes) === digest ? bytes : 'integrity-mismatch';
+    } finally {
+      await file.close();
+    }
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing-version' : 'read-failed';
+  }
+}
+
+export function readVersionBytes(dataRoot: string, artifact: Artifact, limit: number) {
+  if (
+    !/^[a-f0-9]{64}$/.test(artifact.sha256) ||
+    !Number.isSafeInteger(artifact.size) ||
+    artifact.size < 0
+  )
+    return Promise.resolve('integrity-mismatch' as const);
+  return readVerifiedFile(
+    blobPath(dataRoot, artifact.sha256),
+    artifact.sha256,
+    limit,
+    artifact.size,
+  );
 }

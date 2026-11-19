@@ -1,13 +1,19 @@
 import { scenarioSchema, type AcceptanceScenario } from './schema';
 
-const officeChecks = (suffix: string, total: number) => [
+const publishingChecks = (suffix: string, total: number) => [
+  { kind: 'text', path: `brief${suffix}.md`, equals: `## 星岛验收\n\n合计：${total}\n` },
   {
-    kind: 'office',
+    kind: 'text',
+    path: `budget${suffix}.csv`,
+    equals: `Item,Value\nA,10\nB,${total - 10}\nTotal,${total}\n`,
+  },
+  {
+    kind: 'delivery',
     path: `brief${suffix}.docx`,
     assertions: [{ at: ['paragraphs'], equals: ['星岛验收', `合计：${total}`] }],
   },
   {
-    kind: 'office',
+    kind: 'delivery',
     path: `budget${suffix}.xlsx`,
     assertions: [
       { at: ['sheets', 0, 'name'], equals: 'Data' },
@@ -24,7 +30,7 @@ const officeChecks = (suffix: string, total: number) => [
     sums: [{ sheet: 'Data', range: 'B2:B3', sum: total }],
   },
   {
-    kind: 'office',
+    kind: 'delivery',
     path: `deck${suffix}.pptx`,
     assertions: [
       { at: ['slides', 0, 'shapes', 0, 'text'], equals: '星岛验收' },
@@ -100,8 +106,8 @@ export const scenarios: AcceptanceScenario[] = [
     ],
   },
   {
-    id: 'office',
-    title: 'Office 创建与后续修改',
+    id: 'source-publishing',
+    title: '从可审阅的源稿生成报告、演示稿和表格',
     seed: {
       'source.json': JSON.stringify({
         title: '星岛验收',
@@ -114,20 +120,20 @@ export const scenarios: AcceptanceScenario[] = [
     },
     stages: [
       {
-        goal: 'Read source.json and create three Office deliverables using the Office tools: brief.docx with exactly two paragraphs 星岛验收 and 合计：30; budget.xlsx with one Data sheet and rows [["Item","Value"],["A",10],["B",20],["Total",30]]; deck.pptx with one standard title/body slide titled 星岛验收 and body 合计：30. Keep all values numeric in the workbook. Read back all three files and independently verify the source-cell sum. Publish all files and finish. No target-application rendering is required.',
+        goal: 'Read source.json. Publish the editable UTF-8 sources brief.md ("## 星岛验收\n\n合计：30\n") and budget.csv ("Item,Value\nA,10\nB,20\nTotal,30\n"). A dependent renderer uses render_source on those pinned files to generate brief.docx and deck.pptx from the same Markdown, and budget.xlsx from CSV. Publish all five files and independently review them. Reopen the binaries with inspect_delivery, verifying their text and numeric source-cell sum. No GUI rendering is required.',
         criteria: [
           'DOCX and PPTX contain the specified title and total',
           'XLSX preserves source rows and the total is 30, verified numerically',
         ],
-        checks: officeChecks('', 30),
+        checks: publishingChecks('', 30),
       },
       {
-        goal: 'Continue this Office project: B changes from 20 to 25, so total is 35. Use office_edit on existing brief.docx, budget.xlsx and deck.pptx to create brief-updated.docx, budget-updated.xlsx and deck-updated.pptx. Update totals to 合计：35 and spreadsheet B3=25,B4=35. Keep originals unchanged and preserve all other text/cells. Reopen and independently verify, publish only the three new files and finish.',
+        goal: 'Continue the previous project. B changes from 20 to 25 and the total becomes 35. Copy and revise the original Markdown and CSV sources as brief-updated.md and budget-updated.csv, preserving their format including trailing newline. Publish them. A dependent renderer generates brief-updated.docx, deck-updated.pptx and budget-updated.xlsx from the new pinned sources. Publish and independently review the five new files. Preserve the originals.',
         criteria: [
           'Updated DOCX/PPTX show total 35 and XLSX has B=25,total=35',
           'All three original Office files retain their previous content',
         ],
-        checks: [...officeChecks('-updated', 35), ...officeChecks('', 30)],
+        checks: [...publishingChecks('-updated', 35), ...publishingChecks('', 30)],
       },
     ],
   },

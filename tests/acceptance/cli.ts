@@ -26,8 +26,8 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
       );
       return 0;
     }
-    let selected =
-      options.scenario === 'all' ? scenarios : scenarios.filter((s) => s.id === options.scenario);
+    const requested = options.scenario === 'office' ? 'source-publishing' : options.scenario;
+    let selected = requested === 'all' ? scenarios : scenarios.filter((s) => s.id === requested);
     if (options.scenarioFile) {
       if ((await stat(options.scenarioFile)).size > 1024 * 1024)
         throw new Error('Scenario JSON exceeds 1 MiB');
@@ -43,9 +43,8 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
     delete process.env.ASTRISLE_PROVIDER_API_KEY;
     if (options.check) {
       const capabilities = await createExecutor({ projectRoot: process.cwd() }).capabilities();
-      const requiresOffice = selected.some(
-        (s) =>
-          s.officeSeed.length || s.stages.some((t) => t.checks.some((c) => c.kind === 'office')),
+      const requiresPublishing = selected.some((s) =>
+        s.stages.some((t) => t.checks.some((c) => c.kind === 'delivery' || c.kind === 'office')),
       );
       const requiresProcess = selected.some((s) =>
         s.stages.some((t) => t.checks.some((c) => c.kind === 'node')),
@@ -56,7 +55,8 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
           ['localhost', '127.0.0.1', '[::1]'].includes(new URL(provider.baseUrl).hostname));
       const ready =
         configured &&
-        (!requiresOffice || capabilities.some((c) => c.id === 'office' && c.available)) &&
+        (!requiresPublishing ||
+          capabilities.some((c) => c.id === 'source_publishing' && c.available)) &&
         (!(requiresProcess || options.allowProcess) ||
           capabilities.some((c) => c.id === 'process' && c.available)) &&
         (!requiresProcess || options.allowProcess);
@@ -64,7 +64,7 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
         JSON.stringify({
           status: ready ? 'ready' : 'not_run',
           providerConfigured: configured,
-          requiresOffice,
+          requiresPublishing,
           requiresProcess,
           processAuthorized: options.allowProcess,
           processAvailable: capabilities.some((c) => c.id === 'process' && c.available),

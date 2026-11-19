@@ -29,10 +29,46 @@ export function CharacterVisual(props: Props) {
   );
 }
 
+/** The presentation launcher reveals its window only after these meshes have actually drawn. */
+function useRenderedIdentity(id: CharacterProfile['id'], identity: string, root?: THREE.Object3D) {
+  const gl = useThree((state) => state.gl);
+  const invalidate = useThree((state) => state.invalidate);
+  useLayoutEffect(() => {
+    if (!root) return;
+    const attribute = `data-character-${id}`;
+    const restore: Array<() => void> = [];
+    const detach = () => {
+      for (const reset of restore.splice(0)) reset();
+    };
+    root.traverse((object) => {
+      if (!(object as THREE.Mesh).isMesh) return;
+      const mesh = object as THREE.Mesh;
+      const previous = mesh.onAfterRender;
+      const report: THREE.Mesh['onAfterRender'] = function (...args) {
+        previous.apply(mesh, args);
+        if (args[0] !== gl) return;
+        gl.domElement.setAttribute(attribute, identity);
+        detach();
+      };
+      mesh.onAfterRender = report;
+      restore.push(() => {
+        if (mesh.onAfterRender === report) mesh.onAfterRender = previous;
+      });
+    });
+    invalidate();
+    return () => {
+      detach();
+      if (gl.domElement.getAttribute(attribute) === identity)
+        gl.domElement.removeAttribute(attribute);
+    };
+  }, [id, identity, root, gl, invalidate]);
+}
+
 function DefaultCharacter({ profile, motionRef, reduced, accent }: Props) {
   const color =
     accent || (profile.id === 'mori' ? '#497a75' : profile.id === 'luma' ? '#818ba9' : '#ceb8a1');
   const model = useMemo(() => createBlueWhaleGirl({ accent: color }), [color]);
+  useRenderedIdentity(profile.id, 'builtin', model.root);
   const cup = useMemo(createTeaCup, [model]);
   const handPoint = useMemo(() => new THREE.Vector3(), []);
   const hand = useMemo(() => model.joints.rightArm.getObjectByName('Right_hand')!, [model]);
@@ -93,6 +129,7 @@ function ImportedCharacter({ profile, motionRef, reduced }: Props) {
   const invalidate = useThree((state) => state.invalidate);
   const [loaded, setLoaded] = useState<{ root: THREE.Group; clips: THREE.AnimationClip[] }>();
   const [error, setError] = useState('');
+  useRenderedIdentity(profile.id, assetId, loaded?.root);
   const mixer = useRef<THREE.AnimationMixer | undefined>(undefined);
   const active = useRef<THREE.AnimationAction | undefined>(undefined);
   const heldCup = useRef<THREE.Group | undefined>(undefined);

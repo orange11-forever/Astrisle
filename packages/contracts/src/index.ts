@@ -19,7 +19,7 @@ export type TaskStatus =
   | 'passed'
   | 'failed'
   | 'cancelled';
-export type TaskKind = 'investigate' | 'implement' | 'office' | 'review' | 'integrate';
+export type TaskKind = 'investigate' | 'implement' | 'review' | 'integrate';
 export interface Workspace {
   id: string;
   name: string;
@@ -59,7 +59,13 @@ export interface Task {
   agentId: string;
   title: string;
   description: string;
-  kind: TaskKind;
+  /** Older saved commissions can still contain a retired Office task. */
+  kind: TaskKind | 'office';
+  replacesTaskId?: string;
+  artifactRework?: Pick<
+    ArtifactReworkInput,
+    'artifactId' | 'versionId' | 'instruction' | 'requestId'
+  > & { renderedVersionIds?: string[] };
   status: TaskStatus;
   dependencies: string[];
   criterionIds: string[];
@@ -85,6 +91,8 @@ export interface Evidence {
 export interface Artifact {
   id: string;
   versionId: string;
+  previousVersionId?: string;
+  renderedFromVersionId?: string;
   commissionId: string;
   taskId: string;
   name: string;
@@ -241,6 +249,64 @@ export interface ArtifactPreview {
   content?: string;
   format: 'text' | 'binary';
 }
+export interface ArtifactReworkInput {
+  commissionId: string;
+  artifactId: string;
+  versionId: string;
+  revision: number;
+  instruction: string;
+  requestId: string;
+}
+export type SourceExportFormat = 'docx' | 'pptx' | 'xlsx';
+export function findArtifactVersion(
+  snapshot: ProjectSnapshot,
+  versionId: string,
+): Artifact | undefined {
+  const matches = snapshot.artifacts.filter(
+    (entry) => entry.commissionId === snapshot.commission.id && entry.versionId === versionId,
+  );
+  return matches.length === 1 ? matches[0] : undefined;
+}
+export interface SourceExportInput {
+  commissionId: string;
+  versionId: string;
+  format: SourceExportFormat;
+}
+export function sourceExportFormats(relativePath: string): readonly SourceExportFormat[] {
+  if (/\.(md|markdown)$/i.test(relativePath)) return ['docx', 'pptx'];
+  if (/\.(csv|tsv)$/i.test(relativePath)) return ['xlsx'];
+  return [];
+}
+export interface ArtifactComparisonInput {
+  commissionId: string;
+  fromVersionId: string;
+  toVersionId: string;
+}
+export interface ArtifactDiffLine {
+  kind: 'context' | 'addition' | 'deletion';
+  text: string;
+  oldLine?: number;
+  newLine?: number;
+}
+export interface ArtifactDiffHunk {
+  lines: ArtifactDiffLine[];
+}
+export interface ArtifactComparison {
+  from: Artifact;
+  to: Artifact;
+  kind: 'unchanged' | 'text' | 'binary' | 'unavailable';
+  hunks: ArtifactDiffHunk[];
+  truncated: boolean;
+  reason?:
+    | 'missing-version'
+    | 'read-failed'
+    | 'integrity-mismatch'
+    | 'input-limit'
+    | 'line-limit'
+    | 'work-limit'
+    | 'output-limit'
+    | 'text-normalization';
+}
 export interface ApplyChange {
   path: string;
   action: 'create' | 'modify' | 'delete';
@@ -322,6 +388,9 @@ export interface HostAPI {
   ): Promise<CommandResult>;
   accept(commissionId: string, artifactIds: string[]): Promise<CommandResult>;
   artifact(artifactId: string): Promise<ArtifactPreview>;
+  compareArtifacts(input: ArtifactComparisonInput): Promise<ArtifactComparison>;
+  requestArtifactRework(input: ArtifactReworkInput): Promise<CommandResult>;
+  exportSourceArtifact(input: SourceExportInput): Promise<CommandResult>;
   openArtifact(artifactId: string): Promise<CommandResult>;
   exportArtifacts(commissionId: string): Promise<CommandResult>;
   prepareApply(commissionId: string): Promise<ApplyPreview>;

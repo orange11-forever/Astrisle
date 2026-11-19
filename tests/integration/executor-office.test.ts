@@ -1,4 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,13 +23,14 @@ it
       join(root, 'workers/office/worker.py'),
       `import sys,json\njson.load(sys.stdin)\n${response}\n`,
     );
+    await fs.writeFile(join(root, 'draft.md'), '# Draft');
     const executor = createExecutor({
       projectRoot: root,
       pythonPath: join(process.cwd(), '.venv/Scripts/python.exe'),
     });
     const receipt = await executor.execute(
-      'office_create',
-      { format: 'docx', output: 'draft.docx', content: { paragraphs: [] } },
+      'render_source',
+      { source: 'draft.md', output: 'draft.docx' },
       {
         commissionId: 'c',
         taskId: 't',
@@ -57,7 +59,7 @@ it
 afterEach(async () => {
   for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true });
 });
-it('invokes real local Python office worker and reports structural and numeric evidence separately', async () => {
+async function fixture() {
   const root = await fs.realpath(await fs.mkdtemp(join(tmpdir(), 'astrisle-office-')));
   roots.push(root);
   const context: ToolContext = {
@@ -75,25 +77,22 @@ it('invokes real local Python office worker and reports structural and numeric e
     signal: new AbortController().signal,
   };
   const executor = createExecutor({ projectRoot: process.cwd() });
+  return { root, context, executor };
+}
+const sha256 = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
+
+it('publishes a genuine workbook, preserving identifiers and literal spreadsheet formulas', async () => {
+  const { root, context, executor } = await fixture();
+  expect(
+    (await executor.capabilities()).find(({ id }) => id === 'source_publishing'),
+  ).toMatchObject({
+    available: true,
+  });
+  const source = 'Item,Amount,Notes\n001,20,"=SUM(B2:B3)"\n002,35.5,"+DDE()"\n';
+  await fs.writeFile(join(root, 'budget.csv'), source);
   const created = await executor.execute(
-    'office_create',
-    {
-      format: 'xlsx',
-      output: 'budget.xlsx',
-      content: {
-        sheets: [
-          {
-            name: 'Budget',
-            rows: [
-              ['Item', 'Amount'],
-              ['A', 20],
-              ['B', 35],
-            ],
-            cells: { B4: '=SUM(B2:B3)' },
-          },
-        ],
-      },
-    },
+    'render_source',
+    { source: 'budget.csv', output: 'exports/budget.xlsx' },
     context,
   );
   expect(created.ok, created.output).toBe(true);
@@ -103,28 +102,22 @@ it('invokes real local Python office worker and reports structural and numeric e
       activeProcesses: 0,
       confirmed: true,
     });
-  expect(created.files).toEqual([join(root, 'budget.xlsx')]);
+  const file = join(root, 'exports/budget.xlsx');
+  expect(created.files).toEqual([file]);
+  const before = await fs.readFile(file);
+  expect(before.subarray(0, 2).toString()).toBe('PK');
+  expect(created.metadata).toMatchObject({
+    sourceSha256: sha256(source),
+    outputSha256: sha256(before),
+  });
   expect(created.metadata?.verification).toMatchObject({
     structural: { status: 'passed' },
     numeric: { status: 'not_run' },
     application: { status: 'not_run' },
   });
-  const before = await fs.readFile(join(root, 'budget.xlsx'));
-  const edited = await executor.execute(
-    'office_edit',
-    {
-      source: 'budget.xlsx',
-      output: 'updated.xlsx',
-      changes: { cells: [{ sheet: 'Budget', cell: 'B2', value: 25 }] },
-      inputVersionIds: ['v1'],
-    },
-    context,
-  );
-  expect(edited.ok, edited.output).toBe(true);
-  expect(await fs.readFile(join(root, 'budget.xlsx'))).toEqual(before);
   const verified = await executor.execute(
-    'office_verify',
-    { source: 'updated.xlsx', checks: [{ sheet: 'Budget', range: 'B2:B3', sum: 60 }] },
+    'inspect_delivery',
+    { source: 'exports/budget.xlsx', checks: [{ sheet: 'Data', range: 'B2:B3', sum: 55.5 }] },
     context,
   );
   expect(verified.ok, verified.output).toBe(true);
@@ -132,19 +125,102 @@ it('invokes real local Python office worker and reports structural and numeric e
     numeric: { status: 'passed' },
     application: { status: 'not_run' },
   });
+  expect(verified.metadata?.document).toMatchObject({
+    sheets: [
+      {
+        name: 'Data',
+        rows: [
+          ['Item', 'Amount', 'Notes'],
+          ['001', 20, '=SUM(B2:B3)'],
+          ['002', 35.5, '+DDE()'],
+        ],
+      },
+    ],
+  });
   const failed = await executor.execute(
-    'office_verify',
-    { source: 'updated.xlsx', checks: [{ sheet: 'Budget', range: 'B2:B3', sum: 999 }] },
+    'inspect_delivery',
+    { source: 'exports/budget.xlsx', checks: [{ sheet: 'Data', range: 'B2:B3', sum: 999 }] },
     context,
   );
   expect(failed.ok).toBe(false);
   expect(failed.metadata?.verification).toMatchObject({ numeric: { status: 'failed' } });
-  const escaped = await executor.execute(
-    'office_create',
-    { format: 'docx', output: '../leak.docx', content: { paragraphs: ['unsafe'] } },
+  await fs.writeFile(join(root, 'budget.csv'), source.replace('35.5', '40.5'));
+  const updated = await executor.execute(
+    'render_source',
+    { source: 'budget.csv', output: 'exports/budget.xlsx' },
     context,
   );
-  expect(escaped.ok).toBe(false);
+  expect(updated.ok, updated.output).toBe(true);
+  const current = await fs.readFile(file);
+  expect(current).not.toEqual(before);
+  expect(updated.metadata?.outputSha256).toBe(sha256(current));
+  await fs.writeFile(join(root, 'budget.csv'), '"unterminated');
+  const corrupt = await executor.execute(
+    'render_source',
+    { source: 'budget.csv', output: 'exports/budget.xlsx' },
+    context,
+  );
+  expect(corrupt.ok).toBe(false);
+  expect(await fs.readFile(file)).toEqual(current);
+}, 15_000);
+
+it('renders Markdown to genuine editable Word and PowerPoint from the same immutable input', async () => {
+  const { root, context, executor } = await fixture();
+  const source =
+    '# Progress\n\n## Results\n\nHere are **tested** results. See [documentation](https://pandoc.org/).\n\n## Next steps\n\n- Review\n- Publish\n';
+  await fs.writeFile(join(root, 'progress.md'), source);
+  for (const extension of ['docx', 'pptx']) {
+    const filename = `progress.${extension}`;
+    const published = await executor.execute(
+      'render_source',
+      { source: 'progress.md', output: filename },
+      context,
+    );
+    expect(published.ok, published.output).toBe(true);
+    const bytes = await fs.readFile(join(root, filename));
+    expect(bytes.subarray(0, 2).toString()).toBe('PK');
+    expect(published.metadata).toMatchObject({
+      sourceSha256: sha256(source),
+      outputSha256: sha256(bytes),
+    });
+    const checked = await executor.execute('inspect_delivery', { source: filename }, context);
+    expect(checked.ok, checked.output).toBe(true);
+    expect(checked.metadata?.document).toMatchObject({ format: extension });
+    expect(JSON.stringify(checked.metadata?.document)).toContain('Next steps');
+  }
+  expect(await fs.readFile(join(root, 'progress.md'), 'utf8')).toBe(source);
+}, 20_000);
+
+it('refuses unsupported formats, resources, and writes outside the task copy', async () => {
+  const { root, context, executor } = await fixture();
+  await fs.writeFile(join(root, 'with-resource.md'), '![image](file:///missing.png)');
+  const file = join(root, 'existing.docx');
+  await fs.writeFile(file, 'existing data');
+  const resource = await executor.execute(
+    'render_source',
+    { source: 'with-resource.md', output: 'existing.docx' },
+    context,
+  );
+  expect(resource.ok, resource.output).toBe(false);
+  expect(await fs.readFile(file, 'utf8')).toBe('existing data');
+  const escaped = await executor.execute(
+    'render_source',
+    { source: 'with-resource.md', output: '../leak.docx' },
+    context,
+  );
+  expect(escaped).toMatchObject({ ok: false, code: 'PATH_DENIED' });
+  const invalid = await executor.execute(
+    'render_source',
+    { source: 'with-resource.md', output: 'existing.xlsx' },
+    context,
+  );
+  expect(invalid.ok).toBe(false);
+  expect(
+    executor.definitions().filter((definition) => definition.name.startsWith('office_')),
+  ).toEqual([]);
+  await expect(executor.execute('office_create', {}, context)).resolves.toMatchObject({
+    code: 'UNKNOWN_TOOL',
+  });
 });
 it.skipIf(process.platform !== 'win32')(
   'preserves the process termination receipt when an Office worker is cancelled',
@@ -161,14 +237,15 @@ it.skipIf(process.platform !== 'win32')(
       join(root, 'workers/office/worker.py'),
       'import json,sys,time\njson.load(sys.stdin)\nopen("ready", "w").write("ready")\ntime.sleep(60)\n',
     );
+    await fs.writeFile(join(root, 'draft.md'), '# Draft');
     const controller = new AbortController();
     const executor = createExecutor({
       projectRoot: root,
       pythonPath: join(process.cwd(), '.venv/Scripts/python.exe'),
     });
     const pending = executor.execute(
-      'office_create',
-      { format: 'docx', output: 'draft.docx', content: { paragraphs: ['example'] } },
+      'render_source',
+      { source: 'draft.md', output: 'draft.docx' },
       {
         commissionId: 'c',
         taskId: 't',

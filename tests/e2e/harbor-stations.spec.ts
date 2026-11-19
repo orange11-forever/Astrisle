@@ -48,8 +48,8 @@ test('the harbor office and dispatch counter open real commission panels', async
         validity: 'current' as const,
       };
       project.artifacts = [
+        { ...artifact, id: 'earlier-delivery', versionId: 'harbor-delivery-v1', validity: 'stale' },
         artifact,
-        { ...artifact, versionId: 'harbor-delivery-v1', validity: 'stale' },
       ];
       return project;
     };
@@ -88,5 +88,8 @@ test('the harbor office and dispatch counter open real commission panels', async
   await page.keyboard.press('Enter');
   const artifacts = page.getByRole('complementary', { name: '成果与验收' });
   await expect(artifacts).toBeVisible();
-  await expect(artifacts.getByText('成果已进入待验收阶段。')).toBeVisible();
+  const versions = artifacts.getByRole('region', { name: '成果版本 delivery.txt' });
+  await expect(versions.getByRole('button', { name: '预览第 2 版 港口交付清单' })).toBeVisible();
+  await versions.getByText('版本历史（2）').click();
+  await expect(versions.getByRole('button', { name: '预览第 1 版 港口交付清单' })).toBeVisible();
 });

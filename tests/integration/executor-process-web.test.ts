@@ -32,12 +32,12 @@ async function fixture() {
   return { context, executor: createExecutor({ projectRoot: process.cwd() }) };
 }
 it.skipIf(process.platform !== 'win32')(
-  'does not advertise process or Office capability without the Windows supervisor',
+  'does not advertise process or source publishing without the Windows supervisor',
   async () => {
     const { context } = await fixture();
     const capabilities = await createExecutor({ projectRoot: context.workPath }).capabilities();
     expect(capabilities.find((c) => c.id === 'process')?.available).toBe(false);
-    expect(capabilities.find((c) => c.id === 'office')?.available).toBe(false);
+    expect(capabilities.find((c) => c.id === 'source_publishing')?.available).toBe(false);
     expect(capabilities.find((c) => c.id === 'safe_apply')?.available).toBe(false);
   },
 );

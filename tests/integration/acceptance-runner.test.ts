@@ -239,10 +239,12 @@ it('aborts hanging provider work at the wall-clock deadline and retains a report
   expect(report.stages[0].snapshot?.commission.status).toBe('paused');
 });
 it('records a caller cancellation without accepting artifacts', async () => {
-  const { options } = await fixture('hang');
+  const { options, requests } = await fixture('hang');
   const controller = new AbortController();
   const run = runAcceptanceScenario({ ...options, signal: controller.signal });
-  setTimeout(() => controller.abort(), 100);
+  // This case exercises cancellation during a model call, after capability preflight.
+  await expect.poll(() => requests.length, { timeout: 5000 }).toBeGreaterThan(0);
+  controller.abort();
   const report = await run;
   expect(report.status).toBe('cancelled');
   expect(report.stages[0].snapshot?.commission.acceptedArtifactIds).toEqual([]);

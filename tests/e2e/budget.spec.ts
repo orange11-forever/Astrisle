@@ -1,19 +1,13 @@
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { launchIsolatedElectron } from '../fixtures/electron';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 test('a paused commission budget can be edited through the real desktop UI and survives reload', async () => {
   await mkdir(resolve('test-results'), { recursive: true });
   const dataRoot = await mkdtemp(resolve('test-results', 'budget-desktop-'));
-  const app = await electron.launch({
-    args: [resolve('.')],
-    env: { ...process.env, ASTRISLE_DATA_ROOT: dataRoot, ASTRISLE_DEV_URL: '' },
-    timeout: 30000,
-  });
+  const app = await launchIsolatedElectron(dataRoot);
   try {
-    await app.evaluate(({ BrowserWindow }) => {
-      for (const w of BrowserWindow.getAllWindows()) w.hide();
-    });
     const page = await app.firstWindow();
     await page.waitForFunction(() => !!window.astrisle);
     const id = await page.evaluate(async () => {

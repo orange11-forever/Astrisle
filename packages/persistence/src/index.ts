@@ -168,9 +168,13 @@ export class RuntimeStore {
       .map((r) => JSON.parse(r.data as string));
   }
   get(id: string): ProjectSnapshot {
+    const project = this.findProject(id);
+    if (!project) throw new Error('Commission not found');
+    return project;
+  }
+  findProject(id: string): ProjectSnapshot | undefined {
     const row = this.db.prepare('SELECT data FROM projects WHERE id=?').get(id);
-    if (!row) throw new Error('Commission not found');
-    return JSON.parse(row.data as string);
+    return row ? JSON.parse(row.data as string) : undefined;
   }
   busy(workspaceId: string): boolean {
     return !!this.db

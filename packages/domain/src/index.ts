@@ -16,7 +16,7 @@ export const agents = [
     temperament: 'organizer' as const,
   },
 ];
-const kinds = new Set(['investigate', 'implement', 'office', 'review', 'integrate']);
+const kinds = new Set(['investigate', 'implement', 'review', 'integrate']);
 export function validatePlan(value: unknown, criteria: Criterion[]): ModelTaskProposal[] {
   if (!Array.isArray(value) || value.length < 2 || value.length > 48)
     throw new Error('Plan must contain 2–48 tasks');
@@ -141,7 +141,7 @@ export function ready(task: Task, snapshot: ProjectSnapshot): boolean {
     })
   );
 }
-export function invalidateLineage(snapshot: ProjectSnapshot, versions: string[]): void {
+export function artifactLineage(snapshot: ProjectSnapshot, versions: string[]): Set<string> {
   const stale = new Set(versions);
   let changed = true;
   while (changed) {
@@ -149,13 +149,19 @@ export function invalidateLineage(snapshot: ProjectSnapshot, versions: string[])
     for (const a of snapshot.artifacts)
       if (
         a.validity === 'current' &&
-        (stale.has(a.versionId) || a.inputVersions.some((v) => stale.has(v)))
+        !stale.has(a.versionId) &&
+        a.inputVersions.some((v) => stale.has(v))
       ) {
-        a.validity = 'stale';
         stale.add(a.versionId);
         changed = true;
       }
   }
+  return stale;
+}
+export function invalidateLineage(snapshot: ProjectSnapshot, versions: string[]): void {
+  const stale = artifactLineage(snapshot, versions);
+  for (const a of snapshot.artifacts)
+    if (a.validity === 'current' && stale.has(a.versionId)) a.validity = 'stale';
   for (const t of snapshot.tasks)
     if (t.inputVersions.some((v) => stale.has(v)) && t.status === 'passed') {
       t.status = 'queued';

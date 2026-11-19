@@ -10,9 +10,10 @@ import {
   Tray,
 } from 'electron';
 import { mkdir, copyFile } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, extname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
+import { findArtifactVersion, sourceExportFormats } from '@astrisle/contracts';
 import type {
   ArtifactPreview,
   ApplyPreview,
@@ -26,6 +27,14 @@ import { CharacterStore } from './characters';
 import { createCharacterInspector } from './character-validator';
 
 app.setName('Astrisle');
+const automation = process.env.ASTRISLE_AUTOMATION === '1';
+const modelDemo = process.env.ASTRISLE_MODEL_DEMO === '1';
+const initiallyHidden = automation || modelDemo;
+const studioTitle = automation
+  ? 'Astrisle · 自动化测试'
+  : modelDemo
+    ? 'Astrisle · 当前角色演示'
+    : 'Astrisle · 星岛工作室';
 const projectRoot = app.getAppPath();
 const dataRoot =
   process.env.ASTRISLE_DATA_ROOT ||
@@ -196,6 +205,60 @@ async function start() {
     ),
   );
   register('artifact', (id) => bridge.call('artifact', identifier.parse(id)));
+  register('exportSourceArtifact', async (raw) => {
+    const input = z
+      .object({
+        commissionId: identifier,
+        versionId: identifier,
+        format: z.enum(['docx', 'pptx', 'xlsx']),
+      })
+      .strict()
+      .parse(raw);
+    const snapshot = await bridge.call<ProjectSnapshot>('snapshot', input.commissionId);
+    const source = findArtifactVersion(snapshot, input.versionId);
+    if (!source || source.validity === 'missing')
+      return { ok: false, code: 'source_unavailable', message: '源稿版本不可用' };
+    if (!sourceExportFormats(source.relativePath).includes(input.format))
+      return { ok: false, code: 'unsupported_format', message: '该源稿不支持所选格式' };
+    const selected = await dialog.showSaveDialog(window!, {
+      title: '从所选源稿生成文件',
+      defaultPath: basename(source.relativePath, extname(source.relativePath)) + '.' + input.format,
+      filters: [{ name: input.format.toUpperCase(), extensions: [input.format] }],
+      properties: ['showOverwriteConfirmation'],
+    });
+    if (selected.canceled || !selected.filePath)
+      return { ok: false, code: 'cancelled', message: '已取消生成' };
+    return bridge.call('exportSourceArtifact', input, selected.filePath);
+  });
+  register('compareArtifacts', (input) =>
+    bridge.call(
+      'compareArtifacts',
+      z
+        .object({
+          commissionId: identifier,
+          fromVersionId: identifier,
+          toVersionId: identifier,
+        })
+        .strict()
+        .parse(input),
+    ),
+  );
+  register('requestArtifactRework', (input) =>
+    bridge.call(
+      'requestArtifactRework',
+      z
+        .object({
+          commissionId: identifier,
+          artifactId: identifier,
+          versionId: identifier,
+          revision: z.number().int().nonnegative(),
+          instruction: z.string().trim().min(1).max(4000),
+          requestId: identifier,
+        })
+        .strict()
+        .parse(input),
+    ),
+  );
   register('openArtifact', async (id) => {
     const artifactId = identifier.parse(id);
     const preview = await bridge.call<ArtifactPreview>('artifact', artifactId);
@@ -290,16 +353,23 @@ async function start() {
     minWidth: 1000,
     minHeight: 700,
     backgroundColor: '#e7eef0',
-    title: 'Astrisle · 星岛工作室',
+    title: studioTitle,
     autoHideMenuBar: true,
+    show: !initiallyHidden,
+    ...(automation ? { skipTaskbar: true, focusable: false } : {}),
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      backgroundThrottling: !initiallyHidden,
     },
   });
+  if (initiallyHidden) {
+    window.accessibleTitle = studioTitle;
+    window.on('page-title-updated', (event) => event.preventDefault());
+  }
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event, url) => {
     if (!isTrustedSender(url, expectedURL, true)) event.preventDefault();
@@ -311,46 +381,56 @@ async function start() {
     if (window && !window.isDestroyed()) window.webContents.send('astrisle:snapshot', snapshot);
   });
   bridge.on('exit', () => {
-    if (!closing && window && !window.isDestroyed())
-      dialog
-        .showMessageBox(window, {
-          type: 'error',
-          message: '工作运行时已停止',
-          detail: '已保存的数据会保留。请重新启动 Astrisle 核查未完成的工作。',
-        })
-        .catch(() => {});
-  });
-  const icon = nativeImage.createFromDataURL(
-    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-  );
-  tray = new Tray(icon);
-  tray.setToolTip('Astrisle · 星岛工作室');
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: '打开星岛工作室', click: () => window?.show() },
-      { label: '退出 Astrisle', click: () => app.quit() },
-    ]),
-  );
-  tray.on('double-click', () => window?.show());
-  window.on('close', (event) => {
-    if (!closing) {
-      event.preventDefault();
-      window?.hide();
-      tray?.displayBalloon({
-        title: 'Astrisle 仍在运行',
-        content: '伙伴会继续工作。可从托盘打开，或选择退出 Astrisle。',
-      });
+    if (closing || !window || window.isDestroyed()) return;
+    if (automation || (modelDemo && !window.isVisible())) {
+      console.error(`${studioTitle} runtime stopped`);
+      return;
     }
+    dialog
+      .showMessageBox(window, {
+        type: 'error',
+        message: '工作运行时已停止',
+        detail: '已保存的数据会保留。请重新启动 Astrisle 核查未完成的工作。',
+      })
+      .catch(() => {});
+  });
+  if (!initiallyHidden) {
+    const icon = nativeImage.createFromDataURL(
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    );
+    tray = new Tray(icon);
+    tray.setToolTip(studioTitle);
+    tray.setContextMenu(
+      Menu.buildFromTemplate([
+        { label: '打开星岛工作室', click: () => window?.show() },
+        { label: '退出 Astrisle', click: () => app.quit() },
+      ]),
+    );
+    tray.on('double-click', () => window?.show());
+  }
+  window.on('close', (event) => {
+    if (closing) return;
+    event.preventDefault();
+    if (modelDemo) {
+      app.quit();
+      return;
+    }
+    window?.hide();
+    tray?.displayBalloon({
+      title: 'Astrisle 仍在运行',
+      content: '伙伴会继续工作。可从托盘打开，或选择退出 Astrisle。',
+    });
   });
   await window.loadURL(expectedURL);
 }
 
-if (!app.requestSingleInstanceLock()) app.quit();
+if (!automation && !app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on('second-instance', () => {
-    window?.show();
-    window?.focus();
-  });
+  if (!initiallyHidden)
+    app.on('second-instance', () => {
+      window?.show();
+      window?.focus();
+    });
   app.on('before-quit', (event) => {
     if (closing) return;
     event.preventDefault();
@@ -371,7 +451,8 @@ else {
     .whenReady()
     .then(start)
     .catch((error) => {
-      dialog.showErrorBox('Astrisle 启动失败', error.message);
+      if (initiallyHidden) console.error(`${studioTitle} startup failed:`, error.message);
+      else dialog.showErrorBox('Astrisle 启动失败', error.message);
       closing = true;
       app.quit();
     });
