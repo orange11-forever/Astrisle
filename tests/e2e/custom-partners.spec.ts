@@ -135,6 +135,27 @@ async function submitAndAccept(page: Page, goal: string, author: string, reviewe
   await expect(tasks.getByRole('button', { name: /核对交接说明/ })).toContainText(
     `${reviewer} · review`,
   );
+  const commissionId = await page.evaluate(async (title) => {
+    const { commissions } = await window.astrisle!.bootstrap();
+    return commissions.find((item) => item.goal === title)!.id;
+  }, goal);
+  // Task rows appear as soon as a plan exists. Wait for the real author and reviewer to finish
+  // before checking their signatures in the renderer, using the runtime's state for diagnostics.
+  await expect
+    .poll(
+      () =>
+        page.evaluate(async (id) => {
+          const { commission, tasks } = await window.astrisle!.snapshot(id);
+          if (commission.status === 'awaiting_acceptance') return commission.status;
+          return [
+            commission.status,
+            commission.summary,
+            ...tasks.map((t) => `${t.status} ${t.error || t.step}`),
+          ].join(' | ');
+        }, commissionId),
+      { timeout: 60_000, intervals: [300, 750, 1500] },
+    )
+    .toBe('awaiting_acceptance');
   await page.getByRole('button', { name: '成果与验收', exact: true }).click();
   const version = page.getByRole('region', { name: `成果版本 ${filename}` });
   await expect(version).toContainText(`作者 ${author}`);
@@ -142,11 +163,7 @@ async function submitAndAccept(page: Page, goal: string, author: string, reviewe
   await version.getByLabel(`选择成果 ${filename}`).check();
   await page.getByRole('button', { name: '接受选中成果（1）' }).click();
   await expect(version.getByText('已接受', { exact: true })).toBeVisible();
-  return page.evaluate(async (title) => {
-    const host = window.astrisle!;
-    const commission = (await host.bootstrap()).commissions.find((item) => item.goal === title)!;
-    return host.snapshot(commission.id);
-  }, goal);
+  return page.evaluate((id) => window.astrisle!.snapshot(id), commissionId);
 }
 
 test('a created partner keeps its model after restart and can author and independently review deliveries', async () => {

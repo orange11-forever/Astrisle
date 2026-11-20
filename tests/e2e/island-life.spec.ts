@@ -1,37 +1,42 @@
 import { expect, test, type Page } from '@playwright/test';
 import { humanoidGlb, seedIslandLife } from '../fixtures/island-life';
 
-async function sceneState(page: Page, advanceToDesk = false) {
-  return page.evaluate(async (advanceToDesk) => {
-    const moduleUrl = performance
-      .getEntriesByType('resource')
-      .find((entry) => entry.name.includes('/@react-three_fiber.js'))?.name;
-    if (!moduleUrl) return null;
-    const { _roots } = await import(moduleUrl),
-      state = _roots.get(document.querySelector('canvas'))?.store.getState();
-    if (!state) return null;
-    const avatar = state.scene.getObjectByName('avatar-mori'),
-      thigh = avatar?.getObjectByName('gait-left-thigh');
-    let maxStep = 0;
-    if (advanceToDesk && avatar) {
-      // The walker caps each active frame at 50 ms. A slow software GPU can spend
-      // 20 wall-clock seconds rendering only a small fraction of the return trip.
-      for (let frame = 0; frame < 700; frame++) {
-        const { x, z } = avatar.position;
-        for (const subscriber of state.internal.subscribers) subscriber.ref.current(state, 0.05);
-        maxStep = Math.max(maxStep, Math.hypot(avatar.position.x - x, avatar.position.z - z));
-        if (Math.hypot(avatar.position.x + 3.45, avatar.position.z - 1.2) < 0.04) break;
+async function sceneState(page: Page, advanceToDesk = false, fiberUrl?: string) {
+  return page.evaluate(
+    async ({ advanceToDesk, fiberUrl }) => {
+      const moduleUrl =
+        fiberUrl ??
+        performance
+          .getEntriesByType('resource')
+          .find((entry) => entry.name.includes('/@react-three_fiber.js'))?.name;
+      if (!moduleUrl) return null;
+      const { _roots } = await import(moduleUrl),
+        state = _roots.get(document.querySelector('canvas'))?.store.getState();
+      if (!state) return null;
+      const avatar = state.scene.getObjectByName('avatar-mori'),
+        thigh = avatar?.getObjectByName('gait-left-thigh');
+      let maxStep = 0;
+      if (advanceToDesk && avatar) {
+        // The walker caps each active frame at 50 ms. A slow software GPU can spend
+        // 20 wall-clock seconds rendering only a small fraction of the return trip.
+        for (let frame = 0; frame < 700; frame++) {
+          const { x, z } = avatar.position;
+          for (const subscriber of state.internal.subscribers) subscriber.ref.current(state, 0.05);
+          maxStep = Math.max(maxStep, Math.hypot(avatar.position.x - x, avatar.position.z - z));
+          if (Math.hypot(avatar.position.x + 3.45, avatar.position.z - 1.2) < 0.04) break;
+        }
+        state.invalidate();
       }
-      state.invalidate();
-    }
-    return {
-      position: avatar?.position.toArray(),
-      maxStep,
-      thigh: thigh?.rotation.x,
-      confetti: state.scene.getObjectByName('completion-confetti')?.count ?? 0,
-      frame: state.gl.info.render.frame,
-    };
-  }, advanceToDesk);
+      return {
+        position: avatar?.position.toArray(),
+        maxStep,
+        thigh: thigh?.rotation.x,
+        confetti: state.scene.getObjectByName('completion-confetti')?.count ?? 0,
+        frame: state.gl.info.render.frame,
+      };
+    },
+    { advanceToDesk, fiberUrl },
+  );
 }
 async function selectCommission(page: Page) {
   await page.getByRole('button', { name: '展开项目与委托' }).click();
@@ -97,16 +102,24 @@ test('reduced motion keeps idle characters still and completed work offers a rep
 test('full acceptance launches confetti once and repeated snapshots do not replay it', async ({
   page,
 }) => {
+  await page.clock.install();
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await seedIslandLife(page);
+  const fiber = page.waitForResponse((response) =>
+    response.url().includes('/@react-three_fiber.js'),
+  );
   await page.goto('/');
+  const fiberUrl = (await fiber).url();
+  const particleCount = async () => (await sceneState(page, false, fiberUrl))?.confetti;
   await page.bringToFront();
   await selectCommission(page);
   await page.evaluate(() => (window as any).setLifeStatus('accepted'));
-  await expect.poll(async () => (await sceneState(page))?.confetti).toBe(160);
-  await expect.poll(async () => (await sceneState(page))?.confetti, { timeout: 6000 }).toBe(0);
+  await expect.poll(particleCount).toBe(160);
+  // Expiry is an application timer; advance it independently of the runner's GPU frame rate.
+  await page.clock.fastForward(4_000);
+  await expect.poll(particleCount).toBe(0);
   await page.evaluate(() => (window as any).setLifeStatus('accepted'));
-  expect((await sceneState(page))!.confetti).toBe(0);
+  expect(await particleCount()).toBe(0);
   await page.getByRole('button', { name: '庆祝一下' }).click();
-  await expect.poll(async () => (await sceneState(page))?.confetti).toBe(160);
+  await expect.poll(particleCount).toBe(160);
 });
