@@ -126,7 +126,10 @@ describe('exclusive runtime ownership', () => {
     const dataRoot = await root();
     const [a, b] = await Promise.all([launch(dataRoot), launch(dataRoot)]);
     const results = await Promise.all([a.ready, b.ready]);
-    expect(results.filter((r) => r.status === 'ready')).toHaveLength(1);
+    expect(
+      results.filter((r) => r.status === 'ready'),
+      JSON.stringify(results),
+    ).toHaveLength(1);
     expect(results.find((r) => r.status === 'error')?.code).toBe('runtime_in_use');
     const owner = results[0].status === 'ready' ? a.child : b.child;
     blocked(dataRoot);
@@ -134,6 +137,23 @@ describe('exclusive runtime ownership', () => {
     owner.send('close');
     await exited;
     await open(dataRoot).createWorkspace({ name: 'After graceful process exit' });
+  });
+
+  it('acquires a single writer while another connection reads the ownership database', async () => {
+    const dataRoot = await root();
+    const reader = new DatabaseSync(join(dataRoot, 'runtime-owner.sqlite'));
+    try {
+      // Hold the shared read that can overlap the other contender's writer acquisition at startup.
+      reader.exec('BEGIN; SELECT count(*) FROM sqlite_schema;');
+      const owner = open(dataRoot);
+      blocked(dataRoot);
+      await owner.close();
+      const next = open(dataRoot);
+      blocked(dataRoot);
+      await next.close();
+    } finally {
+      reader.close();
+    }
   });
 
   it('keeps an unresponsive process owner and reacquires only after confirmed death', async () => {

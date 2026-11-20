@@ -12,7 +12,8 @@ export class RuntimeOwnership {
     try {
       // A separate database keeps business transactions and readers independent of the lock.
       // No PID or heartbeat takeover: an unresponsive owner can still have live tool processes.
-      db.exec('PRAGMA busy_timeout=0; PRAGMA journal_mode=DELETE; BEGIN EXCLUSIVE;');
+      // Reserve the only writer slot. A contender may still be reading the database header.
+      db.exec('PRAGMA busy_timeout=0; PRAGMA journal_mode=DELETE; BEGIN IMMEDIATE;');
       this.db = db;
     } catch (error) {
       db.close();
