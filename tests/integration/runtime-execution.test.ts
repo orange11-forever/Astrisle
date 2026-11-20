@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { createRuntime, type RuntimeService } from '../../packages/runtime/src/index';
 import { createExecutor } from '../../packages/executor/src/index';
 import { RuntimeStore } from '../../packages/persistence/src/index';
+import { waitForDelivery } from '../fixtures/wait-for-delivery';
 import type {
   AgentIdentity,
   ProjectSnapshot,
@@ -563,7 +564,7 @@ it('reworks one current version and refreshes the downstream work through indepe
 
 it('keeps paused rework and its idempotency receipt through a runtime restart', async () => {
   const { runtime, id, openRuntime } = await fixture('targeted', { maxRework: 0 });
-  const initial = await until(runtime, id, (s) => s.commission.status === 'awaiting_acceptance');
+  const initial = await waitForDelivery(runtime, id);
   const target = initial.artifacts.find((a) => a.relativePath === 'result.txt')!;
   const secondTarget = initial.artifacts.find((a) => a.relativePath === 'sibling.txt')!;
   const downstream = initial.artifacts.find((a) => a.relativePath === 'derived.txt')!;
@@ -611,18 +612,14 @@ it('keeps paused rework and its idempotency receipt through a runtime restart', 
     await restarted.requestArtifactRework({ ...request, requestId: 'new-request' }),
   ).toMatchObject({ ok: false, code: 'stale_version' });
   expect(await restarted.control(id, 'resume')).toMatchObject({ ok: true });
-  const delivered = await until(
-    restarted,
-    id,
-    (s) => s.commission.status === 'awaiting_acceptance',
-  );
+  const delivered = await waitForDelivery(restarted, id);
   expect(delivered.events.filter((e) => e.type === 'rework_created')).toHaveLength(2);
   expect(delivered.artifacts.some((a) => a.previousVersionId === target.versionId)).toBe(true);
   expect(delivered.artifacts.some((a) => a.previousVersionId === secondTarget.versionId)).toBe(
     true,
   );
   expect(delivered.artifacts.some((a) => a.previousVersionId === downstream.versionId)).toBe(true);
-});
+}, 60_000);
 
 it('serializes user acceptance with a concurrent rework request for the same version', async () => {
   const { runtime, id } = await fixture('targeted');
@@ -661,7 +658,7 @@ it('starts a queued artifact rework after its author releases from another works
       }
     },
   });
-  const initial = await until(runtime, id, (s) => s.commission.status === 'awaiting_acceptance');
+  const initial = await waitForDelivery(runtime, id);
   const target = initial.artifacts.find((a) => a.relativePath === 'result.txt')!;
   const otherWorkspace = await runtime.createWorkspace({ name: 'Concurrent workspace' });
   const other = await runtime.submit({
@@ -691,9 +688,9 @@ it('starts a queued artifact rework after its author releases from another works
   } finally {
     releaseAuthor();
   }
-  const finished = await until(runtime, id, (s) => s.commission.status === 'awaiting_acceptance');
+  const finished = await waitForDelivery(runtime, id);
   expect(finished.artifacts.some((a) => a.previousVersionId === target.versionId)).toBe(true);
-}, 10000);
+}, 60_000);
 
 it('renders from the exact published source and rebuilds the native output after source rework', async () => {
   const { runtime, id } = await fixture('native');

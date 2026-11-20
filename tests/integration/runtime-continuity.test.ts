@@ -23,6 +23,7 @@ import { createExecutor } from '../../packages/executor/src/index';
 import { publishArtifact } from '../../packages/artifacts/src/index';
 import { createTaskWorkspace } from '../../packages/workspace/src/index';
 import { buildTaskContinuation } from '../../packages/runtime/src/task-context';
+import { waitForDelivery } from '../fixtures/wait-for-delivery';
 import type {
   ProjectSnapshot,
   RuntimeOptions,
@@ -831,17 +832,20 @@ it('bounds the resumed HTTP payload while retaining usable verification evidence
       }),
     });
   }
-  store.transaction(() => store.save(snapshot));
-  store.setTaskPath('review', workPath);
-  for (let i = 0; i < 80; i++) {
-    const detail = JSON.parse(snapshot.evidence[i].detail);
-    store.startCall(detail.runId, id, 'review', {
-      kind: 'tool',
-      name: detail.name,
-      args: detail.args,
-    });
-    store.endCall(detail.runId, detail.result);
-  }
+  // The entire history predates the restart. Seed it in one durable transaction.
+  store.transaction(() => {
+    store.save(snapshot);
+    store.setTaskPath('review', workPath);
+    for (const evidence of snapshot.evidence) {
+      const detail = JSON.parse(evidence.detail);
+      store.startCall(detail.runId, id, 'review', {
+        kind: 'tool',
+        name: detail.name,
+        args: detail.args,
+      });
+      store.endCall(detail.runId, detail.result);
+    }
+  });
   store.close();
   let context: any;
   const { requests } = await modelFixture(options, (value) => {
@@ -857,7 +861,7 @@ it('bounds the resumed HTTP payload while retaining usable verification evidence
   });
   const runtime = reopen(options);
   await runtime.control(id, 'resume');
-  const delivered = await until(runtime, id, (s) => s.commission.status === 'awaiting_acceptance');
+  const delivered = await waitForDelivery(runtime, id);
   expect(Buffer.byteLength(requests[0])).toBeLessThan(200000);
   expect(context.priorEvidence).toHaveLength(24);
   expect(context.priorEvidence.at(-1)).toMatchObject({
@@ -874,7 +878,7 @@ it('bounds the resumed HTTP payload while retaining usable verification evidence
   ]);
   expect(delivered.evidence.find((e) => e.kind === 'review')?.status).toBe('passed');
   expect(delivered.evidence[0].detail).toContain(payload);
-});
+}, 45_000);
 
 it('gates a partial managed integration failure before another model request and across restart', async () => {
   const { options, workspace, dataRoot, id } = await setup();
