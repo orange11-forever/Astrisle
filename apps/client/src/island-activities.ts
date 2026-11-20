@@ -1,5 +1,5 @@
 import { FACILITIES, type FacilityId } from './island-facilities';
-import type { GroundPoint } from './island-motion';
+import { characterPersonality, type GroundPoint } from './island-motion';
 
 export interface LeisureState {
   id: string;
@@ -17,7 +17,7 @@ export interface LeisureWorld {
   reservations: Map<FacilityId, string>;
 }
 export function createLeisure(id: string): LeisureState {
-  const offset = id === 'mori' ? 0 : id === 'luma' ? 1 : 2;
+  const offset = characterPersonality(id);
   return {
     id,
     stage: 'roaming',

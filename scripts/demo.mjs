@@ -79,7 +79,8 @@ async function launchDemo() {
     const { prepareDemoData } = await import(moduleUrl);
     demo = await prepareDemoData(source);
     const configured = Object.values(demo.expected).filter((asset) => asset !== 'builtin').length;
-    if (!configured) console.warn('角色配置中没有已导入的模型。本次演示将显示三个内置角色。');
+    const total = Object.keys(demo.expected).length;
+    if (!configured) console.warn(`本次演示的 ${total} 位角色使用默认外观。`);
     else console.log(`已校验当前配置的 ${configured} 个角色模型副本。`);
     stop.signal.throwIfAborted();
     await buildApplication(stop.signal);
@@ -147,7 +148,7 @@ async function launchDemo() {
     });
     if (!visible.shown) throw new Error('角色已核验，但演示窗口未能显示。');
     console.log(
-      `已核验全部 3 个角色并显示窗口“${visible.title}”（PID ${visible.pid}）。关闭窗口会清理临时工作区。`,
+      `已核验全部 ${total} 个角色并显示窗口“${visible.title}”（PID ${visible.pid}）。关闭窗口会清理临时工作区。`,
     );
     if (screenshot) {
       try {

@@ -45,7 +45,8 @@ jobs:
       - name: Runtime and executor tests
         run: |
           node --input-type=module -e "import { tmpdir } from 'node:os'; import { realpath } from 'node:fs/promises'; console.log(JSON.stringify({ temp: tmpdir(), canonicalTemp: await realpath(tmpdir()) }));"
-          pnpm.cmd test
+          # The Windows integration suites share the runner's disk for SQLite and real workspaces.
+          pnpm.cmd test --maxWorkers=2
       - name: Source publishing roundtrips
         run: .venv/Scripts/python.exe -m pytest workers/office/tests -q --basetemp=workers/office/.test-tmp
       - name: Build desktop application

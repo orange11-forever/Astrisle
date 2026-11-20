@@ -83,15 +83,18 @@ function ReviewEvidence({
   reviews,
   evidence,
   current,
+  contributors,
 }: {
   reviews: Evidence[];
   evidence: Evidence[];
   current: boolean;
+  contributors: ReadonlyMap<string, string>;
 }) {
   const latest = reviews.at(-1);
   if (!latest) {
     return <span className="status status-not_run">{current ? '待复核' : '无复核记录'}</span>;
   }
+  const reviewer = latest.taskId && contributors.get(latest.taskId);
 
   const records = [...reviews].reverse().map((review) => {
     let references: unknown;
@@ -112,6 +115,7 @@ function ReviewEvidence({
     <div className="version-review">
       <div className="version-review-summary">
         <span className={`status status-${latest.status}`}>{reviewStatus[latest.status]}</span>
+        {reviewer && <span>复核人 {reviewer}</span>}
         {latest.summary && <span>{latest.summary}</span>}
       </div>
       <details className="version-evidence">
@@ -121,6 +125,9 @@ function ReviewEvidence({
             <li key={review.id}>
               <div className="version-evidence-heading">
                 {review.id !== latest.id && <span>{reviewStatus[review.status]}</span>}
+                {review.taskId && contributors.has(review.taskId) && (
+                  <span>复核人 {contributors.get(review.taskId)}</span>
+                )}
                 <VersionDate value={review.createdAt} />
               </div>
               {review.id !== latest.id && <span>{review.summary}</span>}
@@ -421,6 +428,7 @@ type ArtifactReviewProps = {
 function ArtifactFamily({
   versions,
   evidenceByVersion,
+  contributors,
   sourceGroup,
   snapshot,
   busy,
@@ -433,6 +441,7 @@ function ArtifactFamily({
   submitRework,
 }: ArtifactReviewProps & {
   versions: Artifact[];
+  contributors: ReadonlyMap<string, string>;
   evidenceByVersion: Map<string, Evidence[]>;
   sourceGroup: ReadonlyMap<string, string>;
 }) {
@@ -499,6 +508,7 @@ function ArtifactFamily({
         </div>
         <div className="artifact-version-meta">
           {main && <span>第 {ordinal} 版</span>}
+          {contributors.has(version.taskId) && <span>作者 {contributors.get(version.taskId)}</span>}
           <span className={`status status-${version.validity}`}>
             {versionStatus[version.validity]}
           </span>
@@ -525,6 +535,7 @@ function ArtifactFamily({
           reviews={evidence.filter(({ kind }) => kind === 'review')}
           evidence={evidence}
           current={version.validity === 'current'}
+          contributors={contributors}
         />
       </div>
     );
@@ -614,8 +625,12 @@ function ArtifactFamily({
 
 export function ArtifactReview({
   families,
+  characterName,
   ...props
-}: ArtifactReviewProps & { families: Artifact[][] }) {
+}: ArtifactReviewProps & { families: Artifact[][]; characterName: (id: string) => string }) {
+  const contributors = new Map(
+    props.snapshot.tasks.map((task) => [task.id, characterName(task.agentId)]),
+  );
   const evidenceByVersion = new Map<string, Evidence[]>();
   for (const item of props.snapshot.evidence) {
     for (const id of item.artifactVersionIds) {
@@ -633,6 +648,7 @@ export function ArtifactReview({
     <ArtifactFamily
       key={versions[0].versionId}
       versions={versions}
+      contributors={contributors}
       evidenceByVersion={evidenceByVersion}
       sourceGroup={sourceGroup}
       {...props}

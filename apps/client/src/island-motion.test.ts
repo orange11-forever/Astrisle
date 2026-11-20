@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest';
+import type { CharacterId } from '@astrisle/contracts';
 import {
   harborBridge,
   harborGardenLanding,
@@ -14,7 +15,32 @@ import {
   segmentIsWalkable,
   createWalker,
   advanceWalker,
+  getIslandCharacterHomes,
 } from './island-motion';
+import { FACILITIES } from './island-facilities';
+
+it('keeps saved homes stable when more partners arrive and connects them to island activities', () => {
+  const ids: CharacterId[] = ['mori', 'luma', 'user'];
+  const partners = Array.from({ length: 24 }, (_, i): CharacterId => `partner-${i}`);
+  const first = getIslandCharacterHomes([...ids, ...partners.slice(0, 4)]);
+  const homes = getIslandCharacterHomes([...ids, ...partners]);
+  expect([...first]).toEqual([...homes].slice(0, first.size));
+  expect(homes.get(partners[2])).toBe(first.get(partners[2]));
+  expect(homes.get('mori')).toEqual([-3.45, 1.2]);
+  expect(homes.get('luma')).toEqual([3.45, 1.2]);
+  expect(homes.get('user')).toEqual([0, 3.65]);
+  expect(new Set([...homes.values()].map((point) => point.join(','))).size).toBe(27);
+  for (const id of partners) {
+    const home = homes.get(id)!;
+    expect(isWalkable(home), id).toBe(true);
+    for (const target of [
+      ...Object.values(STATION_POINTS),
+      ...Object.values(FACILITIES).map((f) => f.approach),
+    ]) {
+      expect(findIslandRoute(home, target).at(-1), `${id} to ${target}`).toEqual(target);
+    }
+  }
+});
 it('keeps every real collaboration station reachable from both companion homes', () => {
   for (const target of Object.values(STATION_POINTS))
     for (const home of [

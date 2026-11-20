@@ -15,6 +15,6 @@ export function launchIsolatedElectron(
       ASTRISLE_DEV_URL: '',
       ASTRISLE_WINDOW_PROBE: windowProbe ?? '',
     },
-    timeout: 30_000,
+    timeout: 60_000,
   });
 }

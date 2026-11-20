@@ -6,7 +6,7 @@ import {
   validateArguments,
   complete,
 } from '../../packages/runtime/src/provider';
-import { planTool } from '../../packages/runtime/src/tools';
+import { createPlanTool } from '../../packages/runtime/src/tools';
 import { createServer } from 'node:http';
 const tool = {
   name: 'write',
@@ -124,12 +124,13 @@ it('accepts a normal assistant response with a null tool_calls field', () => {
   ).toMatchObject({ text: 'Done', calls: [] });
 });
 it('exposes supported task kinds and partner identities in the model plan schema', () => {
+  const planTool = createPlanTool([{ id: 'partner-test', name: 'Nova', temperament: 'explorer' }]);
   const task = {
     key: 'write',
     title: 'Create file',
     description: 'Create file',
     kind: 'implement',
-    agentId: 'mori',
+    agentId: 'partner-test',
     dependencies: [],
     criterionIds: ['c1'],
   };
@@ -137,9 +138,10 @@ it('exposes supported task kinds and partner identities in the model plan schema
   expect(() =>
     validateArguments({ tasks: [{ ...task, kind: 'author' }] }, planTool.parameters),
   ).toThrow();
-  expect(() =>
-    validateArguments({ tasks: [{ ...task, agentId: 'unknown' }] }, planTool.parameters),
-  ).toThrow();
+  for (const agentId of ['user', 'mori', 'unknown'])
+    expect(() =>
+      validateArguments({ tasks: [{ ...task, agentId }] }, planTool.parameters),
+    ).toThrow();
 });
 it('retries a malformed model JSON response before any tool call is returned, with a finite limit', async () => {
   let requests = 0;

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { validatePlan, ready } from '../../packages/domain/src/index';
+import { agentsFromCharacters, validatePlan, ready } from '../../packages/domain/src/index';
 import type { ProjectSnapshot, Task } from '../../packages/contracts/src/index';
 const criteria = [{ id: 'c1', description: 'working files' }];
 const valid = [
@@ -38,6 +38,31 @@ it('validates a dynamic two-agent DAG and rejects self-review, cycles and uncove
     ),
   ).toThrow();
   expect(() => validatePlan(valid, [...criteria, { id: 'c2', description: 'missing' }])).toThrow();
+});
+it('restricts assignments to the commissioned partners and rejects any self-reviewed input', () => {
+  const id = 'partner-30165261-f00f-4f96-9e13-88e46cf7cdd2';
+  const roster = agentsFromCharacters([
+    { id: 'mori', displayName: 'Renamed Mori' },
+    { id: 'luma', displayName: 'Luma' },
+    { id: 'user', displayName: 'Player' },
+    { id, displayName: 'Nova' },
+  ]);
+  expect(roster).toEqual([
+    { id: 'mori', name: 'Renamed Mori', temperament: 'explorer' },
+    { id: 'luma', name: 'Luma', temperament: 'organizer' },
+    { id, name: 'Nova', temperament: 'explorer' },
+  ]);
+  const newcomer = { ...valid[0], key: 'second', agentId: id };
+  for (const agentId of ['user', 'partner-unknown'])
+    expect(() =>
+      validatePlan([{ ...newcomer, key: 'build', agentId }, valid[1]], criteria, roster),
+    ).toThrow();
+  const independent = { ...valid[1], dependencies: ['build', 'second'] };
+  const mixed = { ...independent, key: 'mixed', agentId: id };
+  expect(validatePlan([valid[0], newcomer, independent], criteria, roster)).toHaveLength(3);
+  expect(() => validatePlan([valid[0], newcomer, independent, mixed], criteria, roster)).toThrow(
+    /own work/,
+  );
 });
 it('normalizes direct review dependencies so author review cannot deadlock on task_passed', () => {
   const plan = valid.map((t) => ({ ...t, dependencyKinds: undefined }));

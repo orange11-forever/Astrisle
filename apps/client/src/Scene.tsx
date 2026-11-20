@@ -4,8 +4,8 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { Html, RoundedBox } from '@react-three/drei';
 import * as THREE from 'three';
 import { DEFAULT_CHARACTERS } from '@astrisle/contracts';
-import type { CharacterProfile, ProjectSnapshot, Task } from '@astrisle/contracts';
-import { directScene, emptyDirector, resolveStation } from './director';
+import type { CharacterId, CharacterProfile, ProjectSnapshot, Task } from '@astrisle/contracts';
+import { directScene, emptyDirector, placeSceneActors } from './director';
 import type { SceneIntent } from './director';
 import { IslandLandscape } from './IslandLandscape';
 import { CharacterVisual } from './characters/CharacterVisual';
@@ -27,7 +27,12 @@ import {
 import { SceneFrameBudget, useSceneActivity } from './render-budget';
 import { SceneQualityContext, useScenePixelRatio } from './render-quality';
 import type { SceneQuality } from './render-quality';
-import { advanceWalker, createWalker, STATION_POINTS } from './island-motion';
+import {
+  advanceWalker,
+  createWalker,
+  getIslandCharacterHomes,
+  type GroundPoint,
+} from './island-motion';
 import { Confetti } from './Confetti';
 import { IslandLeisure } from './IslandLeisure';
 import { islandAppearance } from './islands';
@@ -53,13 +58,10 @@ const c = {
   rock: '#7c91a0',
 };
 export type Panel = 'goal' | 'tasks' | 'evidence' | 'artifacts' | 'requests' | 'settings';
-export type CharacterFocus = 'mori' | 'luma' | 'user';
+export type CharacterFocus = CharacterId;
 type V3 = [number, number, number];
-const homes: Record<CharacterFocus, V3> = {
-  mori: [-3.45, 0.02, 1.2],
-  luma: [3.45, 0.02, 1.2],
-  user: [0, 0.02, 3.65],
-};
+const characterHeight = 0.02;
+const partnerAccents = ['#866d8b', '#937555', '#577c8e', '#728555'];
 function Box({
   position = [0, 0, 0],
   scale = [1, 1, 1],
@@ -145,15 +147,24 @@ function Label({
   position,
   children,
   onClick,
+  characterId,
+  taskId,
 }: {
   position: V3;
   children: ReactNode;
   onClick?: () => void;
+  characterId: CharacterId;
+  taskId?: string;
 }) {
   const portal = useContext(LabelPortal);
   return (
     <Html portal={portal} position={position} center zIndexRange={[4, 0]}>
-      <button className="scene-label" onClick={onClick}>
+      <button
+        className="scene-label"
+        onClick={onClick}
+        data-character-id={characterId}
+        data-task-id={taskId}
+      >
         {children}
       </button>
     </Html>
@@ -281,9 +292,6 @@ function StarTable({ active, onClick }: { active: boolean; onClick: () => void }
     </group>
   );
 }
-const anchors: Record<string, V3> = Object.fromEntries(
-  Object.entries(STATION_POINTS).map(([name, [x, z]]) => [name, [x, 0, z] as V3]),
-);
 /** One tiny draw instead of rendering the whole island into a shadow framebuffer. */
 function GroundShadow() {
   return (
@@ -299,8 +307,8 @@ function GroundShadow() {
   );
 }
 function Avatar({
-  id,
   home,
+  target = home,
   color,
   task,
   intent,
@@ -310,23 +318,25 @@ function Avatar({
   profile,
   life,
 }: {
-  id: CharacterFocus;
-  home: V3;
+  home: GroundPoint;
+  target?: GroundPoint;
   color: string;
   task?: Task;
   intent?: SceneIntent;
   reduced: boolean;
   onClick?: () => void;
   preview?: boolean;
-  profile?: CharacterProfile;
+  profile: CharacterProfile;
   life: LeisureWorld;
 }) {
+  const id = profile.id;
   const root = useRef<THREE.Group>(null);
   const seatPivot = useRef<THREE.Group>(null);
   const seatOffset = useRef<THREE.Group>(null);
   const labelRoot = useRef<THREE.Group>(null);
   const activity = useSceneActivity();
-  const walker = useRef(createWalker(id, [home[0], home[2]]));
+  const walker = useRef<ReturnType<typeof createWalker> | null>(null);
+  if (!walker.current) walker.current = createWalker(id, home);
   const leisure = useMemo(() => createLeisure(id), [id]);
   const [leisureLabel, setLeisureLabel] = useState('散步');
   const label = useRef('散步');
@@ -343,11 +353,9 @@ function Avatar({
     carrying: false,
     time: 0,
   });
-  const character = profile ?? DEFAULT_CHARACTERS.find((entry) => entry.id === id)!;
-  const target = intent && !intent.stationary ? anchors[intent.anchor] || home : home;
   const roaming = !preview && !intent && (!task || ['passed', 'cancelled'].includes(task.status));
   useFrame((_, delta) => {
-    if (!root.current) return;
+    if (!root.current || !walker.current) return;
     advanceLeisure(leisure, delta, {
       position: walker.current.position,
       idle: roaming,
@@ -360,7 +368,7 @@ function Avatar({
     const facility = leisure.facility ? FACILITIES[leisure.facility] : undefined;
     const state = advanceWalker(walker.current, delta, {
       roaming: roaming && !facility,
-      target: facility?.approach ?? [target[0], target[2]],
+      target: facility?.approach ?? target,
       reduced,
       active: activity,
       preview,
@@ -372,12 +380,16 @@ function Avatar({
     root.current.position.set(
       THREE.MathUtils.lerp(state.position[0], facility?.position[0] ?? state.position[0], weight) +
         Math.sin(facility?.yaw ?? 0) * sway,
-      home[1] + (preview ? 0 : harborWalkingHeight(state.position)) + lift,
+      characterHeight + (preview ? 0 : harborWalkingHeight(state.position)) + lift,
       THREE.MathUtils.lerp(state.position[1], facility?.position[1] ?? state.position[1], weight) +
         Math.cos(facility?.yaw ?? 0) * sway,
     );
     const walking = state.speed > 0.025 && !reduced && activity && weight === 0;
-    const working = task?.status === 'running' && !/model|response|等待/i.test(task.step);
+    const atStation = state.route.length === 0 && weight === 0;
+    const working =
+      task?.status === 'running' &&
+      !/model|response|等待/i.test(task.step) &&
+      (!id.startsWith('partner-') || atStation);
     motion.current.walking = walking;
     motion.current.working = working;
     motion.current.carrying = !!intent;
@@ -408,6 +420,7 @@ function Avatar({
     root.current.userData.activity = facility?.activity ?? 'walk';
     root.current.userData.activityStage = leisure.stage;
     root.current.userData.activityBlend = weight;
+    root.current.userData.working = working;
     const visit = state.harborVisit;
     root.current.userData.harborStage = visit?.stage;
     const walkingLabel = !visit
@@ -442,7 +455,7 @@ function Avatar({
     <group
       ref={root}
       name={`avatar-${id}`}
-      position={home}
+      position={[home[0], characterHeight, home[1]]}
       onClick={(event) => {
         event.stopPropagation();
         onClick?.();
@@ -450,19 +463,14 @@ function Avatar({
     >
       <group ref={seatPivot}>
         <group ref={seatOffset}>
-          <CharacterVisual
-            profile={character}
-            motionRef={motion}
-            reduced={reduced}
-            accent={color}
-          />
+          <CharacterVisual profile={profile} motionRef={motion} reduced={reduced} accent={color} />
         </group>
       </group>
       <GroundShadow />
       {!preview && id !== 'user' && (
         <group ref={labelRoot} position={[0, 2.12, 0]}>
-          <Label position={[0, 0, 0]} onClick={onClick}>
-            <b>{character.displayName}</b>
+          <Label position={[0, 0, 0]} onClick={onClick} characterId={id} taskId={task?.id}>
+            <b>{profile.displayName}</b>
             <span>
               {task
                 ? task.status === 'running'
@@ -510,6 +518,23 @@ function World({
     () => ({ states: new Map(), reservations: new Map() }),
     [workspaceId],
   );
+  const roster = useMemo(() => {
+    const profiles = new Map(DEFAULT_CHARACTERS.map((profile) => [profile.id, profile]));
+    for (const profile of characters ?? []) profiles.set(profile.id, profile);
+    const homes = getIslandCharacterHomes([...profiles.keys()]);
+    return Array.from(profiles.values(), (profile, index) => ({
+      profile,
+      home: homes.get(profile.id)!,
+      color:
+        profile.id === 'mori'
+          ? '#497a75'
+          : profile.id === 'luma'
+            ? '#818ba9'
+            : profile.id === 'user'
+              ? '#ceb8a1'
+              : partnerAccents[(index - DEFAULT_CHARACTERS.length) % partnerAccents.length],
+    }));
+  }, [characters]);
   const [intents, setIntents] = useState<SceneIntent[]>([]);
   useEffect(() => {
     if (snapshot) {
@@ -528,46 +553,48 @@ function World({
     );
     return () => clearTimeout(timer);
   }, [intents, reduced]);
-  const occupied = new Set<string>();
-  const visualIntents = intents.map((i) => {
-    const conflict = occupied.has(i.anchor);
-    occupied.add(i.anchor);
-    return resolveStation(i, conflict, 1500)!;
-  });
-  const profileFor = (id: CharacterFocus) =>
-    characters?.find((profile) => profile.id === id) ??
-    DEFAULT_CHARACTERS.find((profile) => profile.id === id)!;
-  if (focus) {
-    const home = homes[focus];
+  const preview = roster.find(({ profile }) => profile.id === focus);
+  if (preview) {
+    const { profile, home, color } = preview;
+    const [x, z] = home;
     return (
       <>
         <color attach="background" args={['#e3edf1']} />
         <ambientLight intensity={0.75} />
         <hemisphereLight args={['#edf5ff', '#93a6b4', 1.5]} />
-        <directionalLight position={[home[0] - 3, 6, home[2] + 4]} intensity={2.4} />
-        <directionalLight
-          position={[home[0] + 4, 3, home[2] + 1]}
-          intensity={0.7}
-          color="#d2e9ff"
-        />
-        <CameraRig reset={reset} fixed={fixed} focus={focus} reduced={reduced} />
+        <directionalLight position={[x - 3, 6, z + 4]} intensity={2.4} />
+        <directionalLight position={[x + 4, 3, z + 1]} intensity={0.7} color="#d2e9ff" />
+        <CameraRig reset={reset} fixed={fixed} focusHome={home} reduced={reduced} />
         <Avatar
-          key={focus}
-          id={focus}
-          profile={profileFor(focus)}
+          key={profile.id}
+          profile={profile}
           life={life}
           home={home}
-          color={focus === 'mori' ? '#497a75' : focus === 'luma' ? '#818ba9' : '#ceb8a1'}
+          color={color}
           reduced={reduced}
           preview
         />
-        <mesh position={[home[0], -0.05, home[2]]} receiveShadow>
+        <mesh position={[x, -0.05, z]} receiveShadow>
           <cylinderGeometry args={[0.75, 0.79, 0.09, 64]} />
           <meshStandardMaterial color="#f3f2ec" roughness={0.86} />
         </mesh>
       </>
     );
   }
+  const assignedTasks = new Map<string, Task>();
+  for (const task of snapshot?.tasks ?? []) {
+    if (task.agentId === 'user' || task.status === 'passed' || task.status === 'cancelled')
+      continue;
+    const assigned = assignedTasks.get(task.agentId);
+    if (!assigned || (task.status === 'running' && assigned.status !== 'running'))
+      assignedTasks.set(task.agentId, task);
+  }
+  const actors = roster.map((actor) => ({
+    ...actor,
+    id: actor.profile.id,
+    task: assignedTasks.get(actor.profile.id),
+  }));
+  const placements = placeSceneActors(actors, intents);
   return (
     <>
       <CosmicBackdrop reduced={reduced} />
@@ -579,7 +606,7 @@ function World({
       <hemisphereLight args={['#d3e5fe', '#71637d', 1.12]} />
       <directionalLight position={[-8, 9, 6]} intensity={2.58} color="#ffe5bf" />
       <directionalLight position={[6, 4, -8]} intensity={0.92} color="#a9c1f4" />
-      <CameraRig reset={reset} fixed={fixed} focus={focus} reduced={reduced} district={district} />
+      <CameraRig reset={reset} fixed={fixed} reduced={reduced} district={district} />
       <IslandLandscape workspaceId={workspaceId} themeId={themeId} reduced={reduced} />
       <IslandLeisure life={life} />
       {celebration != null && !reduced && <Confetti key={celebration} burst={celebration} />}
@@ -687,40 +714,19 @@ function World({
         <Plant key={i} position={p as V3} scale={i > 2 ? 0.8 : 1} />
       ))}
       <ReadingGallery />
-      <Avatar
-        id="mori"
-        life={life}
-        profile={profileFor('mori')}
-        home={homes.mori}
-        color="#497a75"
-        task={snapshot?.tasks.find(
-          (t) => t.agentId === 'mori' && !['passed', 'cancelled'].includes(t.status),
-        )}
-        intent={visualIntents.find((i) => i.actorId === 'mori')}
-        reduced={reduced}
-        onClick={() => onPanel('tasks')}
-      />
-      <Avatar
-        id="luma"
-        life={life}
-        profile={profileFor('luma')}
-        home={homes.luma}
-        color="#818ba9"
-        task={snapshot?.tasks.find(
-          (t) => t.agentId === 'luma' && !['passed', 'cancelled'].includes(t.status),
-        )}
-        intent={visualIntents.find((i) => i.actorId === 'luma')}
-        reduced={reduced}
-        onClick={() => onPanel('tasks')}
-      />
-      <Avatar
-        id="user"
-        life={life}
-        profile={profileFor('user')}
-        home={homes.user}
-        color="#ceb8a1"
-        reduced={reduced}
-      />
+      {actors.map(({ id, profile, home, color, task }) => (
+        <Avatar
+          key={id}
+          life={life}
+          profile={profile}
+          home={home}
+          color={color}
+          task={task}
+          {...placements.get(id)!}
+          reduced={reduced}
+          onClick={id === 'user' ? undefined : () => onPanel('tasks')}
+        />
+      ))}
     </>
   );
 }

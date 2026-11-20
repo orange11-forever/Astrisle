@@ -52,6 +52,35 @@ async function fixture() {
 }
 
 describe('demo character snapshot', () => {
+  it('waits for custom partners with built-in and imported models in a saved studio', async () => {
+    const f = await fixture();
+    const builtin = { id: 'partner-86b8d8f0-4826-4b32-a1c3-1488c32dd1cd', displayName: '小满' };
+    const bytes = makeGlb();
+    const model = f.expectedModel(bytes, 'glb');
+    const imported = {
+      id: 'partner-bfb055fd-cc8b-4047-85fc-dd728e2b02f5',
+      displayName: '夏至',
+      model,
+    };
+    await writeFile(
+      join(f.source, 'characters.json'),
+      JSON.stringify({ version: 2, characters: [...DEFAULT_CHARACTERS, builtin, imported] }),
+    );
+    await writeFile(join(f.assets, `${model.assetId}.glb`), bytes);
+    const demo = await prepareDemoData(f.source, f.temp);
+    try {
+      expect(demo.expected).toEqual({
+        mori: 'builtin',
+        luma: 'builtin',
+        user: 'builtin',
+        [builtin.id]: 'builtin',
+        [imported.id]: model.assetId,
+      });
+    } finally {
+      await demo.cleanup();
+    }
+  });
+
   it('copies only referenced model bytes, preserving original configuration and supported legacy profiles', async () => {
     const f = await fixture();
     const glb = makeGlb();

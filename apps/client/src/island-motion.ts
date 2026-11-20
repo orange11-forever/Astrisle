@@ -1,3 +1,4 @@
+import type { CharacterId } from '@astrisle/contracts';
 import { FACILITY_OBSTACLES } from './island-facilities';
 import {
   atHarborRail,
@@ -15,12 +16,23 @@ import {
 export type GroundPoint = [number, number];
 export const ISLAND_RADIUS = 9;
 export const PROMENADE_RADIUS = 7.1;
-export const STATION_POINTS: Record<string, GroundPoint> = {
+export const STATION_POINTS = {
   table: [-1.65, 1.4],
   compare: [0, -5.3],
   dock: [2.5, 2.7],
   mail: [-3, 3],
-};
+} satisfies Record<string, GroundPoint>;
+const builtInHomes = {
+  mori: [-3.45, 1.2],
+  luma: [3.45, 1.2],
+  user: [0, 3.65],
+} satisfies Record<string, GroundPoint>;
+const deckHomes: GroundPoint[] = [
+  [1.8, 4.55],
+  [-1.95, 4.35],
+];
+const customHomes: GroundPoint[] = [];
+let nextHomeCandidate = 0;
 // Furniture footprints, expanded by a companion's clearance in isWalkable.
 const obstacles: [number, number, number][] = [
   [0, -0.65, 1.72],
@@ -169,6 +181,52 @@ export function findIslandRoute(start: GroundPoint, goal: GroundPoint): GroundPo
   return inGarden ? [...garden, ...harbor] : [...harbor, ...garden];
 }
 
+/** Saved profiles arrive in creation order. Reuse each slot's path-checked point on profile refresh. */
+export function getIslandCharacterHomes(ids: readonly CharacterId[]) {
+  const homes = new Map<CharacterId, GroundPoint>([
+    ['mori', builtInHomes.mori],
+    ['luma', builtInHomes.luma],
+    ['user', builtInHomes.user],
+  ]);
+  for (const id of ids) {
+    if (homes.has(id)) continue;
+    const slot = homes.size - 3;
+    if (slot === customHomes.length) allocateCustomHome();
+    homes.set(id, customHomes[slot]);
+  }
+  return homes;
+}
+
+function allocateCustomHome() {
+  const nearbyHomes = [...Object.values(builtInHomes), ...customHomes];
+  const stations = Object.values(STATION_POINTS);
+  const spacing = 1.2 / Math.sqrt(Math.max(1, (customHomes.length + 1) / 20));
+  for (;;) {
+    const index = nextHomeCandidate++;
+    // Fan out across the garden after filling the open front of the studio deck.
+    const angle = index * Math.PI * (3 - Math.sqrt(5));
+    const radius = 4.5 + ((index * Math.SQRT2) % 1) * 3.2;
+    const point: GroundPoint = deckHomes[index] ?? [
+      radius * Math.cos(angle),
+      radius * Math.sin(angle),
+    ];
+    if (nearbyHomes.some((home) => distance(point, home) < spacing)) continue;
+    if (stations.some((station) => distance(point, station) < 0.7)) continue;
+    if (!findGardenRoute(builtInHomes.user, point).length) continue;
+    customHomes.push(point);
+    return;
+  }
+}
+
+export function characterPersonality(id: string) {
+  if (id === 'mori') return 0;
+  if (id === 'luma') return 1;
+  if (!id.startsWith('partner-')) return 2;
+  let hash = 0;
+  for (const char of id) hash = (hash + char.charCodeAt(0)) % 3;
+  return hash;
+}
+
 export interface Walker {
   position: GroundPoint;
   yaw: number;
@@ -185,7 +243,7 @@ export interface Walker {
   harborVisit?: { stop: HarborStop; stage: 'outbound' | 'watching' | 'returning'; wait: number };
 }
 export function createWalker(id: string, home: GroundPoint): Walker {
-  const personality = id === 'mori' ? 0 : id === 'luma' ? 1 : 2;
+  const personality = characterPersonality(id);
   return {
     position: [...home],
     yaw: 0.28,

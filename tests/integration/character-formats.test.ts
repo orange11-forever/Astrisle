@@ -75,6 +75,25 @@ it('binds pending imports to their character, cancels without replacement and re
   ).rejects.toThrow();
   expect((await store.profiles())[0].model).toBeUndefined();
 });
+it('binds a trusted model import to a custom partner and restores it after restart', async () => {
+  const { folder, store } = await fixture();
+  const partner = await store.create('晨星');
+  const pending = await store.prepareImport(partner.id, join(folder, 'avatar.obj'));
+  const inspection = { triangleCount: 2, animationCount: 1, hasSkins: true };
+  await expect(store.completeImport('mori', pending.importId, inspection)).rejects.toThrow();
+
+  const saved = await store.completeImport(partner.id, pending.importId, inspection);
+  expect(saved.model).toMatchObject({ triangleCount: 1, animationCount: 0, hasSkins: false });
+  await store.update(partner.id, { rotationY: 180 });
+  await rm(join(folder, 'avatar.obj'));
+  await rm(join(folder, 'avatar.mtl'));
+  const reopened = new CharacterStore(join(folder, 'profile'));
+  expect((await reopened.profiles()).find((profile) => profile.id === partner.id)).toEqual({
+    ...saved,
+    rotationY: 180,
+  });
+  expect(await reopened.loadModel(saved.model!.assetId)).toEqual(pending.bytes);
+});
 it.each([
   '../outside.mtl',
   '/private.mtl',

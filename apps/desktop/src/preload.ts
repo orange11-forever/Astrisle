@@ -6,6 +6,7 @@ const invoke = <T>(method: string, ...args: unknown[]): Promise<T> =>
 const api: HostAPI = {
   bootstrap: () => invoke('bootstrap'),
   getCharacters: () => invoke('getCharacters'),
+  createCharacter: (displayName) => invoke('createCharacter', displayName),
   updateCharacter: (id, patch) => invoke('updateCharacter', id, patch),
   importCharacter: (id) => invoke('importCharacter', id),
   prepareCharacterImport: (id) => invoke('prepareCharacterImport', id),

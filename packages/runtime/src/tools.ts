@@ -1,4 +1,4 @@
-import type { ToolDefinition } from '../../contracts/src/index';
+import type { AgentIdentity, ToolDefinition } from '../../contracts/src/index';
 const string = {
     type: 'string',
   },
@@ -71,11 +71,11 @@ export const runtimeTools: ToolDefinition[] = [
     ['verdict', 'summary', 'evidenceIds', 'versionIds'],
   ),
 ];
-export const planTool: ToolDefinition = {
+export const createPlanTool = (roster: readonly AgentIdentity[]): ToolDefinition => ({
   name: 'propose_plan',
   effect: 'read',
   description:
-    'Propose the complete task DAG using mori and luma. Every author, including investigate, publishes files and needs a direct independent reviewer. Reviewers are read-only and finish with submit_review. Avoid waiting for task_passed when its reviewer depends on that waiting task.',
+    'Assign the task DAG to the listed partners by ID. Honor any assignments in the goal. Every author, including investigate, publishes files and needs a direct independent reviewer. Reviewers are read-only and finish with submit_review. Avoid waiting for task_passed when its reviewer depends on that waiting task.',
   parameters: {
     type: 'object',
     required: ['tasks'],
@@ -109,7 +109,7 @@ export const planTool: ToolDefinition = {
             },
             agentId: {
               type: 'string',
-              enum: ['mori', 'luma'],
+              enum: roster.map(({ id }) => id),
             },
             dependencies: {
               type: 'array',
@@ -132,4 +132,4 @@ export const planTool: ToolDefinition = {
     },
     additionalProperties: false,
   },
-};
+});

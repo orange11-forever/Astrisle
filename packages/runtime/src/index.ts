@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import type {
+  AgentIdentity,
   Artifact,
   ArtifactComparison,
   ArtifactComparisonInput,
@@ -37,7 +38,7 @@ import {
 import { SafeApplyService } from '../../workspace/src/apply';
 import { assertPlainPath } from '../../executor/src/path-guard';
 import { complete, validateArguments, type Call, type Message } from './provider';
-import { planTool, runtimeTools } from './tools';
+import { createPlanTool, runtimeTools } from './tools';
 import { buildTaskContinuation, summarizeTaskEvidence } from './task-context';
 import { budgetExhausted, validBudget } from './budget';
 import { RuntimeOwnership } from './ownership';
@@ -51,7 +52,7 @@ import {
 export interface RuntimeService {
   bootstrap(): Promise<Bootstrap>;
   createWorkspace(input: NewWorkspaceInput): Promise<Workspace>;
-  submit(input: SubmitInput): Promise<CommandResult>;
+  submit(input: SubmitInput, roster?: AgentIdentity[]): Promise<CommandResult>;
   snapshot(id: string): Promise<ProjectSnapshot>;
   control(id: string, action: 'pause' | 'resume' | 'cancel'): Promise<CommandResult>;
   updateBudget(id: string, budget: Budget, expectedBudgetRevision: number): Promise<CommandResult>;
@@ -267,6 +268,10 @@ class Runtime implements RuntimeService {
   private recover(): void {
     const unknown = this.store.unknownCalls();
     for (const snapshot of this.store.projects()) {
+      if (!snapshot.agents?.length) {
+        snapshot.agents = structuredClone(agents);
+        this.store.transaction(() => this.store.save(snapshot));
+      }
       const calls = unknown.filter((call) => call.projectId === snapshot.commission.id);
       const uncertain = calls.filter(
         (call) => !['model', 'plan'].includes(call.request.kind ?? ''),
@@ -617,7 +622,7 @@ class Runtime implements RuntimeService {
   async resolveApplyDirectory(operationId: string): Promise<string> {
     return this.writebacks.resolveDirectory(operationId);
   }
-  async submit(input: SubmitInput): Promise<CommandResult> {
+  async submit(input: SubmitInput, roster: AgentIdentity[] = agents): Promise<CommandResult> {
     if (this.closing) return result(false, 'Runtime is closing', 'closing');
     const payload = canonical(input);
     const receipt = this.store.receipt(input.requestId);
@@ -638,13 +643,19 @@ class Runtime implements RuntimeService {
       !validBudget(input.budget)
     )
       return result(false, 'Goal, criteria and a positive budget are required', 'invalid_input');
+    if (
+      roster.length < 2 ||
+      roster.some((agent) => !agent.id || agent.id === 'user') ||
+      new Set(roster.map((agent) => agent.id)).size !== roster.length
+    )
+      return result(false, 'A commission requires distinct work partners', 'invalid_roster');
     if (this.store.busy(workspace.id))
       return result(false, 'A writable commission already owns this workspace', 'workspace_busy');
     const id = randomUUID(),
       time = now();
     const snapshot: ProjectSnapshot = {
       workspace,
-      agents: structuredClone(agents),
+      agents: structuredClone(roster),
       commission: {
         id,
         workspaceId: workspace.id,
@@ -926,12 +937,22 @@ class Runtime implements RuntimeService {
       if (target.sha256 !== candidate.sha256)
         return result(false, 'Artifact bytes changed during rework validation', 'stale_version');
       const author = snapshot.tasks.find((task) => task.id === target.taskId)!;
-      const reviewer = agents.find((agent) => agent.id !== author.agentId)!;
+      const independent = snapshot.agents.filter((agent) => agent.id !== author.agentId);
+      const previousReviewer = snapshot.tasks.find(
+        (task) =>
+          task.kind === 'review' &&
+          task.dependencies.includes(author.id) &&
+          !['cancelled', 'rework_required'].includes(task.status) &&
+          independent.some((agent) => agent.id === task.agentId),
+      );
+      const reviewerId = previousReviewer?.agentId ?? independent[0]?.id;
+      if (!reviewerId)
+        return result(false, 'An independent reviewer is required', 'invalid_roster');
       const schedule = scheduleArtifactRework(
         snapshot,
         target,
         author,
-        reviewer.id,
+        reviewerId,
         input.instruction,
         input.requestId,
         now(),
@@ -1254,7 +1275,7 @@ class Runtime implements RuntimeService {
         if (!this.planning.has(id)) this.startPlan(id);
         return;
       }
-      for (const agent of agents) {
+      for (const agent of s.agents) {
         const task = s.tasks.find((t) => t.agentId === agent.id && ready(t, s));
         if (!task) continue;
         if (this.running.has(agent.id)) this.waitingForAgent.add(id);
@@ -1313,16 +1334,18 @@ class Runtime implements RuntimeService {
           return;
         }
         const s = this.store.get(id);
+        const planTool = createPlanTool(s.agents);
         const messages: Message[] = [
           {
             role: 'system',
             content:
-              'You plan real project work, never a fixed demonstration. You must call propose_plan, not write a prose plan. Produce a DAG of 2+ tasks across mori and luma. Task kind must be investigate, implement, review, or integrate; author is a role, not a task kind. Every author, including investigate, must publish actual files and have a different reviewer DIRECTLY depending on that author and covering its criteria. Transitive dependency alone does not review preparatory outputs. Review tasks are read-only and finish with submit_review; never assign them report-file creation. Review dependencies use artifact_available. An author can consume a predecessor via artifact_available, or via task_passed after a separate earlier review; do not create a review-wait deadlock. Use only registered capabilities. Write reviewable Markdown, CSV or TSV sources for document and data work when appropriate. For a requested native document, publish the source first, then render the published source with render_source and publish the native output. This can be one author task, or a downstream renderer task with the published source as a dependency. Review both files. If only the source is requested, publish the source. Keep the graph as small as the goal permits. Parallel author tasks must own disjoint output paths; specify each task scope clearly.',
+              'You plan real project work, never a fixed demonstration. You must call propose_plan, not write a prose plan. Produce a DAG of 2+ tasks using the commission agents. Match any partners and roles named in the goal to their entries in agents and assign each task by its stable agentId. Task kind must be investigate, implement, review, or integrate; author is a role, not a task kind. Every author, including investigate, must publish actual files and have a different reviewer DIRECTLY depending on that author and covering its criteria. Transitive dependency alone does not review preparatory outputs. Review tasks are read-only and finish with submit_review; never assign them report-file creation. Review dependencies use artifact_available. An author can consume a predecessor via artifact_available, or via task_passed after a separate earlier review; do not create a review-wait deadlock. Use only registered capabilities. Write reviewable Markdown, CSV or TSV sources for document and data work when appropriate. For a requested native document, publish the source first, then render the published source with render_source and publish the native output. This can be one author task, or a downstream renderer task with the published source as a dependency. Review both files. If only the source is requested, publish the source. Keep the graph as small as the goal permits. Parallel author tasks must own disjoint output paths; specify each task scope clearly.',
           },
           {
             role: 'user',
             content: JSON.stringify({
               goal: s.commission.goal,
+              agents: s.agents,
               criteria: s.commission.criteria,
               tools: this.options.executor
                 .definitions()
@@ -1351,7 +1374,7 @@ class Runtime implements RuntimeService {
             const proposal = response.calls.find((call) => call.name === 'propose_plan');
             if (!proposal) throw new Error('Provider did not return a structured plan');
             validateArguments(proposal.args, planTool.parameters);
-            plan = validatePlan(proposal.args.tasks, s.commission.criteria);
+            plan = validatePlan(proposal.args.tasks, s.commission.criteria, s.agents);
             this.store.endCall(runId, { ok: true });
             break;
           } catch (error) {
@@ -1537,6 +1560,7 @@ class Runtime implements RuntimeService {
         role: 'user',
         content: JSON.stringify({
           goal: initial.commission.goal,
+          agent: initial.agents.find((agent) => agent.id === task.agentId),
           criteria: initial.commission.criteria,
           task,
           environment: executionEnvironment(initial.commission.scope),

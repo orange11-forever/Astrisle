@@ -566,6 +566,28 @@ nav button.active {
   padding: 17px 0;
   border-bottom: 1px solid #cfdbdf;
 }
+.partner-creator {
+  margin-bottom: 14px;
+}
+.partner-creator form {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px 0;
+  border-block: 1px solid var(--line);
+}
+.partner-creator .field-hint,
+.partner-creator .button-row,
+.commission-partners {
+  margin: 0;
+}
+.commission-partners {
+  overflow-wrap: anywhere;
+}
+.partner-small.custom-partner {
+  color: #605443;
+  background: #e8e1d3;
+}
 .character-settings form {
   display: grid;
   gap: 8px;

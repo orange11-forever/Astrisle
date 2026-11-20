@@ -7,12 +7,15 @@ import { tmpdir } from 'node:os';
 import { createRuntime, type RuntimeService } from '../../packages/runtime/src/index';
 import { createExecutor } from '../../packages/executor/src/index';
 import { RuntimeStore } from '../../packages/persistence/src/index';
+import { waitForDelivery } from '../fixtures/wait-for-delivery';
 import type {
+  AgentIdentity,
   ProjectSnapshot,
   RuntimeOptions,
   ToolExecutor,
 } from '../../packages/contracts/src/index';
 
+const executor = createExecutor({ projectRoot: process.cwd() });
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close();
@@ -40,6 +43,8 @@ async function fixture(
     | 'process_tree' = 'normal',
   overrides: {
     executor?: ToolExecutor;
+    roster?: AgentIdentity[];
+    goal?: string;
     maxSteps?: number;
     maxRework?: number;
     beforeAuthorActions?: (goal: string) => Promise<void>;
@@ -61,6 +66,7 @@ async function fixture(
       mediaType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     }),
   ];
+  const taskAgents = new Map<string, AgentIdentity>();
   const server = createServer(async (req, res) => {
     let body = '';
     for await (const chunk of req) body += chunk;
@@ -68,7 +74,11 @@ async function fixture(
       messages = request.messages;
     const first = JSON.parse(messages.find((m: any) => m.role === 'user').content);
     let calls: any[];
-    if (!first.task)
+    if (first.task && first.agent) taskAgents.set(first.task.id, first.agent);
+    if (!first.task) {
+      const assignment = /^(.+) writes and (.+) reviews\.$/.exec(first.goal);
+      const partnerId = (name: string) =>
+        first.agents?.find((agent: AgentIdentity) => agent.name === name)?.id ?? 'unknown';
       calls = [
         call('propose_plan', {
           tasks: [
@@ -77,7 +87,7 @@ async function fixture(
               title: 'Create real file',
               description: `Write ${sourcePath} and publish it`,
               kind: 'implement',
-              agentId: 'mori',
+              agentId: assignment ? partnerId(assignment[1]) : 'mori',
               dependencies: [],
               criterionIds: ['c1'],
             },
@@ -86,7 +96,7 @@ async function fixture(
               title: 'Read and verify',
               description: 'Read exact published input and check content',
               kind: 'review',
-              agentId: 'luma',
+              agentId: assignment ? partnerId(assignment[2]) : 'luma',
               dependencies: ['author'],
               dependencyKinds: { author: 'artifact_available' },
               criterionIds: ['c1'],
@@ -139,7 +149,7 @@ async function fixture(
           ],
         }),
       ];
-    else if (first.task.kind !== 'review') {
+    } else if (first.task.kind !== 'review') {
       await overrides.beforeAuthorActions?.(first.goal);
       if (mode === 'process_tree') {
         calls = [call('process_run', { command: process.execPath, args: overrides.processArgs })];
@@ -303,11 +313,11 @@ async function fixture(
       }),
   );
   const dataRoot = await realpath(await mkdtemp(join(tmpdir(), 'astrisle-execution-')));
-  cleanup.push(() => rm(dataRoot, { recursive: true, force: true }));
+  cleanup.push(() => rm(dataRoot, { recursive: true, force: true, maxRetries: 5 }));
   const port = (server.address() as { port: number }).port;
   const options: RuntimeOptions = {
     dataRoot,
-    executor: overrides.executor ?? createExecutor({ projectRoot: process.cwd() }),
+    executor: overrides.executor ?? executor,
     getCredentials: async () => ({
       kind: 'openai-compatible',
       baseUrl: `http://127.0.0.1:${port}/v1`,
@@ -321,40 +331,46 @@ async function fixture(
     return runtime;
   };
   const runtime = openRuntime();
+  // Desktop bootstrap probes the host tools before the user can submit a commission.
+  await runtime.bootstrap();
   const workspace = await runtime.createWorkspace({ name: 'Execution fixture' });
   for (const [path, content] of Object.entries(overrides.seed ?? {}))
     await writeFile(join(workspace.workPath, path), content);
-  const response = await runtime.submit({
-    requestId: 'run',
-    workspaceId: workspace.id,
-    goal: 'Create a real file',
-    criteria: [
-      native
-        ? 'The native memo matches the reviewed Markdown draft'
-        : 'result.txt contains verified result',
-    ],
-    planningMode: 'auto',
-    scope: {
-      readRoots: [],
-      writeRoots: [],
-      allowProcess: mode === 'process' || mode === 'process_tree',
-      allowNetwork: false,
-      allowedHosts: [],
+  const response = await runtime.submit(
+    {
+      requestId: 'run',
+      workspaceId: workspace.id,
+      goal: overrides.goal ?? 'Create a real file',
+      criteria: [
+        native
+          ? 'The native memo matches the reviewed Markdown draft'
+          : 'result.txt contains verified result',
+      ],
+      planningMode: 'auto',
+      scope: {
+        readRoots: [],
+        writeRoots: [],
+        allowProcess: mode === 'process' || mode === 'process_tree',
+        allowNetwork: false,
+        allowedHosts: [],
+      },
+      budget: {
+        maxSteps: overrides.maxSteps ?? 30,
+        maxMinutes: 1,
+        maxRework: overrides.maxRework ?? 3,
+      },
     },
-    budget: {
-      maxSteps: overrides.maxSteps ?? 30,
-      maxMinutes: 1,
-      maxRework: overrides.maxRework ?? 3,
-    },
-  });
-  return { runtime, workspace, id: response.commissionId!, dataRoot, openRuntime };
+    overrides.roster,
+  );
+  return { runtime, workspace, id: response.commissionId!, dataRoot, openRuntime, taskAgents };
 }
 async function until(
   runtime: RuntimeService,
   id: string,
   predicate: (s: ProjectSnapshot) => boolean,
+  timeoutMs = 6000,
 ) {
-  const end = Date.now() + 6000;
+  const end = Date.now() + timeoutMs;
   let snapshot = await runtime.snapshot(id);
   while (!predicate(snapshot) && Date.now() < end) {
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -370,6 +386,80 @@ async function until(
   ).toBe(true);
   return snapshot;
 }
+const novaId = 'partner-30165261-f00f-4f96-9e13-88e46cf7cdd2';
+it.each([
+  ['Nova writes and Luma reviews.', novaId, 'luma'],
+  ['Mori writes and Nova reviews.', 'mori', novaId],
+])(
+  'keeps the chosen author and reviewer across restart and rework: %s',
+  async (goal, authorId, reviewerId) => {
+    const roster: AgentIdentity[] = [
+      { id: 'mori', name: 'Mori', temperament: 'explorer' },
+      { id: 'luma', name: 'Luma', temperament: 'organizer' },
+      { id: novaId, name: 'Nova', temperament: 'explorer' },
+    ];
+    const { runtime, id, openRuntime, taskAgents } = await fixture('normal', { goal, roster });
+    roster[2].name = 'Changed after commissioning';
+    const original = await until(runtime, id, (s) => s.commission.status === 'awaiting_acceptance');
+    const target = original.artifacts[0];
+    const author = original.tasks.find((task) => task.id === target.taskId)!;
+    const review = original.evidence.find((e) => e.kind === 'review' && e.status === 'passed')!;
+    expect(original.tasks.find((task) => task.id === review.taskId)?.agentId).toBe(reviewerId);
+    expect(author.agentId).toBe(authorId);
+    expect(taskAgents.get(author.id)?.id).toBe(authorId);
+    expect(taskAgents.get(review.taskId!)?.id).toBe(reviewerId);
+    expect([...taskAgents.values()].find((agent) => agent.id === novaId)?.name).toBe('Nova');
+    await runtime.close();
+    const restored = openRuntime();
+    expect((await restored.snapshot(id)).agents.find((agent) => agent.id === novaId)?.name).toBe(
+      'Nova',
+    );
+    expect(
+      await restored.requestArtifactRework({
+        commissionId: id,
+        artifactId: target.id,
+        versionId: target.versionId,
+        revision: original.commission.revision,
+        instruction: 'Revise result.txt',
+        requestId: 'partner-rework',
+      }),
+    ).toMatchObject({ ok: true });
+    const updated = await until(restored, id, (s) => s.commission.status === 'awaiting_acceptance');
+    const replacement = updated.artifacts.find(
+      (artifact) => artifact.previousVersionId === target.versionId,
+    )!;
+    const receipt = updated.evidence.find(
+      (e) =>
+        e.kind === 'review' &&
+        e.status === 'passed' &&
+        e.artifactVersionIds.includes(replacement.versionId),
+    )!;
+    expect(updated.tasks.find((task) => task.id === replacement.taskId)?.agentId).toBe(authorId);
+    expect(updated.tasks.find((task) => task.id === receipt.taskId)?.agentId).toBe(reviewerId);
+  },
+);
+
+it('restores the original partners when resuming a legacy snapshot with an empty roster', async () => {
+  const { runtime, id, dataRoot, openRuntime } = await fixture('normal', { maxSteps: 1 });
+  const paused = await until(runtime, id, (s) => s.commission.status === 'paused');
+  expect(paused.tasks.every((t) => t.attempts === 0)).toBe(true);
+  await runtime.close();
+  const store = new RuntimeStore(dataRoot);
+  try {
+    store.save({ ...paused, agents: [] });
+  } finally {
+    store.close();
+  }
+  const restored = openRuntime();
+  expect((await restored.snapshot(id)).agents.map((agent) => agent.id)).toEqual(['mori', 'luma']);
+  expect(
+    (await restored.updateBudget(id, { ...paused.commission.budget, maxSteps: 30 }, 0)).ok,
+  ).toBe(true);
+  expect((await restored.control(id, 'resume')).ok).toBe(true);
+  const completed = await until(restored, id, (s) => s.commission.status === 'awaiting_acceptance');
+  expect(completed.tasks.map((task) => task.agentId)).toEqual(['mori', 'luma']);
+});
+
 it('delivers verified results when the final review consumes the exact last model step', async () => {
   const { runtime, id } = await fixture('normal', { maxSteps: 4 });
   const snapshot = await until(runtime, id, (s) => s.commission.status === 'awaiting_acceptance');
@@ -474,7 +564,7 @@ it('reworks one current version and refreshes the downstream work through indepe
 
 it('keeps paused rework and its idempotency receipt through a runtime restart', async () => {
   const { runtime, id, openRuntime } = await fixture('targeted', { maxRework: 0 });
-  const initial = await until(runtime, id, (s) => s.commission.status === 'awaiting_acceptance');
+  const initial = await waitForDelivery(runtime, id);
   const target = initial.artifacts.find((a) => a.relativePath === 'result.txt')!;
   const secondTarget = initial.artifacts.find((a) => a.relativePath === 'sibling.txt')!;
   const downstream = initial.artifacts.find((a) => a.relativePath === 'derived.txt')!;
@@ -522,18 +612,14 @@ it('keeps paused rework and its idempotency receipt through a runtime restart', 
     await restarted.requestArtifactRework({ ...request, requestId: 'new-request' }),
   ).toMatchObject({ ok: false, code: 'stale_version' });
   expect(await restarted.control(id, 'resume')).toMatchObject({ ok: true });
-  const delivered = await until(
-    restarted,
-    id,
-    (s) => s.commission.status === 'awaiting_acceptance',
-  );
+  const delivered = await waitForDelivery(restarted, id);
   expect(delivered.events.filter((e) => e.type === 'rework_created')).toHaveLength(2);
   expect(delivered.artifacts.some((a) => a.previousVersionId === target.versionId)).toBe(true);
   expect(delivered.artifacts.some((a) => a.previousVersionId === secondTarget.versionId)).toBe(
     true,
   );
   expect(delivered.artifacts.some((a) => a.previousVersionId === downstream.versionId)).toBe(true);
-});
+}, 60_000);
 
 it('serializes user acceptance with a concurrent rework request for the same version', async () => {
   const { runtime, id } = await fixture('targeted');
@@ -572,7 +658,7 @@ it('starts a queued artifact rework after its author releases from another works
       }
     },
   });
-  const initial = await until(runtime, id, (s) => s.commission.status === 'awaiting_acceptance');
+  const initial = await waitForDelivery(runtime, id);
   const target = initial.artifacts.find((a) => a.relativePath === 'result.txt')!;
   const otherWorkspace = await runtime.createWorkspace({ name: 'Concurrent workspace' });
   const other = await runtime.submit({
@@ -602,13 +688,18 @@ it('starts a queued artifact rework after its author releases from another works
   } finally {
     releaseAuthor();
   }
-  const finished = await until(runtime, id, (s) => s.commission.status === 'awaiting_acceptance');
+  const finished = await waitForDelivery(runtime, id);
   expect(finished.artifacts.some((a) => a.previousVersionId === target.versionId)).toBe(true);
-}, 10000);
+}, 60_000);
 
 it('renders from the exact published source and rebuilds the native output after source rework', async () => {
   const { runtime, id } = await fixture('native');
-  const initial = await until(runtime, id, (s) => s.commission.status === 'awaiting_acceptance');
+  const initial = await until(
+    runtime,
+    id,
+    (s) => s.commission.status === 'awaiting_acceptance',
+    30000,
+  );
   const source = initial.artifacts.find((a) => a.relativePath === 'draft.md')!;
   const native = initial.artifacts.find((a) => a.relativePath === 'memo.docx')!;
   expect(native.renderedFromVersionId).toBe(source.versionId);
@@ -638,7 +729,12 @@ it('renders from the exact published source and rebuilds the native output after
       versionId: source.versionId,
     }),
   ).toMatchObject({ ok: true });
-  const rebuilt = await until(runtime, id, (s) => s.commission.status === 'awaiting_acceptance');
+  const rebuilt = await until(
+    runtime,
+    id,
+    (s) => s.commission.status === 'awaiting_acceptance',
+    30000,
+  );
   const updatedSource = rebuilt.artifacts.find((a) => a.previousVersionId === source.versionId)!;
   const updatedNative = rebuilt.artifacts.find((a) => a.previousVersionId === native.versionId)!;
   expect(updatedNative.renderedFromVersionId).toBe(updatedSource.versionId);
@@ -652,11 +748,16 @@ it('renders from the exact published source and rebuilds the native output after
         e.artifactVersionIds.includes(updatedNative.versionId),
     ),
   ).toBe(true);
-});
+}, 75000);
 
 it('reworks a same-task source and its rendered output together while retaining an accepted sibling', async () => {
   const { runtime, id } = await fixture('native_single');
-  const initial = await until(runtime, id, (s) => s.commission.status === 'awaiting_acceptance');
+  const initial = await until(
+    runtime,
+    id,
+    (s) => s.commission.status === 'awaiting_acceptance',
+    30000,
+  );
   const originalSource = initial.artifacts.find((a) => a.relativePath === 'draft.md')!;
   const originalNative = initial.artifacts.find((a) => a.relativePath === 'memo.docx')!;
   const sibling = initial.artifacts.find((a) => a.relativePath === 'sibling.txt')!;
@@ -683,7 +784,12 @@ it('reworks a same-task source and its rendered output together while retaining 
       requestId: 'rework-same-task-source',
     }),
   ).toMatchObject({ ok: true });
-  const rebuilt = await until(runtime, id, (s) => s.commission.status === 'awaiting_acceptance');
+  const rebuilt = await until(
+    runtime,
+    id,
+    (s) => s.commission.status === 'awaiting_acceptance',
+    30000,
+  );
   const current = rebuilt.artifacts.filter((a) => a.validity === 'current');
   expect(current.map((a) => a.relativePath).sort()).toEqual([
     'draft.md',
@@ -708,7 +814,7 @@ it('reworks a same-task source and its rendered output together while retaining 
     ),
   ).toBe(true);
   expect(await runtime.accept(id, [source.id, native.id])).toMatchObject({ ok: true });
-});
+}, 75000);
 
 it('preserves the versions and rework budget when an unrelated live output owns the same path', async () => {
   const { runtime, id } = await fixture('collision');
