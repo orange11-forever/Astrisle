@@ -17,6 +17,7 @@ const permitted = new Set([
   'createWorkspace',
   'submit',
   'snapshot',
+  'askPartner',
   'control',
   'updateBudget',
   'answer',

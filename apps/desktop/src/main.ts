@@ -13,7 +13,12 @@ import { mkdir, copyFile } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
-import { findArtifactVersion, sourceExportFormats } from '@astrisle/contracts';
+import {
+  findArtifactVersion,
+  PARTNER_DIALOGUE_ERRORS,
+  PARTNER_DIALOGUE_LIMITS,
+  sourceExportFormats,
+} from '@astrisle/contracts';
 import type {
   ArtifactPreview,
   ApplyPreview,
@@ -174,6 +179,33 @@ async function start() {
     ),
   );
   register('snapshot', (id) => bridge.call('snapshot', identifier.parse(id)));
+  register('askPartner', async (raw) => {
+    const question = z.string().trim().min(1).max(PARTNER_DIALOGUE_LIMITS.question);
+    const parsed = z
+      .strictObject({
+        commissionId: identifier,
+        partnerId: identifier,
+        question,
+        history: z
+          .array(
+            z.strictObject({
+              question,
+              answer: z.string().trim().min(1).max(PARTNER_DIALOGUE_LIMITS.answer),
+            }),
+          )
+          .max(PARTNER_DIALOGUE_LIMITS.history)
+          .optional(),
+      })
+      .safeParse(raw);
+    if (!parsed.success) throw new Error(PARTNER_DIALOGUE_ERRORS.invalid_partner_dialogue);
+    const input = parsed.data;
+    const profiles = await characters.profiles();
+    return bridge.call(
+      'askPartner',
+      input,
+      Object.fromEntries(profiles.map(({ id, displayName }) => [id, displayName])),
+    );
+  });
   register('updateBudget', (id, budget, revision) =>
     bridge.call(
       'updateBudget',

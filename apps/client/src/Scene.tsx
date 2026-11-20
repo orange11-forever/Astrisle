@@ -57,7 +57,14 @@ const c = {
   coral: '#c76a68',
   rock: '#7c91a0',
 };
-export type Panel = 'goal' | 'tasks' | 'evidence' | 'artifacts' | 'requests' | 'settings';
+export type Panel =
+  | 'goal'
+  | 'tasks'
+  | 'dialogue'
+  | 'evidence'
+  | 'artifacts'
+  | 'requests'
+  | 'settings';
 export type CharacterFocus = CharacterId;
 type V3 = [number, number, number];
 const characterHeight = 0.02;
@@ -149,18 +156,21 @@ function Label({
   onClick,
   characterId,
   taskId,
+  title,
 }: {
   position: V3;
   children: ReactNode;
   onClick?: () => void;
   characterId: CharacterId;
   taskId?: string;
+  title?: string;
 }) {
   const portal = useContext(LabelPortal);
   return (
     <Html portal={portal} position={position} center zIndexRange={[4, 0]}>
       <button
         className="scene-label"
+        title={title}
         onClick={onClick}
         data-character-id={characterId}
         data-task-id={taskId}
@@ -314,6 +324,7 @@ function Avatar({
   intent,
   reduced,
   onClick,
+  dialogueAvailable,
   preview = false,
   profile,
   life,
@@ -325,6 +336,7 @@ function Avatar({
   intent?: SceneIntent;
   reduced: boolean;
   onClick?: () => void;
+  dialogueAvailable?: boolean;
   preview?: boolean;
   profile: CharacterProfile;
   life: LeisureWorld;
@@ -469,7 +481,13 @@ function Avatar({
       <GroundShadow />
       {!preview && id !== 'user' && (
         <group ref={labelRoot} position={[0, 2.12, 0]}>
-          <Label position={[0, 0, 0]} onClick={onClick} characterId={id} taskId={task?.id}>
+          <Label
+            position={[0, 0, 0]}
+            onClick={onClick}
+            characterId={id}
+            taskId={task?.id}
+            title={dialogueAvailable ? `与${profile.displayName}对话` : undefined}
+          >
             <b>{profile.displayName}</b>
             <span>
               {task
@@ -493,6 +511,7 @@ function World({
   themeId,
   snapshot,
   onPanel,
+  onPartner,
   reduced,
   reset,
   fixed,
@@ -505,6 +524,7 @@ function World({
   themeId?: IslandThemeId;
   snapshot?: ProjectSnapshot;
   onPanel: (panel: Panel) => void;
+  onPartner: (partnerId: CharacterId) => void;
   reduced: boolean;
   reset: number;
   fixed: boolean;
@@ -724,7 +744,8 @@ function World({
           task={task}
           {...placements.get(id)!}
           reduced={reduced}
-          onClick={id === 'user' ? undefined : () => onPanel('tasks')}
+          onClick={id === 'user' ? undefined : () => onPartner(id)}
+          dialogueAvailable={id !== 'user' && snapshot?.agents.some((agent) => agent.id === id)}
         />
       ))}
     </>
@@ -751,6 +772,7 @@ export function StudioScene(props: {
   themeId?: IslandThemeId;
   snapshot?: ProjectSnapshot;
   onPanel: (panel: Panel) => void;
+  onPartner: (partnerId: CharacterId) => void;
   reduced: boolean;
   reset: number;
   fixed: boolean;
