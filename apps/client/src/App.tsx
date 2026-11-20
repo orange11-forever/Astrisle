@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import {
   Archive,
+  ArrowLeft,
   ArrowDownToLine,
   ArrowRight,
   Check,
@@ -13,6 +14,7 @@ import {
   Inbox,
   Layers,
   Maximize2,
+  MessageCircle,
   Pause,
   Play,
   Plus,
@@ -36,6 +38,7 @@ import type {
   CharacterProfile,
   CommandResult,
   HostAPI,
+  PartnerDialogueReference,
   ProjectSnapshot,
   ProviderInput,
   Workspace,
@@ -50,6 +53,7 @@ import { ArtifactSourceExport } from './ArtifactSourceExport';
 import { artifactVersionFamilies } from '../../../packages/artifacts/src/history';
 import { CommissionActivity } from './CommissionActivity';
 import { PartnerCreator } from './PartnerCreator';
+import { PartnerDialogue, usePartnerDialogue, type DialogueTarget } from './PartnerDialogue';
 import { WritebackHistory, WritebackPreview } from './WritebackHistory';
 import { SceneQualitySelect, type SceneQuality } from './render-quality';
 import type { CharacterFocus, Panel } from './Scene';
@@ -88,6 +92,7 @@ const labels: Record<string, string> = {
 const panelNames: Record<Panel, string> = {
   goal: '目标与计划',
   tasks: '伙伴与任务',
+  dialogue: '伙伴对话',
   evidence: '检查与证据',
   artifacts: '成果与验收',
   requests: '输入与审批',
@@ -176,6 +181,13 @@ export function App() {
   const [workspaceId, setWorkspaceId] = useState('');
   const celebration = useCompletionCelebration(snapshot?.commission, workspaceId);
   const [panel, setPanel] = useState<Panel>('goal');
+  const [dialogueTarget, setDialogueTarget] = useState<DialogueTarget>();
+  const [dialogueSource, setDialogueSource] = useState<{
+    target: DialogueTarget;
+    panel: 'goal' | 'tasks' | 'evidence';
+    id: string;
+  }>();
+  const dialoguePreviewRequest = useRef(0);
   const [modal, setModal] = useState<'workspace' | 'commission' | null>(null);
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
@@ -275,6 +287,26 @@ export function App() {
       }),
     [host, refresh, receiveSnapshot],
   );
+  useEffect(() => {
+    if (!inspectorOpen || !dialogueSource || dialogueSource.target.commissionId !== commissionId)
+      return;
+    if (panel === 'tasks' && dialogueSource.panel === 'tasks' && taskId === dialogueSource.id) {
+      document.getElementById('focused-task-detail')?.focus();
+    }
+    if (panel === 'evidence' && dialogueSource.panel === 'evidence') {
+      const evidence = document.getElementById(`evidence-${dialogueSource.id}`);
+      if (evidence instanceof HTMLDetailsElement) {
+        evidence.open = true;
+        evidence.querySelector('summary')?.focus();
+      }
+    }
+  }, [commissionId, dialogueSource, inspectorOpen, panel, taskId]);
+  useEffect(
+    () => () => {
+      dialoguePreviewRequest.current++;
+    },
+    [commissionId, inspectorOpen],
+  );
   const run = async (action: () => Promise<CommandResult | unknown>, success?: string) => {
     setBusy(true);
     try {
@@ -305,6 +337,23 @@ export function App() {
     characters.find((profile) => profile.id === id)?.displayName ||
     snapshot?.agents.find((agent) => agent.id === id)?.name ||
     id;
+  const commissionPartners =
+    snapshot?.commission.id === commissionId
+      ? snapshot.agents.filter((agent) => agent.id !== 'user')
+      : [];
+  const activeDialogue =
+    dialogueTarget?.commissionId === commissionId &&
+    commissionPartners.some((agent) => agent.id === dialogueTarget.partnerId)
+      ? dialogueTarget
+      : undefined;
+  const dialogue = usePartnerDialogue(
+    activeDialogue,
+    provider?.configured ? host?.askPartner : undefined,
+  );
+  const panelTitle =
+    panel === 'dialogue' && activeDialogue
+      ? `与${characterName(activeDialogue.partnerId)}对话`
+      : panelNames[panel];
   const partnerCreated = (profile: CharacterProfile) => {
     // A bootstrap read started before this write can still be in flight.
     refreshOrder.current.applied = ++refreshOrder.current.issued;
@@ -336,20 +385,31 @@ export function App() {
       .map((artifact) => artifact.id),
   );
   const selectedArtifactIds = new Set(accepted.filter((id) => selectableArtifactIds.has(id)));
-  const openArtifactPreview = async (id: string) => {
+  const openArtifactPreview = async (id: string, expectedVersionId?: string) => {
     if (!host || !snapshot) return;
     const idAtOpen = snapshot.commission.id;
-    setBusy(true);
+    const request = ++dialoguePreviewRequest.current;
+    const fromDialogue = expectedVersionId !== undefined;
+    const isCurrent = () =>
+      selected.current === idAtOpen && dialoguePreviewRequest.current === request;
+    if (!fromDialogue) setBusy(true);
     try {
       const artifact = await host.artifact(id);
-      if (selected.current === idAtOpen) {
+      if (
+        fromDialogue &&
+        (artifact.artifact.versionId !== expectedVersionId ||
+          artifact.artifact.commissionId !== idAtOpen)
+      ) {
+        throw new Error('The preview version does not match the requested reference.');
+      }
+      if (isCurrent()) {
         setPreview(artifact);
-        setNotice('');
+        if (!fromDialogue) setNotice('');
       }
     } catch {
-      if (selected.current === idAtOpen) setNotice('无法读取该版本的成果文件。');
+      if (isCurrent()) setNotice('无法读取该版本的成果文件。');
     } finally {
-      setBusy(false);
+      if (!fromDialogue) setBusy(false);
     }
   };
   const requestArtifactRework: HostAPI['requestArtifactRework'] = async (input) => {
@@ -367,9 +427,46 @@ export function App() {
     }
   };
   const openPanel = (next: Panel) => {
+    dialoguePreviewRequest.current++;
+    setDialogueSource(undefined);
     setPanel(next);
     setInspectorOpen(true);
     setNavOpen(false);
+  };
+  const openDialogue = (partnerId: string) => {
+    if (!commissionPartners.some((agent) => agent.id === partnerId)) {
+      openPanel('tasks');
+      return;
+    }
+    setDialogueTarget({ commissionId, partnerId });
+    openPanel('dialogue');
+  };
+  const openDialogueReference = ({ kind, id }: PartnerDialogueReference) => {
+    if (!activeDialogue || !snapshot || selected.current !== activeDialogue.commissionId) return;
+    if (kind === 'commission' && id === snapshot.commission.id) {
+      openPanel('goal');
+      setDialogueSource({ target: activeDialogue, panel: 'goal', id });
+      return;
+    }
+    if (kind === 'task' && snapshot.tasks.some((entry) => entry.id === id)) {
+      setTaskId(id);
+      openPanel('tasks');
+      setDialogueSource({ target: activeDialogue, panel: 'tasks', id });
+      return;
+    }
+    if (kind === 'evidence' && snapshot.evidence.some((entry) => entry.id === id)) {
+      openPanel('evidence');
+      setDialogueSource({ target: activeDialogue, panel: 'evidence', id });
+      return;
+    }
+    if (kind === 'artifact') {
+      const artifact = snapshot.artifacts.find((entry) => entry.versionId === id);
+      if (artifact) {
+        void openArtifactPreview(artifact.id, artifact.versionId);
+        return;
+      }
+    }
+    setNotice('这份引用资料在当前委托中暂不可用。');
   };
   const switchWorkspace = (id: string) => {
     setWorkspaceId(id);
@@ -621,6 +718,7 @@ export function App() {
             themeId={islandTheme}
             snapshot={snapshot}
             onPanel={openPanel}
+            onPartner={openDialogue}
             reduced={reduced}
             reset={reset}
             fixed={fixed}
@@ -778,14 +876,14 @@ export function App() {
         )}
       </main>
       <aside
-        className="inspector"
+        className={`inspector ${panel === 'dialogue' ? 'inspector-dialogue' : ''}`}
         aria-hidden={!inspectorOpen}
         inert={!inspectorOpen}
-        aria-label={panelNames[panel]}
+        aria-label={panelTitle}
       >
         <header className="inspector-header">
           <div>
-            <h2>{panelNames[panel]}</h2>
+            <h2>{panelTitle}</h2>
           </div>
           <div>
             {snapshot && <span className="revision">修订 {snapshot.commission.revision}</span>}
@@ -799,6 +897,16 @@ export function App() {
           </div>
         </header>
         <div className="inspector-body">
+          {dialogueSource?.target.commissionId === commissionId &&
+            dialogueSource.panel === panel && (
+              <button
+                className="dialogue-return"
+                type="button"
+                onClick={() => openDialogue(dialogueSource.target.partnerId)}
+              >
+                <ArrowLeft size={14} aria-hidden="true" /> 返回对话
+              </button>
+            )}
           {panel === 'settings' ? (
             <SettingsPanel
               provider={provider}
@@ -833,6 +941,24 @@ export function App() {
             </>
           ) : (
             <>
+              {inspectorOpen && panel === 'dialogue' && activeDialogue && (
+                <PartnerDialogue
+                  key={activeDialogue.partnerId}
+                  name={characterName(activeDialogue.partnerId)}
+                  commission={snapshot.commission.title}
+                  dialogue={dialogue}
+                  supported={Boolean(host?.askPartner)}
+                  configured={provider?.configured === true}
+                  onBack={() => openPanel('tasks')}
+                  onSettings={() => {
+                    openPanel('settings');
+                    requestAnimationFrame(() =>
+                      document.getElementById('model-preferences')?.focus(),
+                    );
+                  }}
+                  onReference={openDialogueReference}
+                />
+              )}
               {panel === 'goal' && (
                 <>
                   <div className="goal-summary">
@@ -941,6 +1067,25 @@ export function App() {
               )}
               {panel === 'tasks' && (
                 <>
+                  {commissionPartners.length > 0 && (
+                    <div className="dialogue-entries" role="group" aria-label="委托伙伴">
+                      {commissionPartners.map(({ id }) => {
+                        const name = characterName(id);
+                        return (
+                          <button
+                            className="dialogue-entry"
+                            key={id}
+                            type="button"
+                            aria-label={`与${name}对话`}
+                            onClick={() => openDialogue(id)}
+                          >
+                            <span>{name}</span>
+                            <MessageCircle size={15} aria-hidden="true" />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                   {snapshot.tasks.length === 0 ? (
                     <Empty title="还没有任务">计划生成后可查看每项任务的进度。</Empty>
                   ) : (
@@ -967,7 +1112,7 @@ export function App() {
                     ))
                   )}
                   {task && (
-                    <section className="task-detail">
+                    <section className="task-detail" id="focused-task-detail" tabIndex={-1}>
                       <h3>{task.title}</h3>
                       <p>{task.description}</p>
                       <h4>当前步骤</h4>
@@ -1066,7 +1211,7 @@ export function App() {
                     </Empty>
                   ) : (
                     snapshot.evidence.map((e) => (
-                      <details className="evidence" key={e.id}>
+                      <details className="evidence" key={e.id} id={`evidence-${e.id}`}>
                         <summary>
                           <span>
                             <b>{e.summary}</b>
@@ -1575,7 +1720,7 @@ function SettingsPanel({
       setBaseUrl(provider.baseUrl);
       setModel(provider.model);
     }
-  }, [provider]);
+  }, [provider?.kind, provider?.baseUrl, provider?.model]);
   return (
     <>
       <nav className="settings-index" aria-label="设置分区">
@@ -1668,6 +1813,7 @@ function SettingsPanel({
         <label htmlFor="provider-kind">API 协议</label>
         <select
           id="provider-kind"
+          disabled={!!host && !provider}
           value={kind}
           onChange={(e) => {
             const next = e.target.value as ProviderInput['kind'];
@@ -1685,6 +1831,7 @@ function SettingsPanel({
         <label htmlFor="provider-url">API 基础地址</label>
         <input
           id="provider-url"
+          disabled={!!host && !provider}
           value={baseUrl}
           onChange={(e) => setBaseUrl(e.target.value)}
           required
@@ -1694,6 +1841,7 @@ function SettingsPanel({
         <label htmlFor="provider-model">模型名称</label>
         <input
           id="provider-model"
+          disabled={!!host && !provider}
           value={model}
           onChange={(e) => setModel(e.target.value)}
           required
@@ -1701,6 +1849,7 @@ function SettingsPanel({
         <label htmlFor="provider-key">API 密钥 {provider?.hasApiKey ? '· 已保存' : ''}</label>
         <input
           id="provider-key"
+          disabled={!!host && !provider}
           ref={keyRef}
           type="password"
           autoComplete="new-password"

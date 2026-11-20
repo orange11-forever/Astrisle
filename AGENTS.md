@@ -17,6 +17,7 @@ Astrisle 是 Windows 上的多智能体桌面工作台。一座岛屿对应一�
 ## 修改时保留的行为
 
 - 角色以稳定 ID 关联任务、成果与复核证据，姓名和模型可更换。新委托保存提交时的伙伴名单，旧委托按保存的名单恢复。用户化身只参与岛上活动，同一成果的生产和复核须由不同伙伴承担。
+- 伙伴对话按委托 ID 和伙伴 ID 隔离。从当前委托快照选取相关摘要，按本次发给模型的资料校验引用。点击文件引用时，打开所引版本。对话通过只读运行时方法接入，执行工具和变更委托仍走各自的命令入口。
 - 角色依据真实任务和交接事件工作，空闲时自动散步和休闲。保留自由视角、2D 模式和减少动效。展示用户当前的蓝发女仆时，用 `pnpm.cmd demo` 加载已配置的模型。自动化测试使用合成模型。
 - 渲染进程通过 preload 的 `HostAPI` 访问桌面能力。文件选择、可信模型检查和凭据处理在桌面端完成。新增接口时同步核对共享类型、preload 暴露项及主进程的调用者和参数校验。[模型导入流程](docs/development/character-model-import.md)
 - 委托在独立工作副本中运行，原项目写回沿用预览、确认和恢复流程。有副作用的调用保留请求标识和回执，重启后先核查未知结果，避免重复执行。[写回与恢复](docs/development/stage-10.md)
@@ -30,7 +31,7 @@ Astrisle 是 Windows 上的多智能体桌面工作台。一座岛屿对应一�
 ```powershell
 pnpm.cmd typecheck
 pnpm.cmd format:check
-pnpm.cmd test
+pnpm.cmd test --maxWorkers=2
 pnpm.cmd test:publishing
 pnpm.cmd build
 pnpm.cmd test:ui

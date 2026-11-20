@@ -18,6 +18,7 @@ const api: HostAPI = {
   chooseDirectory: () => invoke('chooseDirectory'),
   submit: (input) => invoke('submit', input),
   snapshot: (id) => invoke('snapshot', id),
+  askPartner: (input) => invoke('askPartner', input),
   control: (id, action) => invoke('control', id, action),
   updateBudget: (id, budget, revision) => invoke('updateBudget', id, budget, revision),
   answer: (id, answer, approve) => invoke('answer', id, answer, approve),

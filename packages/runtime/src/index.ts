@@ -14,6 +14,8 @@ import type {
   Budget,
   CommandResult,
   NewWorkspaceInput,
+  PartnerDialogueInput,
+  PartnerDialogueReply,
   ProjectSnapshot,
   RuntimeOptions,
   Scope,
@@ -42,6 +44,7 @@ import { createPlanTool, runtimeTools } from './tools';
 import { buildTaskContinuation, summarizeTaskEvidence } from './task-context';
 import { budgetExhausted, validBudget } from './budget';
 import { RuntimeOwnership } from './ownership';
+import { answerPartnerQuestion, dialogueError, validateDialogueInput } from './partner-dialogue';
 import {
   directedReworkOutputs,
   pathComparisonKey,
@@ -54,6 +57,10 @@ export interface RuntimeService {
   createWorkspace(input: NewWorkspaceInput): Promise<Workspace>;
   submit(input: SubmitInput, roster?: AgentIdentity[]): Promise<CommandResult>;
   snapshot(id: string): Promise<ProjectSnapshot>;
+  askPartner(
+    input: PartnerDialogueInput,
+    displayNames?: Record<string, string>,
+  ): Promise<PartnerDialogueReply>;
   control(id: string, action: 'pause' | 'resume' | 'cancel'): Promise<CommandResult>;
   updateBudget(id: string, budget: Budget, expectedBudgetRevision: number): Promise<CommandResult>;
   answer(requestId: string, answer: string, approve?: boolean): Promise<CommandResult>;
@@ -141,6 +148,7 @@ export function createRuntime(options: RuntimeOptions): RuntimeService {
     createWorkspace: command(runtime.createWorkspace),
     submit: command(runtime.submit),
     snapshot: command(runtime.snapshot),
+    askPartner: command(runtime.askPartner),
     control: command(runtime.control),
     updateBudget: command(runtime.updateBudget),
     answer: command(runtime.answer),
@@ -240,6 +248,7 @@ class Runtime implements RuntimeService {
   private writebackBusy = new Set<string>();
   private closing = false;
   private closed = false;
+  private dialogueShutdown = new AbortController();
   private activeSince = new Map<string, number>();
   private budgetTimer: ReturnType<typeof setInterval>;
   constructor(private options: RuntimeOptions) {
@@ -707,6 +716,24 @@ class Runtime implements RuntimeService {
     const operations = this.writebacks.list(s.workspace.id);
     if (operations.length) s.applyOperations = operations;
     return s;
+  }
+  async askPartner(
+    input: PartnerDialogueInput,
+    displayNames?: Record<string, string>,
+  ): Promise<PartnerDialogueReply> {
+    validateDialogueInput(input);
+    const snapshot = this.store.findProject(input.commissionId);
+    if (!snapshot) throw dialogueError('commission_not_found');
+    const partner = snapshot.agents.find(({ id }) => id === input.partnerId && id !== 'user');
+    if (!partner) throw dialogueError('partner_unavailable');
+    return answerPartnerQuestion(
+      snapshot,
+      partner,
+      input,
+      () => this.options.getCredentials(),
+      this.dialogueShutdown.signal,
+      displayNames,
+    );
   }
   subscribe(listener: (snapshot: ProjectSnapshot) => void): () => void {
     this.listeners.add(listener);
@@ -2380,6 +2407,7 @@ class Runtime implements RuntimeService {
     if (this.closed) return;
     this.closing = true;
     clearInterval(this.budgetTimer);
+    this.dialogueShutdown.abort();
     for (const run of this.running.values()) run.controller.abort(new Error('Runtime closing'));
     await Promise.allSettled(pendingCommands);
     for (const s of this.store.projects())

@@ -253,6 +253,37 @@ export interface ArtifactPreview {
   content?: string;
   format: 'text' | 'binary';
 }
+export const PARTNER_DIALOGUE_LIMITS = { question: 1200, answer: 4000, history: 4 } as const;
+export const PARTNER_DIALOGUE_ERRORS = {
+  invalid_partner_dialogue: '请选择委托和伙伴，问题最多 1200 字符，历史对话最多四轮。',
+  commission_not_found: '找不到这份委托。',
+  partner_unavailable: '这位伙伴不在这份委托的伙伴名单中。',
+  provider_missing: '请先在设置中配置模型。',
+  provider_error: '连接模型失败，请检查模型配置后重试。',
+  partner_reply_invalid: '模型未返回可核对的回答，请重试。',
+  partner_dialogue_timeout: '伙伴回答超时，请重试。',
+  runtime_closing: '工作运行时正在关闭，伙伴对话已取消。',
+} as const;
+export interface PartnerDialogueTurn {
+  question: string;
+  answer: string;
+}
+export interface PartnerDialogueInput {
+  commissionId: string;
+  partnerId: string;
+  question: string;
+  history?: PartnerDialogueTurn[];
+}
+export interface PartnerDialogueReference {
+  kind: 'commission' | 'task' | 'artifact' | 'evidence';
+  /** Commission ID, task ID, immutable artifact version ID, or evidence ID. */
+  id: string;
+  label: string;
+}
+export interface PartnerDialogueReply {
+  answer: string;
+  references: PartnerDialogueReference[];
+}
 export interface ArtifactReworkInput {
   commissionId: string;
   artifactId: string;
@@ -379,6 +410,7 @@ export interface HostAPI {
   chooseDirectory(): Promise<string | null>;
   submit(input: SubmitInput): Promise<CommandResult>;
   snapshot(commissionId: string): Promise<ProjectSnapshot>;
+  askPartner?(input: PartnerDialogueInput): Promise<PartnerDialogueReply>;
   control(commissionId: string, action: 'pause' | 'resume' | 'cancel'): Promise<CommandResult>;
   updateBudget(
     commissionId: string,

@@ -883,6 +883,121 @@ nav button.active {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.task-detail:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 4px;
+}
+.dialogue-entries {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(135px, 100%), 1fr));
+  gap: 8px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid var(--line);
+}
+.dialogue-entry {
+  justify-content: space-between;
+  text-align: start;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.dialogue-entry svg {
+  flex: none;
+}
+.inspector-dialogue .inspector-header > div:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.partner-dialogue {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.dialogue-context,
+.dialogue-composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.dialogue-context p {
+  margin: 0;
+  color: #59727c;
+  overflow-wrap: anywhere;
+}
+.dialogue-context button,
+.dialogue-return {
+  flex-shrink: 0;
+}
+.dialogue-return {
+  margin-bottom: 12px;
+}
+.dialogue-hint {
+  margin: 0;
+  color: #59727c;
+}
+.dialogue-transcript,
+.dialogue-references {
+  display: grid;
+  gap: 12px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.dialogue-transcript > li {
+  display: grid;
+  gap: 8px;
+}
+.dialogue-question,
+.dialogue-answer {
+  padding: 10px 12px;
+  border-radius: 7px;
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.dialogue-question {
+  background: #e6efec;
+  margin-inline-start: 18px;
+}
+.dialogue-answer {
+  background: #f5f7f2;
+  border: 1px solid var(--line);
+  margin-inline-end: 18px;
+}
+.dialogue-answer p {
+  margin: 0;
+}
+.dialogue-question strong,
+.dialogue-answer strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #31596a;
+}
+.dialogue-references {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+.dialogue-references li,
+.dialogue-references button {
+  min-width: 0;
+  max-width: 100%;
+}
+.dialogue-references button {
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+.dialogue-unconfigured button {
+  margin-top: 8px;
+}
+.dialogue-composer {
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
 .error-text {
   color: #a3483d;
   font-size: 12px;
