@@ -4,7 +4,7 @@ import { humanoidGlb, seedIslandLife } from '../fixtures/island-life';
 async function inspect(
   page: Page,
   seconds = 0,
-  until?: { id: string; stage: string; activity?: string },
+  until?: { id?: string; stage: string; activity?: string; count?: number },
   ids = ['mori', 'luma', 'user'],
 ) {
   return page.evaluate(
@@ -16,21 +16,25 @@ async function inspect(
       const { _roots } = await import(url);
       const state = _roots.get(document.querySelector('canvas'))?.store.getState();
       if (!state) return null;
+      const watched = (until?.id ? [until.id] : ids).map((id) =>
+        state.scene.getObjectByName(`avatar-${id}`),
+      );
       // Exercise the mounted useFrame callbacks with deterministic active-time deltas.
       // No production test hook or changed activity speed is needed on software GPUs.
       for (let i = 0; i < Math.round(seconds / 0.05); i++) {
         for (const subscriber of state.internal.subscribers) subscriber.ref.current(state, 0.05);
         if (until) {
-          const actor = state.scene.getObjectByName(`avatar-${until.id}`);
-          if (
-            actor?.userData.activityStage === until.stage &&
-            (!until.activity || actor.userData.activity === until.activity)
-          )
-            break;
+          const matching = watched.filter(
+            (actor) =>
+              actor?.userData.activityStage === until.stage &&
+              (!until.activity || actor.userData.activity === until.activity),
+          );
+          if (matching.length >= (until.count ?? 1)) break;
         }
       }
       state.scene.updateMatrixWorld(true);
       state.invalidate();
+      if (until?.count) state.gl.render(state.scene, state.camera);
       return {
         actors: ids.map((id) => {
           const actor = state.scene.getObjectByName(`avatar-${id}`);
@@ -96,9 +100,7 @@ async function open(page: Page, imported = false) {
   if (imported) await expect.poll(async () => (await inspect(page))?.actors[0].knee).toBeDefined();
 }
 
-async function selectCommissionAndPauseFrames(page: Page) {
-  await page.getByRole('button', { name: '展开项目与委托' }).click();
-  await page.getByRole('button', { name: '场景验收 待验收' }).click();
+async function pauseFrames(page: Page) {
   // The mounted scene follows inspect()'s clock so GPU speed cannot skip a transition.
   await page.evaluate(async () => {
     const url = performance
@@ -109,37 +111,40 @@ async function selectCommissionAndPauseFrames(page: Page) {
   });
 }
 
+async function selectCommissionAndPauseFrames(page: Page) {
+  await page.getByRole('button', { name: '展开项目与委托' }).click();
+  await page.getByRole('button', { name: '场景验收 待验收' }).click();
+  await pauseFrames(page);
+}
+
 test('island companions automatically sit, sip tea and share a synchronized swing', async ({
   page,
 }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await open(page);
-  const seen = new Set<string>();
-  let captured = false;
-  for (let i = 0; i < 65 && (seen.size < 3 || !captured); i++) {
-    const state = (await inspect(page, 1))!;
-    for (const actor of state.actors)
-      if (actor.stage === 'enjoying') {
-        seen.add(actor.activity);
-        expect(actor.blend).toBe(1);
-        if (actor.activity === 'tea') {
-          expect(actor.cup).toBe(true);
-          expect(actor.gripGap).toBeLessThan(0.025);
-        }
-        if (actor.activity === 'swing') expect(actor.tilt).toBeCloseTo(state.swing!, 6);
-      }
-    if (!captured && state.actors.filter((a) => a.stage === 'enjoying').length >= 2) {
-      await page.screenshot({ path: 'test-results/island-life-overview.png', fullPage: true });
-      captured = true;
+  await pauseFrames(page);
+  for (const activity of ['sit', 'tea', 'swing']) {
+    const state = (await inspect(page, 120, { stage: 'enjoying', activity }))!;
+    const actor = state.actors.find((a) => a.stage === 'enjoying' && a.activity === activity);
+    expect(actor?.blend, activity).toBe(1);
+    if (activity === 'tea') {
+      expect(actor!.cup).toBe(true);
+      expect(actor!.gripGap).toBeLessThan(0.025);
+    }
+    if (activity === 'swing') {
+      const moving = (await inspect(page, 0.25))!;
+      expect(Math.abs(moving.swing!)).toBeGreaterThan(0.001);
+      expect(moving.actors.find((a) => a.id === actor!.id)?.tilt).toBeCloseTo(moving.swing!, 6);
     }
   }
-  expect([...seen].sort()).toEqual(['sit', 'swing', 'tea']);
-  expect(captured).toBe(true);
+  const together = (await inspect(page, 120, { stage: 'enjoying', count: 2 }))!;
+  expect(together.actors.filter((a) => a.stage === 'enjoying').length).toBeGreaterThanOrEqual(2);
+  await page.screenshot({ path: 'test-results/island-life-overview.png', fullPage: true });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await expect
     .poll(async () =>
-      (await inspect(page))?.actors.every((a) => a.blend === 0 && a.stage === 'roaming'),
+      (await inspect(page, 0.05))?.actors.every((a) => a.blend === 0 && a.stage === 'roaming'),
     )
     .toBe(true);
   expect((await inspect(page))?.swing).toBe(0);
