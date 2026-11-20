@@ -20,6 +20,76 @@ async function fixture() {
 }
 
 describe('private local character profiles', () => {
+  it('adds a stable partner without losing the model or orientation in a version 1 profile file', async () => {
+    const { directory, source, bytes, store } = await fixture();
+    const imported = await store.importFile('mori', source);
+    const root = join(directory, 'profile');
+    const mori = { id: 'mori', displayName: '小蓝', model: imported.model, rotationY: 270 };
+    await writeFile(
+      join(root, 'characters.json'),
+      JSON.stringify({
+        version: 1,
+        characters: [{ id: 'user', displayName: '我' }, mori, { id: 'luma', displayName: 'Luma' }],
+      }),
+    );
+
+    const partner = await store.create('  晨星  ');
+    expect(partner.id).toMatch(/^partner-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/);
+    expect(partner.displayName).toBe('晨星');
+    await store.update(partner.id, { displayName: '晨星二号', rotationY: 90 });
+
+    const reopened = new CharacterStore(root);
+    expect(await reopened.profiles()).toEqual([
+      mori,
+      { id: 'luma', displayName: 'Luma' },
+      { id: 'user', displayName: '我' },
+      { id: partner.id, displayName: '晨星二号', rotationY: 90 },
+    ]);
+    expect(Buffer.from(await reopened.loadModel(imported.model!.assetId))).toEqual(bytes);
+  });
+
+  it('serializes concurrent partner creation and profile edits even when names match', async () => {
+    const { directory, store } = await fixture();
+    const [first, second] = await Promise.all([
+      store.create('晨星'),
+      store.create('晨星'),
+      store.update('user', { rotationY: 180 }),
+    ]);
+    expect(first.id).not.toBe(second.id);
+    const reopened = new CharacterStore(join(directory, 'profile'));
+    const profiles = await reopened.profiles();
+    expect(profiles).toHaveLength(5);
+    expect(profiles.slice(3)).toEqual([first, second]);
+    expect(profiles[2]).toMatchObject({ id: 'user', rotationY: 180 });
+  });
+
+  it('retries partner creation successfully when the local profile directory becomes available', async () => {
+    const { directory, store } = await fixture();
+    const root = join(directory, 'profile');
+    await writeFile(root, 'directory unavailable');
+    await expect(store.create('晨星')).rejects.toMatchObject({ code: expect.any(String) });
+    await expect(readFile(root, 'utf8')).resolves.toBe('directory unavailable');
+    await rm(root);
+
+    const partner = await store.create('晨星');
+    const reopened = new CharacterStore(root);
+    expect((await reopened.profiles()).slice(3)).toEqual([partner]);
+    expect(await readdir(root)).toEqual(['characters.json']);
+  });
+
+  it('rejects invalid names and unregistered partner IDs before changing settings or reading models', async () => {
+    const { directory, store } = await fixture();
+    for (const displayName of ['', '  ', '星'.repeat(41), 'bad\nname', 'bad\u0000name']) {
+      await expect(store.create(displayName)).rejects.toThrow(/角色名称/);
+    }
+    const unknown = 'partner-00000000-0000-4000-8000-000000000001';
+    const missingPath = join(directory, 'missing.glb');
+    await expect(store.update(unknown, { displayName: '晨星' })).rejects.toThrow(/未登记/);
+    await expect(store.importFile(unknown, missingPath)).rejects.toThrow(/未登记/);
+    await expect(store.prepareImport(unknown, missingPath)).rejects.toThrow(/未登记/);
+    expect(await store.profiles()).toHaveLength(3);
+  });
+
   it('copies an import durably and loads it after the original is moved', async () => {
     const { directory, source, bytes, store } = await fixture();
     const profile = await store.importFile('mori', source);

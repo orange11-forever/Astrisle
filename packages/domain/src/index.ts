@@ -1,33 +1,42 @@
 import type {
+  AgentIdentity,
+  CharacterProfile,
   Criterion,
   ModelTaskProposal,
   ProjectSnapshot,
   Task,
 } from '../../contracts/src/index';
-export const agents = [
-  {
-    id: 'mori',
-    name: 'Mori',
-    temperament: 'explorer' as const,
-  },
-  {
-    id: 'luma',
-    name: 'Luma',
-    temperament: 'organizer' as const,
-  },
-];
+import { DEFAULT_CHARACTERS } from '../../contracts/src/index';
+
+export function agentsFromCharacters(profiles: readonly CharacterProfile[]): AgentIdentity[] {
+  return profiles
+    .filter((profile) => profile.id !== 'user')
+    .map(({ id, displayName }) => ({
+      id,
+      name: displayName,
+      temperament: id === 'luma' ? 'organizer' : 'explorer',
+    }));
+}
+
+export const agents = agentsFromCharacters(DEFAULT_CHARACTERS);
 const kinds = new Set(['investigate', 'implement', 'review', 'integrate']);
-export function validatePlan(value: unknown, criteria: Criterion[]): ModelTaskProposal[] {
+export function validatePlan(
+  value: unknown,
+  criteria: Criterion[],
+  roster: readonly AgentIdentity[] = agents,
+): ModelTaskProposal[] {
   if (!Array.isArray(value) || value.length < 2 || value.length > 48)
     throw new Error('Plan must contain 2–48 tasks');
   const tasks = structuredClone(value) as ModelTaskProposal[],
     ids = new Set<string>();
+  const partnerIds = new Set(roster.map((agent) => agent.id));
   for (const t of tasks) {
     if (
       !t ||
       !/^[a-zA-Z0-9_-]{1,80}$/.test(t.key) ||
       ids.has(t.key) ||
-      !['mori', 'luma'].includes(t.agentId) ||
+      !partnerIds.has(t.agentId) ||
+      t.agentId === 'user' ||
       !kinds.has(t.kind) ||
       typeof t.title !== 'string' ||
       !t.title.trim() ||
@@ -81,8 +90,12 @@ export function validatePlan(value: unknown, criteria: Criterion[]): ModelTaskPr
     if (task.kind !== 'review') continue;
     task.dependencyKinds = { ...task.dependencyKinds };
     for (const dependency of task.dependencies) {
-      if (tasks.find((t) => t.key === dependency)?.kind !== 'review')
+      const author = tasks.find((t) => t.key === dependency)!;
+      if (author.kind !== 'review') {
+        if (author.agentId === task.agentId)
+          throw new Error('An author cannot review their own work');
         task.dependencyKinds[dependency] = 'artifact_available';
+      }
     }
   }
   // A DAG can still deadlock when an author waits for a reviewed predecessor

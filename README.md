@@ -17,7 +17,7 @@
 
 Astrisle 是一个面向 Windows 的多 Agent 桌面工作台。伙伴可以从零创建项目、修改代码、撰写报告和演示稿，并通过分工、交接、复核与返工推进委托。3D 场景呈现协作关系，工作面板提供文件、证据、权限和进度。
 
-**第十二阶段开发预览。** 在花港码头可以查看成果的版本历史、比较两版内容、对当前版本提返工要求。文档和演示稿共用 Markdown 源稿，表格使用 CSV 或 TSV。伙伴能在委托中生成成品，你也可以从任意一个可读取的源稿版本另存可编辑文件。[第十二阶段记录](docs/development/stage-12.md)
+**第十三阶段开发预览。** 现在可以在工作室设置中添加伙伴。新伙伴会出现在岛上，可以接手新委托的生产任务，也可以独立复核其他伙伴的成果。码头的每个成果版本都能查看作者和复核人。[自定义工作伙伴](docs/development/modern-features-backlog.md#自定义工作伙伴)
 
 第二至第五阶段已由 [PR #2：任务续跑、运行时保护与星岛角色配置](https://github.com/orange11-forever/Astrisle/pull/2) 合并。第六、七阶段已由 [PR #3：Windows 进程监督、岛屿散步与验收庆祝](https://github.com/orange11-forever/Astrisle/pull/3) 合并。自由视角和角色休闲见[第八阶段](docs/development/stage-8.md)，模型实测与角色导入见[第九阶段](docs/development/stage-9.md)，Windows 原项目写回与恢复见[第十阶段](docs/development/stage-10.md)。
 
@@ -39,7 +39,7 @@ Astrisle 是一个面向 Windows 的多 Agent 桌面工作台。伙伴可以从�
 |---|---|
 | 桌面 | Electron 窗口与托盘、受限 preload 桥接、独立 Node 运行时、系统加密的 API 密钥存储 |
 | 工作空间 | 创建或导入项目、独立工作副本、文件基线、候选整合、导出到新目录；已验收新增/修改的 Windows 写回、备份、核查与恢复 |
-| 委托与协作 | SQLite 持久化、幂等派单、动态任务图、两位伙伴、版本化交接、复核与返工、持久化动作回执与重启续接、运行时独占与调用代次校验 |
+| 委托与协作 | SQLite 持久化、幂等派单、按伙伴名单分工、动态任务图、版本化交接、独立复核与返工、持久化动作回执与重启续接、运行时独占与调用代次校验 |
 | 模型适配 | OpenAI-compatible Chat Completions、OpenAI Responses、Anthropic Messages、Gemini generateContent 四种协议 |
 | 工作工具 | 文件检索/读取/写入/局部修改、明确授权的本机进程、Windows Job 进程树停止确认、按域名授权的网页读取 |
 | 成果审阅 | 历史版本、逐行差异、版本复核证据、定向返工和受影响成果重建 |
@@ -108,7 +108,9 @@ pnpm.cmd dev
 
 全景支持拖动 360° 环绕、右键拖动平移和滚轮缩放；触屏使用单指环绕、双指平移缩放。可以从近俯视到接近水平观察，镜头保持在地面上方；平移目标限制在岛屿范围。“固定镜头”同时锁定旋转、平移和缩放，调整窗口大小不会重置已经选好的视角。
 
-在“工作室设置 → 角色外观与名称”中，可以修改每位角色的显示名称，导入或替换本地模型，并调整朝向。名称不改变内部任务身份或历史记录。模型会保存到应用自己的数据目录，原文件之后移动也不影响使用。
+打开 **工作室设置 → 角色外观与名称 → 添加伙伴**，输入名字，点击 **创建伙伴**。伙伴会以默认外观加入各座岛屿。点击 **导入模型** 可以替换外观，随后可调整朝向。模型保存在应用自己的数据目录，移动原文件后仍可使用。
+
+新建委托时，可以在工作目标里写「请小满撰写交接说明，由 Mori 复核」，也可以让规划器自行分工。每份委托在提交时保存当时的伙伴名单。同一成果需要另一位伙伴复核。在 **伙伴与任务** 可看分工，在 **成果与验收** 可看每个版本的作者和复核人。改名后，历史记录仍指向同一位伙伴。
 
 当前接受 GLB、自包含 glTF 2、3MF、STL、OBJ 和 FBX，源文件及伴随资源合计须在 100 MB、模型在 200 万三角面以内。OBJ 的 MTL/贴图和 FBX 的外部贴图应放在模型目录或其子目录中；程序复制所需资源，缺失或不支持的材质会明确报错。GLB/glTF 的资源仍须内嵌，暂不支持 Draco、Meshopt、KTX2 等外部解码器。具体格式范围见[模型导入说明](docs/development/character-model-import.md)。
 
@@ -195,7 +197,8 @@ docs/                 产品设计、概念图、计划和阶段记录
 - [概念图生成说明](docs/concepts/astrisle-star-island-prompt.md)
 - [鲸鱼角色参考、署名与使用条件](docs/concepts/blue-whale-girl-references.md)：角色视觉资产保留上游 CC BY-NC-SA 4.0 的署名、非商业与相同方式共享条件，具体范围见该文档。
 - [花港小镇与跨区行走](docs/development/stage-11.md)
-- [最新阶段与下次交接](docs/development/stage-12.md)
+- [成果版本、定向返工与源稿发布](docs/development/stage-12.md)
+- [自定义工作伙伴](docs/development/modern-features-backlog.md#自定义工作伙伴)
 - [用户确认的后续现代化功能](docs/development/modern-features-backlog.md)
 - README Logo 沿用软件现有标志，内侧星形使用 Lucide Sparkles；[许可说明](docs/assets/LICENSE-lucide.txt)。
 

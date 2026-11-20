@@ -3,7 +3,7 @@ import { lstat, mkdir, mkdtemp, open, realpath, rm, writeFile } from 'node:fs/pr
 import { tmpdir } from 'node:os';
 import { dirname, extname, join } from 'node:path';
 import { CharacterStore, validateCharacterModel } from '../apps/desktop/src/characters';
-import type { CharacterId, CharacterModel } from '../packages/contracts/src/index';
+import type { CharacterModel } from '../packages/contracts/src/index';
 import {
   characterResourcePath,
   MAX_CHARACTER_STORED_BYTES,
@@ -120,16 +120,15 @@ export async function prepareDemoData(sourceRoot: string, temporaryParent = tmpd
     const profiles = await new CharacterStore(root).profiles().catch((error) => {
       throw new Error('当前 characters.json 与 Astrisle 角色配置格式不符。', { cause: error });
     });
-    const expected: Record<CharacterId, string> = {
-      mori: 'builtin',
-      luma: 'builtin',
-      user: 'builtin',
-    };
+    const expected: Record<string, string> = {};
     const copied = new Map<string, CharacterModel>();
     const assets = join(root, 'character-assets');
     for (const profile of profiles) {
       const model = profile.model;
-      if (!model) continue;
+      if (!model) {
+        expected[profile.id] = 'builtin';
+        continue;
+      }
       try {
         const previous = copied.get(model.assetId);
         if (

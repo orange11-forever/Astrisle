@@ -40,7 +40,7 @@ import type {
   ProviderInput,
   Workspace,
 } from '@astrisle/contracts';
-import { DEFAULT_CHARACTERS } from '@astrisle/contracts';
+import { DEFAULT_CHARACTERS, isValidCharacterName } from '@astrisle/contracts';
 import { StudioScene } from './Scene';
 import type { StudioDistrict } from './StudioCamera';
 import { Archipelago } from './Archipelago';
@@ -49,6 +49,7 @@ import { ArtifactReview } from './ArtifactReview';
 import { ArtifactSourceExport } from './ArtifactSourceExport';
 import { artifactVersionFamilies } from '../../../packages/artifacts/src/history';
 import { CommissionActivity } from './CommissionActivity';
+import { PartnerCreator } from './PartnerCreator';
 import { WritebackHistory, WritebackPreview } from './WritebackHistory';
 import { SceneQualitySelect, type SceneQuality } from './render-quality';
 import type { CharacterFocus, Panel } from './Scene';
@@ -301,7 +302,20 @@ export function App() {
   const provider = bootstrap?.provider;
   const characters = bootstrap?.characters || [...DEFAULT_CHARACTERS];
   const characterName = (id: string) =>
-    characters.find((profile) => profile.id === id)?.displayName || id;
+    characters.find((profile) => profile.id === id)?.displayName ||
+    snapshot?.agents.find((agent) => agent.id === id)?.name ||
+    id;
+  const partnerCreated = (profile: CharacterProfile) => {
+    // A bootstrap read started before this write can still be in flight.
+    refreshOrder.current.applied = ++refreshOrder.current.issued;
+    setBootstrap((previous) => {
+      if (!previous || previous.characters?.some((entry) => entry.id === profile.id))
+        return previous;
+      return { ...previous, characters: [...(previous.characters ?? DEFAULT_CHARACTERS), profile] };
+    });
+    setNotice(`${profile.displayName} 已加入工作室`);
+    void refresh().catch(() => {});
+  };
   const artifactFamilies = useMemo(
     () => (snapshot ? artifactVersionFamilies(snapshot) : []),
     [snapshot],
@@ -788,7 +802,7 @@ export function App() {
           {panel === 'settings' ? (
             <SettingsPanel
               provider={provider}
-              busy={busy}
+              busy={busy || (!!host && !bootstrap)}
               reduced={reduced}
               onReduced={setReduced}
               quality={sceneQuality}
@@ -799,6 +813,7 @@ export function App() {
               run={run}
               host={host}
               characters={characters}
+              onPartnerCreated={partnerCreated}
             />
           ) : !snapshot ? (
             <>
@@ -935,7 +950,9 @@ export function App() {
                         key={t.id}
                         onClick={() => setTaskId(t.id)}
                       >
-                        <span className={`partner-small ${t.agentId === 'mori' ? 'mori' : 'luma'}`}>
+                        <span
+                          className={`partner-small ${t.agentId === 'mori' || t.agentId === 'luma' ? t.agentId : 'custom-partner'}`}
+                        >
                           {[...characterName(t.agentId)][0]}
                         </span>
                         <span>
@@ -1074,6 +1091,7 @@ export function App() {
                     <ArtifactReview
                       key={snapshot.commission.id}
                       snapshot={snapshot}
+                      characterName={characterName}
                       families={artifactFamilies}
                       busy={busy}
                       selectable={selectableArtifactIds}
@@ -1196,6 +1214,7 @@ export function App() {
       {modal === 'commission' && workspace && (
         <CommissionModal
           workspace={workspace}
+          characters={characters}
           busy={busy}
           configured={provider?.configured || false}
           onSettings={() => {
@@ -1344,6 +1363,7 @@ function WorkspaceModal({
 }
 function CommissionModal({
   workspace,
+  characters,
   busy,
   configured,
   onClose,
@@ -1351,6 +1371,7 @@ function CommissionModal({
   onSubmit,
 }: {
   workspace: Workspace;
+  characters: CharacterProfile[];
   busy: boolean;
   configured: boolean;
   onClose: () => void;
@@ -1399,6 +1420,16 @@ function CommissionModal({
           rows={4}
           autoFocus
         />
+        {characters.some((profile) => profile.id.startsWith('partner-')) && (
+          <p className="field-hint commission-partners">
+            可在目标中点名分工。工作伙伴包括
+            {characters
+              .filter((profile) => profile.id !== 'user')
+              .map((profile) => profile.displayName)
+              .join('、')}
+            。
+          </p>
+        )}
         <label htmlFor="criteria">验收条件（每行一项）</label>
         <textarea
           id="criteria"
@@ -1517,6 +1548,7 @@ function SettingsPanel({
   run,
   host,
   characters,
+  onPartnerCreated,
 }: {
   provider?: Bootstrap['provider'];
   busy: boolean;
@@ -1530,7 +1562,9 @@ function SettingsPanel({
   run: (fn: () => Promise<unknown>, message?: string) => Promise<unknown>;
   host: Window['astrisle'];
   characters: CharacterProfile[];
+  onPartnerCreated: (profile: CharacterProfile) => void;
 }) {
+  const [addedPartner, setAddedPartner] = useState<CharacterProfile['id']>();
   const [kind, setKind] = useState<ProviderInput['kind']>(provider?.kind || 'openai-compatible');
   const [baseUrl, setBaseUrl] = useState(provider?.baseUrl || protocolPresets[kind].baseUrl);
   const [model, setModel] = useState(provider?.model || protocolPresets[kind].model);
@@ -1581,6 +1615,14 @@ function SettingsPanel({
         角色外观与名称
       </h4>
       <p className="field-hint">所有岛屿共用这组角色。</p>
+      <PartnerCreator
+        create={host?.createCharacter}
+        busy={busy}
+        onCreated={(profile) => {
+          setAddedPartner(profile.id);
+          onPartnerCreated(profile);
+        }}
+      />
       <details className="model-format-help">
         <summary>支持的模型格式</summary>
         <p>
@@ -1590,7 +1632,14 @@ function SettingsPanel({
         </p>
       </details>
       {characters.map((profile) => (
-        <CharacterSettings key={profile.id} profile={profile} busy={busy} host={host} run={run} />
+        <CharacterSettings
+          key={profile.id}
+          profile={profile}
+          focusImport={profile.id === addedPartner}
+          busy={busy}
+          host={host}
+          run={run}
+        />
       ))}
       <h4 id="model-preferences" tabIndex={-1} className="settings-heading">
         模型连接
@@ -1677,19 +1726,24 @@ function SettingsPanel({
 
 function CharacterSettings({
   profile,
+  focusImport,
   busy,
   host,
   run,
 }: {
   profile: CharacterProfile;
+  focusImport: boolean;
   busy: boolean;
   host: Window['astrisle'];
   run: (fn: () => Promise<unknown>, message?: string) => Promise<unknown>;
 }) {
   const [name, setName] = useState(profile.displayName);
+  const importButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (focusImport) importButton.current?.focus();
+  }, [focusImport]);
   useEffect(() => setName(profile.displayName), [profile.displayName]);
-  const validName =
-    [...name.trim()].length >= 1 && [...name.trim()].length <= 40 && !/[\p{Cc}\p{Cf}]/u.test(name);
+  const validName = isValidCharacterName(name);
   return (
     <section className="character-settings" aria-label={`${profile.displayName} 的角色设置`}>
       <form
@@ -1720,6 +1774,7 @@ function CharacterSettings({
           </button>
           <button
             type="button"
+            ref={importButton}
             disabled={busy || (!host?.importCharacter && !host?.prepareCharacterImport)}
             aria-label={`为${profile.displayName}导入模型`}
             onClick={() =>

@@ -2,8 +2,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import { z } from 'zod';
-import { DEFAULT_CHARACTERS } from '@astrisle/contracts';
+import { DEFAULT_CHARACTERS, isValidCharacterName } from '@astrisle/contracts';
 import type {
+  CharacterId,
   CharacterModel,
   CharacterProfile,
   CharacterImportInspection,
@@ -12,14 +13,19 @@ import { packageCharacterFile } from './character-import';
 import { MAX_CHARACTER_STORED_BYTES } from '../../../packages/contracts/src/character-asset';
 
 const MAX_MODEL_BYTES = 100 * 1024 * 1024;
-const idSchema = z.enum(['mori', 'luma', 'user']);
+const builtinIdSchema = z.enum(['mori', 'luma', 'user']);
+const idSchema = z.union([
+  builtinIdSchema,
+  z.custom<`partner-${string}`>(
+    (value) =>
+      typeof value === 'string' &&
+      /^partner-[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value),
+  ),
+]);
 const nameSchema = z
   .string()
   .trim()
-  .refine(
-    (value) => [...value].length >= 1 && [...value].length <= 40 && !/[\p{Cc}\p{Cf}]/u.test(value),
-    '角色名称须为 1–40 个字符，不能包含控制字符',
-  );
+  .refine(isValidCharacterName, '角色名称须为 1–40 个字符，不能包含控制字符');
 const assetIdSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const updateSchema = z
   .object({
@@ -48,6 +54,21 @@ const profileSchema = z
     rotationY: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional(),
   })
   .strict();
+const savedProfilesSchema = z.discriminatedUnion('version', [
+  z.strictObject({
+    version: z.literal(1),
+    characters: z
+      .array(profileSchema.extend({ id: builtinIdSchema }))
+      .length(DEFAULT_CHARACTERS.length),
+  }),
+  z.strictObject({ version: z.literal(2), characters: z.array(profileSchema) }),
+]);
+
+function requireProfile(profiles: readonly CharacterProfile[], id: CharacterId): CharacterProfile {
+  const profile = profiles.find((profile) => profile.id === id);
+  if (!profile) throw new Error('角色未登记');
+  return profile;
+}
 
 // Decoder-dependent formats are intentionally rejected; the renderer never downloads decoders.
 const compressed = new Set([
@@ -346,7 +367,7 @@ export class CharacterStore {
   private pending = new Map<
     string,
     {
-      id: string;
+      id: CharacterId;
       bytes: Buffer;
       format: CharacterModel['format'];
       filename: string;
@@ -365,12 +386,15 @@ export class CharacterStore {
   }
   private async readProfiles(): Promise<CharacterProfile[]> {
     try {
-      const data = z
-        .object({ version: z.literal(1), characters: z.array(profileSchema).length(3) })
-        .strict()
-        .parse(JSON.parse(await readFile(join(this.dataRoot, 'characters.json'), 'utf8')));
-      requireValid(new Set(data.characters.map((p) => p.id)).size === 3, '角色配置 ID 重复');
-      return DEFAULT_CHARACTERS.map((p) => data.characters.find((saved) => saved.id === p.id)!);
+      const { characters } = savedProfilesSchema.parse(
+        JSON.parse(await readFile(join(this.dataRoot, 'characters.json'), 'utf8')),
+      );
+      if (new Set(characters.map(({ id }) => id)).size !== characters.length)
+        throw new Error('角色配置 ID 重复');
+      return [
+        ...DEFAULT_CHARACTERS.map(({ id }) => requireProfile(characters, id)),
+        ...characters.filter(({ id }) => id.startsWith('partner-')),
+      ];
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT')
         return DEFAULT_CHARACTERS.map((p) => ({ ...p }));
@@ -386,7 +410,7 @@ export class CharacterStore {
     await mkdir(this.dataRoot, { recursive: true });
     const temporary = join(this.dataRoot, `.characters-${randomUUID()}.tmp`);
     try {
-      await writeFile(temporary, JSON.stringify({ version: 1, characters: profiles }, null, 2), {
+      await writeFile(temporary, JSON.stringify({ version: 2, characters: profiles }, null, 2), {
         flag: 'wx',
       });
       await rename(temporary, join(this.dataRoot, 'characters.json'));
@@ -394,12 +418,26 @@ export class CharacterStore {
       await rm(temporary, { force: true });
     }
   }
+  async registeredId(rawId: unknown): Promise<CharacterId> {
+    const id = idSchema.parse(rawId);
+    return requireProfile(await this.profiles(), id).id;
+  }
+  async create(rawName: unknown): Promise<CharacterProfile> {
+    const displayName = nameSchema.parse(rawName);
+    return this.transaction(async () => {
+      const profiles = await this.readProfiles();
+      const profile: CharacterProfile = { id: `partner-${randomUUID()}`, displayName };
+      profiles.push(profile);
+      await this.persist(profiles);
+      return profile;
+    });
+  }
   async update(rawId: unknown, rawPatch: unknown): Promise<CharacterProfile> {
     const id = idSchema.parse(rawId);
     const patch = updateSchema.parse(rawPatch);
     return this.transaction(async () => {
       const profiles = await this.readProfiles();
-      const profile = profiles.find((p) => p.id === id)!;
+      const profile = requireProfile(profiles, id);
       if (patch.displayName !== undefined) profile.displayName = patch.displayName;
       if (patch.rotationY !== undefined) profile.rotationY = patch.rotationY;
       if (patch.resetModel) {
@@ -411,7 +449,7 @@ export class CharacterStore {
     });
   }
   async importFile(rawId: unknown, sourcePath: string): Promise<CharacterProfile> {
-    const id = idSchema.parse(rawId);
+    const id = await this.registeredId(rawId);
     // One handle prevents replacing a selected source between size validation and the read.
     const handle = await open(sourcePath, 'r');
     let bytes: Buffer;
@@ -435,7 +473,7 @@ export class CharacterStore {
     return this.saveModel(id, bytes, basename(sourcePath), metadata);
   }
   async prepareImport(rawId: unknown, sourcePath: string) {
-    const id = idSchema.parse(rawId);
+    const id = await this.registeredId(rawId);
     const packaged = await packageCharacterFile(sourcePath);
     if (packaged.format === 'glb' || packaged.format === 'gltf')
       validateCharacterModel(packaged.bytes, sourcePath);
@@ -478,7 +516,7 @@ export class CharacterStore {
     })
     .strict();
   private async saveModel(
-    id: CharacterProfile['id'],
+    id: CharacterId,
     bytes: Buffer,
     filename: string,
     metadata: Omit<CharacterModel, 'assetId' | 'filename'>,
@@ -486,6 +524,7 @@ export class CharacterStore {
     const assetId = createHash('sha256').update(bytes).digest('hex');
     return this.transaction(async () => {
       const profiles = await this.readProfiles();
+      const profile = requireProfile(profiles, id);
       const directory = join(this.dataRoot, 'character-assets');
       await mkdir(directory, { recursive: true });
       const temporary = join(directory, `.${randomUUID()}.tmp`);
@@ -495,7 +534,6 @@ export class CharacterStore {
       } finally {
         await rm(temporary, { force: true });
       }
-      const profile = profiles.find((p) => p.id === id)!;
       profile.model = { ...metadata, assetId, filename };
       profile.modelRevision = (profile.modelRevision || 0) + 1;
       profile.rotationY = 0;

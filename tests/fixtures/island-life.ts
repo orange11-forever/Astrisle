@@ -1,8 +1,13 @@
 import type { Page } from '@playwright/test';
-import type { ProjectEvent } from '@astrisle/contracts';
+import type { CharacterProfile, ProjectEvent, TaskKind } from '@astrisle/contracts';
 
-export async function seedIslandLife(page: Page, model?: number[]) {
-  await page.addInitScript((bytes) => {
+export async function seedIslandLife(
+  page: Page,
+  model?: number[],
+  partners: CharacterProfile[] = [],
+) {
+  const fixture = { bytes: model, partners };
+  await page.addInitScript(({ bytes, partners }) => {
     const workspace = {
       id: 'life-island',
       name: '花园工作室',
@@ -66,6 +71,7 @@ export async function seedIslandLife(page: Page, model?: number[]) {
       },
       { id: 'luma', displayName: 'Luma' },
       { id: 'user', displayName: '我' },
+      ...partners,
     ];
     window.astrisle = {
       bootstrap: async () => ({
@@ -96,14 +102,14 @@ export async function seedIslandLife(page: Page, model?: number[]) {
       commission.status = status;
       listeners.forEach((listener) => listener(structuredClone(snapshot)));
     };
-    (window as any).setLifeWorking = () => {
+    (window as any).setLifeWorking = (agentId = 'mori', kind: TaskKind = 'implement') => {
       (snapshot.tasks as any[]).push({
         id: 'real-task',
         commissionId: commission.id,
-        agentId: 'mori',
+        agentId,
         title: '处理文件',
         description: '',
-        kind: 'implement',
+        kind,
         status: 'running',
         dependencies: [],
         criterionIds: [],
@@ -120,14 +126,14 @@ export async function seedIslandLife(page: Page, model?: number[]) {
         commissionId: commission.id,
         type: 'task_started',
         sequence: ++snapshot.lastSequence,
-        agentId: 'mori',
+        agentId,
         taskId: 'real-task',
         message: 'Agent started task',
         createdAt: new Date().toISOString(),
       });
       listeners.forEach((listener) => listener(structuredClone(snapshot)));
     };
-  }, model);
+  }, fixture);
 }
 
 /** A synthetic two-footed static mesh, free of private character assets. */

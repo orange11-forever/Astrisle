@@ -25,6 +25,7 @@ import { isTrustedSender, canOpenExternally } from './security';
 import { RuntimeBridge } from './runtime-bridge';
 import { CharacterStore } from './characters';
 import { createCharacterInspector } from './character-validator';
+import { agentsFromCharacters } from '../../../packages/domain/src/index';
 
 app.setName('Astrisle');
 const automation = process.env.ASTRISLE_AUTOMATION === '1';
@@ -114,6 +115,7 @@ async function start() {
     characters: await characters.profiles(),
   }));
   register('getCharacters', () => characters.profiles());
+  register('createCharacter', (displayName) => characters.create(displayName));
   register('updateCharacter', (id, patch) => characters.update(id, patch));
   register('loadCharacterModel', (assetId) => characters.loadModel(assetId));
   register('completeCharacterImport', (id, token, inspection) =>
@@ -121,7 +123,7 @@ async function start() {
   );
   register('cancelCharacterImport', (token) => characters.cancelImport(token));
   register('prepareCharacterImport', async (rawId) => {
-    const id = z.enum(['mori', 'luma', 'user']).parse(rawId);
+    const id = await characters.registeredId(rawId);
     const result = await dialog.showOpenDialog(window!, {
       title: '导入角色模型',
       properties: ['openFile'],
@@ -136,7 +138,7 @@ async function start() {
     return characters.prepareImport(id, result.filePaths[0]);
   });
   register('importCharacter', async (rawId) => {
-    const id = z.enum(['mori', 'luma', 'user']).parse(rawId);
+    const id = await characters.registeredId(rawId);
     const result = await dialog.showOpenDialog(window!, {
       title: '导入角色模型（GLB / 自包含 glTF 2）',
       properties: ['openFile'],
@@ -164,7 +166,13 @@ async function start() {
     });
     return result.canceled ? null : result.filePaths[0];
   });
-  register('submit', (input) => bridge.call('submit', submitSchema.parse(input)));
+  register('submit', async (input) =>
+    bridge.call(
+      'submit',
+      submitSchema.parse(input),
+      agentsFromCharacters(await characters.profiles()),
+    ),
+  );
   register('snapshot', (id) => bridge.call('snapshot', identifier.parse(id)));
   register('updateBudget', (id, budget, revision) =>
     bridge.call(

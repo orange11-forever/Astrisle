@@ -5,9 +5,10 @@ async function inspect(
   page: Page,
   seconds = 0,
   until?: { id: string; stage: string; activity?: string },
+  ids = ['mori', 'luma', 'user'],
 ) {
   return page.evaluate(
-    async ({ seconds, until }) => {
+    async ({ seconds, until, ids }) => {
       const url = performance
         .getEntriesByType('resource')
         .find((entry) => entry.name.includes('/@react-three_fiber.js'))?.name;
@@ -31,7 +32,7 @@ async function inspect(
       state.scene.updateMatrixWorld(true);
       state.invalidate();
       return {
-        actors: ['mori', 'luma', 'user'].map((id) => {
+        actors: ids.map((id) => {
           const actor = state.scene.getObjectByName(`avatar-${id}`);
           const cup = actor?.getObjectByName('held-teacup');
           const hand = actor?.getObjectByName('Right_hand');
@@ -56,6 +57,7 @@ async function inspect(
             activity: actor?.userData.activity,
             stage: actor?.userData.activityStage,
             blend: actor?.userData.activityBlend,
+            working: actor?.userData.working,
             cup: actor?.getObjectByName('held-teacup')?.visible ?? false,
             gripGap:
               hand && handle
@@ -78,7 +80,7 @@ async function inspect(
         draws: state.gl.info.render.calls,
       };
     },
-    { seconds, until },
+    { seconds, until, ids },
   );
 }
 
@@ -92,6 +94,19 @@ async function open(page: Page, imported = false) {
   await page.bringToFront();
   await expect.poll(async () => (await inspect(page))?.facilities).toBe(true);
   if (imported) await expect.poll(async () => (await inspect(page))?.actors[0].knee).toBeDefined();
+}
+
+async function selectCommissionAndPauseFrames(page: Page) {
+  await page.getByRole('button', { name: '展开项目与委托' }).click();
+  await page.getByRole('button', { name: '场景验收 待验收' }).click();
+  // The mounted scene follows inspect()'s clock so GPU speed cannot skip a transition.
+  await page.evaluate(async () => {
+    const url = performance
+      .getEntriesByType('resource')
+      .find((entry) => entry.name.includes('/@react-three_fiber.js'))!.name;
+    const { _roots } = await import(url);
+    _roots.get(document.querySelector('canvas')).store.getState().setFrameloop('never');
+  });
 }
 
 test('island companions automatically sit, sip tea and share a synchronized swing', async ({
@@ -131,21 +146,56 @@ test('island companions automatically sit, sip tea and share a synchronized swin
   expect(errors).toEqual([]);
 });
 
+test('additional partners draw their own models and can leave leisure for assigned review work', async ({
+  page,
+}) => {
+  const reviewer = 'partner-03f575ff-5421-488a-aa12-fc5601ccd169';
+  const producer = 'partner-448aae6a-5bb2-42e0-826b-126de986ce39';
+  const bytes = [...humanoidGlb()];
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await seedIslandLife(page, bytes, [
+    { id: reviewer, displayName: '第四位伙伴' },
+    {
+      id: producer,
+      displayName: '第五位伙伴',
+      model: {
+        assetId: 'custom-partner-fixture',
+        filename: 'custom-partner-fixture.glb',
+        format: 'glb',
+        byteLength: bytes.length,
+        triangleCount: 84,
+        animationCount: 0,
+        hasSkins: false,
+      },
+    },
+  ]);
+  await page.goto('/');
+  await page.bringToFront();
+  const canvas = page.locator('.studio-canvas canvas');
+  await expect(canvas).toHaveAttribute(`data-character-${reviewer}`, 'builtin');
+  await expect(canvas).toHaveAttribute(`data-character-${producer}`, 'custom-partner-fixture');
+  await selectCommissionAndPauseFrames(page);
+  const actors = [reviewer, producer];
+  const readActors = (seconds: number, stage?: string) =>
+    inspect(page, seconds, stage ? { id: reviewer, stage } : undefined, actors);
+  const idle = (await readActors(130, 'enjoying'))!.actors[0];
+  expect(idle).toMatchObject({ stage: 'enjoying', blend: 1 });
+
+  await page.evaluate((id) => (window as any).setLifeWorking(id, 'review'), reviewer);
+  const nameplate = page.locator(`[data-character-id="${reviewer}"]`);
+  await expect(nameplate).toHaveAttribute('data-task-id', 'real-task');
+  await expect(nameplate).toContainText('工作中');
+  expect((await readActors(0.2))!.actors[0]).toMatchObject({ stage: 'leaving', working: false });
+  const settled = (await readActors(65))!.actors[0];
+  expect(settled).toMatchObject({ position: [0, 0.02, -5.3], working: true });
+});
+
 test('an imported seated character stands for real work and stays stationary in closeup', async ({
   page,
 }) => {
   await open(page, true);
-  await page.getByRole('button', { name: '展开项目与委托' }).click();
-  await page.getByRole('button', { name: '场景验收 待验收' }).click();
-  // Keep the mounted scene on the same clock as inspect(). Browser input and
-  // React commits still run normally, but GPU speed cannot skip a pose between samples.
-  await page.evaluate(async () => {
-    const url = performance
-      .getEntriesByType('resource')
-      .find((entry) => entry.name.includes('/@react-three_fiber.js'))!.name;
-    const { _roots } = await import(url);
-    _roots.get(document.querySelector('canvas')).store.getState().setFrameloop('never');
-  });
+  await selectCommissionAndPauseFrames(page);
   const seated = (await inspect(page, 45, { id: 'mori', stage: 'enjoying' }))!.actors[0];
   expect(seated.stage).toBe('enjoying');
   expect((await inspect(page))!.actors[0].knee).toBeGreaterThan(1);

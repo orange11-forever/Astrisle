@@ -1,4 +1,5 @@
-import type { ProjectSnapshot } from '@astrisle/contracts';
+import type { CharacterId, ProjectSnapshot, Task } from '@astrisle/contracts';
+import { STATION_POINTS, type GroundPoint } from './island-motion';
 
 export type MotionKind =
   | 'handoff'
@@ -12,7 +13,7 @@ export interface SceneIntent {
   id: string;
   actorId: string;
   kind: MotionKind;
-  anchor: string;
+  anchor: keyof typeof STATION_POINTS;
   versionId?: string;
   expiresAt: number;
   duration: number;
@@ -42,7 +43,7 @@ export function directScene(
     };
   const seen = new Set(previous.seen);
   const intents = previous.intents.filter((i) => i.expiresAt > now);
-  const anchors: Record<MotionKind, string> = {
+  const anchors: Record<MotionKind, SceneIntent['anchor']> = {
     handoff: 'table',
     pickup: 'table',
     findings: 'compare',
@@ -122,4 +123,40 @@ export function resolveStation(
 ): SceneIntent | null {
   if (!occupied) return intent;
   return waitedMs >= 1500 ? { ...intent, stationary: true } : null;
+}
+
+/** Moving collaboration gestures claim shared stations first. The remaining partners work at home. */
+export function placeSceneActors(
+  actors: ReadonlyArray<{
+    id: CharacterId;
+    home: GroundPoint;
+    task?: Pick<Task, 'kind' | 'status'>;
+  }>,
+  intents: readonly SceneIntent[],
+) {
+  const occupied = new Set<SceneIntent['anchor']>();
+  const actorIds = new Set<string>(actors.map(({ id }) => id));
+  const activeIntents = new Map<string, SceneIntent>();
+  for (const intent of intents) {
+    if (intent.actorId === 'user' || !actorIds.has(intent.actorId)) continue;
+    const resolved = resolveStation(intent, occupied.has(intent.anchor), 1500)!;
+    if (!resolved.stationary) occupied.add(resolved.anchor);
+    activeIntents.set(intent.actorId, resolved);
+  }
+
+  const placements = new Map<CharacterId, { target: GroundPoint; intent?: SceneIntent }>();
+  for (const { id, home, task } of actors) {
+    const intent = activeIntents.get(id);
+    let target = home;
+    if (intent && !intent.stationary) target = STATION_POINTS[intent.anchor];
+    if (!intent && id.startsWith('partner-') && task?.status === 'running') {
+      const station = task.kind === 'review' ? 'compare' : 'table';
+      if (!occupied.has(station)) {
+        occupied.add(station);
+        target = STATION_POINTS[station];
+      }
+    }
+    placements.set(id, { target, intent });
+  }
+  return placements;
 }

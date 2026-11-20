@@ -179,7 +179,11 @@ export interface Capability {
   available: boolean;
   detail: string;
 }
-export type CharacterId = 'mori' | 'luma' | 'user';
+export type CharacterId = 'mori' | 'luma' | 'user' | `partner-${string}`;
+export function isValidCharacterName(value: string): boolean {
+  const name = value.trim();
+  return name.length > 0 && [...name].length <= 40 && !/[\p{Cc}\p{Cf}]/u.test(name);
+}
 export interface CharacterModel {
   assetId: string;
   filename: string;
@@ -360,6 +364,7 @@ export interface ApplyOperation {
 export interface HostAPI {
   bootstrap(): Promise<Bootstrap>;
   getCharacters?(): Promise<CharacterProfile[]>;
+  createCharacter?(displayName: string): Promise<CharacterProfile>;
   updateCharacter?(id: CharacterId, patch: CharacterUpdate): Promise<CharacterProfile>;
   importCharacter?(id: CharacterId): Promise<CharacterProfile | null>;
   prepareCharacterImport?(id: CharacterId): Promise<PendingCharacterImport | null>;

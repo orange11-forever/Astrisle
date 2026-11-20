@@ -3,14 +3,9 @@ import type { ComponentRef } from 'react';
 import { useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { Vector3 } from 'three';
-import type { CharacterFocus } from './Scene';
+import type { GroundPoint } from './island-motion';
 import { harborOrigin } from './islands';
 
-const homes = {
-  mori: [-3.45, 1.2],
-  luma: [3.45, 1.2],
-  user: [0, 3.65],
-} as const;
 const overviewHeight = 0.35;
 const harborLookOffset = [0.37, 0.65, 1.45] as const;
 export type StudioDistrict = 'harbor' | 'garden';
@@ -32,13 +27,13 @@ const panRadius = 7;
 export function CameraRig({
   reset,
   fixed,
-  focus,
+  focusHome,
   district,
   reduced,
 }: {
   reset: number;
   fixed: boolean;
-  focus?: CharacterFocus;
+  focusHome?: GroundPoint;
   district?: StudioDistrict;
   reduced: boolean;
 }) {
@@ -46,6 +41,8 @@ export function CameraRig({
   const controls = useRef<ComponentRef<typeof OrbitControls>>(null);
   const view = cameraViews[district ?? 'studio'];
   const [centerX, centerY, centerZ] = view.target;
+  const focus = !!focusHome;
+  const [focusX, focusZ] = focusHome ?? [];
   const viewport = useRef(size);
   viewport.current = size;
   useEffect(() => {
@@ -57,7 +54,7 @@ export function CameraRig({
     orbit.update();
     const fit = Math.max(1, 1.05 / (viewport.current.width / viewport.current.height));
     const target = focus
-      ? new Vector3(homes[focus][0], 0.95, homes[focus][1])
+      ? new Vector3(focusX, 0.95, focusZ)
       : new Vector3(centerX, centerY, centerZ);
     if (focus) camera.position.set(target.x, target.y + 0.12, target.z + 4.05 * Math.sqrt(fit));
     else {
@@ -73,7 +70,7 @@ export function CameraRig({
     orbit.enableDamping = damping;
     invalidate();
     // Resize updates the projection, but only an explicit view change reframes the camera.
-  }, [reset, focus, view, centerX, centerY, centerZ, camera, invalidate]);
+  }, [reset, focus, focusX, focusZ, view, centerX, centerY, centerZ, camera, invalidate]);
 
   const boundPan = () => {
     const orbit = controls.current;
