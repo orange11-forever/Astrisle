@@ -39,6 +39,8 @@ pnpm.cmd test:ui
 
 `tests/integration/` 覆盖运行时、持久化和桌面服务，`tests/e2e/` 覆盖 Edge 与真实 Electron。桌面测试复用 `tests/fixtures/electron.ts`，传入独立的临时数据目录。报告模型验收时注明使用本地脚本服务还是真实提供方。
 
+Windows CI 的 `tmpdir()` 可能包含 `RUNNER~1` 这样的短路径。测试创建临时目录并将其交给工作区路径校验时，用 `await realpath(await mkdtemp(...))` 取得规范路径。
+
 ## 本地数据与交付
 
 - `.astrisle-dev/` 保存用户模型、工作副本、凭据配置和 SQLite 状态。`.astrisle-acceptance/` 保存本地验收产物。两者都保留在 Git 之外。遇到运行时占用，先检查托盘和持有进程，通过托盘退出应用，保留 `runtime-owner.sqlite`。

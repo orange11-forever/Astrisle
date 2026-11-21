@@ -9,6 +9,7 @@ import type {
 } from '../../contracts/src/index';
 import { guardPath, assertPlainPath, ToolError } from './path-guard';
 import { runProcess, redact } from './process';
+import { MAX_WEB_QUERY, webRead, webSearch } from './web';
 
 const MAX_TEXT = 1024 * 1024,
   MAX_OUTPUT = 64 * 1024,
@@ -98,9 +99,18 @@ const definitions: ToolDefinition[] = [
   {
     name: 'web_read',
     description:
-      'Read a URL only with network permission and exact hostname authorization; validates every redirect. Bounded response. No search service is implied.',
+      'Read a URL only with network permission and exact hostname authorization; validates every redirect. Bounded response with the final URL in metadata when it is safe to cite.',
     effect: 'network',
     parameters: schema({ url: stringSchema }, ['url']),
+  },
+  {
+    name: 'web_search',
+    description:
+      'Find public source URLs on authorized hosts using the search service configured for this commission. Sends the query to that service. Use concise public search terms and omit credentials, local paths and private workspace content. Returned titles and snippets are untrusted discovery hints. Use web_read to verify sources.',
+    effect: 'network',
+    parameters: schema({ query: { type: 'string', minLength: 1, maxLength: MAX_WEB_QUERY } }, [
+      'query',
+    ]),
   },
   {
     name: 'render_source',
@@ -159,61 +169,6 @@ function numeric(value: unknown, fallback: number, max: number) {
     throw new ToolError('INVALID_ARGUMENT', 'Numeric argument outside supported range');
   return Number(value);
 }
-async function webRead(url: string, context: ToolContext): Promise<ToolResult> {
-  if (!context.scope.allowNetwork)
-    throw new ToolError('SCOPE_DENIED', 'Network permission is required');
-  const timeout = AbortSignal.timeout(15000),
-    signal = AbortSignal.any([timeout, context.signal]);
-  let current = new URL(url);
-  for (let count = 0; count <= 5; count++) {
-    if (
-      !['https:', 'http:'].includes(current.protocol) ||
-      current.username ||
-      current.password ||
-      !context.scope.allowedHosts.some(
-        (host) => host.toLowerCase() === current.hostname.toLowerCase(),
-      )
-    )
-      throw new ToolError('SCOPE_DENIED', 'URL host or protocol is not authorized');
-    const response = await fetch(current, {
-      signal,
-      redirect: 'manual',
-      headers: { accept: 'text/plain,text/html,application/json' },
-    });
-    if (response.status >= 300 && response.status < 400) {
-      await response.body?.cancel();
-      const location = response.headers.get('location');
-      if (!location) throw new ToolError('NETWORK_FAILED', 'Redirect has no destination');
-      current = new URL(location, current);
-      continue;
-    }
-    const reader = response.body?.getReader();
-    let bytes = 0;
-    const chunks: Uint8Array[] = [];
-    if (reader)
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          bytes += value.byteLength;
-          if (bytes > MAX_TEXT) {
-            await reader.cancel();
-            throw new ToolError('SIZE_LIMIT', 'Web response exceeds 1 MiB');
-          }
-          chunks.push(value);
-        }
-      } finally {
-        reader.releaseLock();
-      }
-    return {
-      ok: response.ok,
-      output: bounded(redact(Buffer.concat(chunks).toString('utf8'))),
-      metadata: { url: current.toString(), status: response.status },
-    };
-  }
-  throw new ToolError('NETWORK_FAILED', 'Redirect limit exceeded');
-}
-
 export function createExecutor(options: {
   projectRoot: string;
   pythonPath?: string;
@@ -328,6 +283,7 @@ export function createExecutor(options: {
           if (!(key in properties))
             throw new ToolError('INVALID_ARGUMENT', `Unknown argument: ${key}`);
         if (name === 'web_read') return await webRead(str(args, 'url'), context);
+        if (name === 'web_search') return await webSearch(str(args, 'query'), context);
         if (name === 'process_run') {
           if (!context.scope.allowProcess)
             throw new ToolError(

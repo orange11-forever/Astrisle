@@ -43,12 +43,17 @@ import type {
   ProviderInput,
   Workspace,
 } from '@astrisle/contracts';
-import { DEFAULT_CHARACTERS, isValidCharacterName } from '@astrisle/contracts';
+import {
+  DEFAULT_CHARACTERS,
+  isSearchEndpoint,
+  isSourceHostname,
+  isValidCharacterName,
+} from '@astrisle/contracts';
 import { StudioScene } from './Scene';
 import type { StudioDistrict } from './StudioCamera';
 import { Archipelago } from './Archipelago';
 import { BudgetPanel } from './BudgetPanel';
-import { ArtifactReview } from './ArtifactReview';
+import { ArtifactReview, ArtifactWebSources } from './ArtifactReview';
 import { ArtifactSourceExport } from './ArtifactSourceExport';
 import { artifactVersionFamilies } from '../../../packages/artifacts/src/history';
 import { CommissionActivity } from './CommissionActivity';
@@ -996,6 +1001,14 @@ export function App() {
                     <dd>{snapshot.commission.scope.allowProcess ? '允许' : '不允许'}</dd>
                     <dt>网络访问</dt>
                     <dd>{snapshot.commission.scope.allowNetwork ? '允许' : '不允许'}</dd>
+                    {snapshot.commission.scope.allowNetwork && (
+                      <>
+                        <dt>网页来源域名</dt>
+                        <dd>{snapshot.commission.scope.allowedHosts.join('\n') || '无'}</dd>
+                        <dt>SearXNG 搜索</dt>
+                        <dd>{snapshot.commission.scope.searchEndpoint || '未配置'}</dd>
+                      </>
+                    )}
                   </dl>
                   <BudgetPanel
                     key={commissionId}
@@ -1391,6 +1404,11 @@ export function App() {
           ) : (
             <p className="panel-intro">此文件为二进制格式，请在系统应用中打开查看。</p>
           )}
+          <ArtifactWebSources
+            key={preview.artifact.versionId}
+            artifact={preview.artifact}
+            evidence={snapshot?.evidence ?? []}
+          />
           <div className="button-row">
             <button
               disabled={busy}
@@ -1523,9 +1541,27 @@ function CommissionModal({
   onSettings: () => void;
   onSubmit: (input: Parameters<NonNullable<Window['astrisle']>['submit']>[0]) => unknown;
 }) {
+  const [allowNetwork, setAllowNetwork] = useState(false);
+  const [networkError, setNetworkError] = useState<'searchEndpoint' | 'hosts'>();
+  const permissions = useRef<HTMLDetailsElement>(null);
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const d = new FormData(e.currentTarget);
+    const allowedHosts = String(d.get('hosts') || '')
+      .split(',')
+      .map((host) => host.trim())
+      .filter(Boolean);
+    const searchEndpoint = String(d.get('searchEndpoint') || '').trim();
+    let invalidField: typeof networkError;
+    if (searchEndpoint && !isSearchEndpoint(searchEndpoint)) invalidField = 'searchEndpoint';
+    else if (searchEndpoint && (!allowedHosts.length || !allowedHosts.every(isSourceHostname)))
+      invalidField = 'hosts';
+    if (invalidField) {
+      setNetworkError(invalidField);
+      if (permissions.current) permissions.current.open = true;
+      e.currentTarget.querySelector<HTMLInputElement>(`[name="${invalidField}"]`)?.focus();
+      return;
+    }
     onSubmit({
       requestId: crypto.randomUUID(),
       workspaceId: workspace.id,
@@ -1539,10 +1575,8 @@ function CommissionModal({
         writeRoots: [workspace.workPath],
         allowProcess: d.has('process'),
         allowNetwork: d.has('network'),
-        allowedHosts: String(d.get('hosts') || '')
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean),
+        allowedHosts,
+        ...(searchEndpoint ? { searchEndpoint } : {}),
       },
       budget: {
         maxSteps: Number(d.get('steps')),
@@ -1583,7 +1617,7 @@ function CommissionModal({
           rows={3}
           required
         />
-        <details className="scope-details">
+        <details className="scope-details" ref={permissions}>
           <summary>权限与工作预算</summary>
           <p className="quiet">文件工具的读写范围限制在项目工作副本。</p>
           <label className="check-label">
@@ -1594,11 +1628,53 @@ function CommissionModal({
             命令会在你的电脑上执行，不在安全沙箱中。子程序可以自行访问原项目、其他文件与网络，文件和网络工具的权限范围无法限制它。仅对你信任的项目和命令开启。
           </p>
           <label className="check-label">
-            <input name="network" type="checkbox" />
+            <input
+              name="network"
+              type="checkbox"
+              checked={allowNetwork}
+              onChange={(e) => {
+                setAllowNetwork(e.target.checked);
+                setNetworkError(undefined);
+              }}
+            />
             允许访问网络
           </label>
-          <label htmlFor="hosts">允许的域名（英文逗号分隔）</label>
-          <input id="hosts" name="hosts" placeholder="example.com" />
+          <label htmlFor="hosts">网页来源域名（英文逗号分隔）</label>
+          <input
+            id="hosts"
+            name="hosts"
+            placeholder="docs.example.com"
+            disabled={!allowNetwork}
+            aria-invalid={networkError === 'hosts'}
+            aria-describedby={`hosts-hint${networkError === 'hosts' ? ' web-permissions-error' : ''}`}
+            onChange={() => setNetworkError(undefined)}
+          />
+          <p className="field-hint" id="hosts-hint">
+            搜索结果和网页原文限定在这里列出的域名。使用搜索时至少填写一个域名。
+          </p>
+          <label htmlFor="search-endpoint">SearXNG 搜索地址（可选）</label>
+          <input
+            id="search-endpoint"
+            name="searchEndpoint"
+            inputMode="url"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="https://search.example.com/search"
+            disabled={!allowNetwork}
+            aria-invalid={networkError === 'searchEndpoint'}
+            aria-describedby={`search-hint${networkError === 'searchEndpoint' ? ' web-permissions-error' : ''}`}
+            onChange={() => setNetworkError(undefined)}
+          />
+          <p className="field-hint" id="search-hint">
+            填写已启用 JSON 格式的 SearXNG 完整搜索地址。该服务会收到搜索关键词。
+          </p>
+          {networkError && (
+            <p className="error-text" id="web-permissions-error" role="alert">
+              {networkError === 'searchEndpoint'
+                ? '请输入有效的 HTTP 或 HTTPS 搜索地址，省略凭据、查询参数和片段。'
+                : '搜索需要至少一个主机名。填写 docs.example.com 这样的主机名，省略协议、端口和路径。'}
+            </p>
+          )}
           <label className="check-label">
             <input name="review" type="checkbox" defaultChecked />
             先审阅计划，再开始执行

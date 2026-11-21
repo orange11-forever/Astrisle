@@ -8,6 +8,7 @@ import type {
   HostAPI,
   ProjectSnapshot,
   Task,
+  ToolResult,
 } from '@astrisle/contracts';
 
 const versionStatus = {
@@ -77,6 +78,62 @@ const instructionLimit = 4_000;
 function VersionDate({ value }: { value: string }) {
   const date = Date.parse(value);
   return Number.isFinite(date) ? <time dateTime={value}>{timestamp.format(date)}</time> : null;
+}
+
+function webSourceOutput(evidence: Evidence | undefined, url: string): string | undefined {
+  if (evidence?.kind !== 'tool' || evidence.status !== 'passed') return;
+  try {
+    const detail = JSON.parse(evidence.detail) as { name?: string; result?: ToolResult } | null;
+    const result = detail?.result;
+    if (
+      detail?.name === 'web_read' &&
+      result?.ok === true &&
+      result.metadata?.url === url &&
+      typeof result.output === 'string' &&
+      result.output.trim()
+    )
+      return result.output;
+  } catch {
+    // Older records may contain plain text instead of a structured receipt.
+  }
+}
+
+export function ArtifactWebSources({
+  artifact,
+  evidence,
+}: {
+  artifact: Artifact;
+  evidence: Evidence[];
+}) {
+  const sources = artifact.webSources;
+  if (!sources?.length) return null;
+  return (
+    <details className="version-evidence">
+      <summary>网页来源（{sources.length}）</summary>
+      <ol>
+        {sources.map(({ url, evidenceId }) => {
+          const output = webSourceOutput(
+            evidence.find(({ id }) => id === evidenceId),
+            url,
+          );
+          return (
+            <li key={evidenceId}>
+              {output !== undefined ? (
+                <details>
+                  <summary aria-label={`查看读取证据 ${url}`}>{url}</summary>
+                  <pre tabIndex={0} aria-label="原始读取证据">
+                    {output}
+                  </pre>
+                </details>
+              ) : (
+                <p className="code-text">{url} · 读取证据暂不可用</p>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </details>
+  );
 }
 
 function ReviewEvidence({
@@ -515,6 +572,7 @@ function ArtifactFamily({
           {accepted.has(version.id) && <span className="status status-accepted">已接受</span>}
           <VersionDate value={version.createdAt} />
         </div>
+        <ArtifactWebSources artifact={version} evidence={snapshot.evidence} />
         {version.renderedFromVersionId && (
           <div className="version-source">
             {source && source.validity !== 'missing' ? (

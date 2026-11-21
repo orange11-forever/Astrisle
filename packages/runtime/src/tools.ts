@@ -1,4 +1,5 @@
 import type { AgentIdentity, ToolDefinition } from '../../contracts/src/index';
+import { maxArtifactWebSources } from './web-research';
 const string = {
     type: 'string',
   },
@@ -40,11 +41,12 @@ export const runtimeTools: ToolDefinition[] = [
   ),
   tool(
     'submit_artifact',
-    'Publish an actual file inside your task workspace as an immutable version. Call after writing it. Record the returned artifact and version IDs.',
+    'Publish an actual file inside your task workspace as an immutable version. Call after writing it. Record the returned artifact and version IDs. Use sourceEvidenceIds to bind successful original-source web_read receipts from your own task.',
     {
       path: string,
       name: string,
       mediaType: string,
+      sourceEvidenceIds: { ...strings, maxItems: maxArtifactWebSources },
     },
     ['path', 'name', 'mediaType'],
   ),
@@ -58,7 +60,7 @@ export const runtimeTools: ToolDefinition[] = [
   ),
   tool(
     'submit_review',
-    'Review dependency artifacts. Evidence IDs must be actual successful tool evidence from this review against exact input versions. If unable to run verification use unable_to_verify.',
+    'Review dependency artifacts. Evidence IDs must include your own successful inspections of the exact versions and your own web_read receipts for their bound source URLs. If unable to run verification use unable_to_verify.',
     {
       verdict: {
         type: 'string',
