@@ -15,6 +15,8 @@ import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import {
   findArtifactVersion,
+  isSearchEndpoint,
+  isSourceHostname,
   PARTNER_DIALOGUE_ERRORS,
   PARTNER_DIALOGUE_LIMITS,
   sourceExportFormats,
@@ -67,8 +69,21 @@ const scope = z
     allowProcess: bool,
     allowNetwork: bool,
     allowedHosts: z.array(z.string().max(255)).max(100),
+    searchEndpoint: z
+      .string()
+      .refine(isSearchEndpoint, 'Invalid SearXNG search endpoint')
+      .optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    ({ searchEndpoint, allowNetwork, allowedHosts }) =>
+      !searchEndpoint ||
+      (allowNetwork && allowedHosts.length > 0 && allowedHosts.every(isSourceHostname)),
+    {
+      path: ['searchEndpoint'],
+      message: 'A search endpoint requires network permission and valid source hostnames',
+    },
+  );
 const submitSchema = z
   .object({
     requestId: identifier,

@@ -1,4 +1,6 @@
 /** Shared public boundary. Never expose provider credentials to snapshots. */
+export { isSearchEndpoint, isSourceHostname } from './web-research';
+
 export type CommissionStatus =
   | 'draft'
   | 'active'
@@ -33,6 +35,8 @@ export interface Scope {
   allowProcess: boolean;
   allowNetwork: boolean;
   allowedHosts: string[];
+  /** Explicit permission to send search terms to this SearXNG service. */
+  searchEndpoint?: string;
 }
 export interface Budget {
   maxSteps: number;
@@ -93,6 +97,8 @@ export interface Artifact {
   versionId: string;
   previousVersionId?: string;
   renderedFromVersionId?: string;
+  /** Final URLs and the author's original read receipts for this version. */
+  webSources?: { url: string; evidenceId: string }[];
   commissionId: string;
   taskId: string;
   name: string;

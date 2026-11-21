@@ -17,7 +17,9 @@ export async function buildTaskContinuation(
       const value = call.request.args?.[key];
       if (typeof value === 'string') paths.add(value);
     }
-    const output = call.result as { files?: unknown } | undefined;
+    const output = call.result as
+      | { files?: unknown; ok?: boolean; code?: string; evidenceId?: string }
+      | undefined;
     if (Array.isArray(output?.files)) {
       for (const path of output.files) if (typeof path === 'string') paths.add(path);
     }
@@ -27,7 +29,10 @@ export async function buildTaskContinuation(
       state: call.state,
       revision: call.request.revision,
       args: bounded(call.request.args),
-      result: bounded(call.result),
+      result:
+        call.request.name === 'web_search' || call.request.name === 'web_read'
+          ? { ok: output?.ok, code: output?.code, evidenceId: output?.evidenceId }
+          : bounded(call.result),
     };
   });
   const files: Array<{ path: string; status: string; size?: number; sha256?: string }> = [];
@@ -78,13 +83,19 @@ export function summarizeTaskEvidence(evidence: Evidence[]): Evidence[] {
       detail = {
         runId: saved.runId,
         name: saved.name,
-        args: { path: saved.args?.path, source: saved.args?.source },
+        args: {
+          path: saved.args?.path,
+          source: saved.args?.source,
+          ...(saved.name === 'web_read' && { url: saved.args?.url }),
+        },
         result: {
           ok: saved.result?.ok,
           code: saved.result?.code,
           verdict: saved.result?.verdict,
+          ...(saved.name === 'web_read' && { url: saved.result?.metadata?.url }),
         },
         verifiedInputs: saved.verifiedInputs,
+        inputVersionIds: saved.inputVersionIds,
         verdict: saved.verdict,
         evidenceIds: saved.evidenceIds,
         authorTaskIds: saved.authorTaskIds,
