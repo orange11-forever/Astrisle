@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { createServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -132,7 +132,7 @@ it('discovers a source, publishes its final URL and independently checks the rep
       res.writeHead(500).end();
     }
   });
-  const dataRoot = await mkdtemp(join(tmpdir(), 'astrisle-research-'));
+  const dataRoot = await realpath(await mkdtemp(join(tmpdir(), 'astrisle-research-')));
   await new Promise<void>((ready) => server.listen(0, '127.0.0.1', ready));
   origin = 'http://127.0.0.1:' + (server.address() as AddressInfo).port;
   const options: RuntimeOptions = {
