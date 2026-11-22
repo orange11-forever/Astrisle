@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import { OBSERVATORY } from '../../apps/client/src/island-observatory';
 
 async function cameraState(page: Page) {
   return page.evaluate(async () => {
@@ -28,6 +29,27 @@ async function drag(page: Page, x: number, y = 0, button: 'left' | 'right' = 'le
   // One actual drag event preserves its full displacement without four software-rendered frames.
   await page.mouse.move(start.x + box.height * x, start.y + box.height * y);
   await page.mouse.up({ button });
+}
+
+async function telescopeOnScreen(page: Page) {
+  return page.evaluate(async ({ telescope, deck }) => {
+    const canvas = document.querySelector('.studio-canvas canvas');
+    const moduleUrl = performance
+      .getEntriesByType('resource')
+      .find((entry) => entry.name.includes('/@react-three_fiber.js'))?.name;
+    if (!canvas || !moduleUrl) return null;
+    const { _roots } = await import(moduleUrl);
+    const state = _roots.get(canvas)?.store.getState();
+    const scope = state?.scene.getObjectByName('observatory-telescope');
+    if (!scope || !state.gl.info.render.frame) return null;
+    const point = state.camera.position.clone().set(telescope[0], deck.height + 1.02, telescope[1]);
+    const screen = scope.localToWorld(point).project(state.camera);
+    const box = canvas.getBoundingClientRect();
+    return {
+      x: box.left + (box.width * (1 + screen.x)) / 2,
+      y: box.top + (box.height * (1 - screen.y)) / 2,
+    };
+  }, OBSERVATORY);
 }
 
 async function reset(page: Page) {
@@ -92,6 +114,80 @@ test('harbor view frames the waterfront and restores free studio navigation', as
   await expect(view).toHaveValue('');
   await view.selectOption('mori');
   await expect.poll(async () => (await cameraState(page))?.target).toEqual([-3.45, 0.95, 1.2]);
+});
+
+test('visits the observatory at night and keeps free navigation and the sky preference', async ({
+  page,
+}) => {
+  const shaderErrors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error' && /WebGLProgram|shader error/i.test(message.text()))
+      shaderErrors.push(message.text());
+  });
+  const view = page.getByLabel('场景视角与角色特写');
+  await page.getByRole('button', { name: '工作室设置', exact: true }).click();
+  const sky = page.getByLabel('岛上天色', { exact: true });
+  await expect(sky).toHaveValue('auto');
+  await sky.selectOption('night');
+  await page.getByRole('banner').getByRole('button', { name: '收起工作面板' }).click();
+  await view.selectOption('observatory');
+  await expect(page.getByRole('heading', { name: '观星台' })).toBeVisible();
+  const observatory = page.locator('.studio-canvas');
+  await expect(observatory).toHaveAttribute('data-light-phase', 'night');
+  await expect.poll(async () => (await cameraState(page))?.target[2] ?? 0).toBeLessThan(-5);
+  const arrived = (await cameraState(page))!;
+  await drag(page, 0.1, -0.15);
+  await expect
+    .poll(async () => Math.abs((await cameraState(page))!.pitch - arrived.pitch))
+    .toBeGreaterThan(0.05);
+  await reset(page);
+  await expect.poll(() => telescopeOnScreen(page)).not.toBeNull();
+  const telescope = (await telescopeOnScreen(page))!;
+  await page.mouse.click(telescope.x, telescope.y);
+  await expect(view).toHaveValue('observatory');
+  await page.getByLabel('观星台天色').selectOption('day');
+  await expect(observatory).toHaveAttribute('data-light-phase', 'day');
+  await page.getByLabel('观星台天色').selectOption('night');
+  await page.getByRole('button', { name: '2D 模式', exact: true }).click();
+  await expect(observatory).toHaveCount(0);
+  await page.getByRole('button', { name: '3D 场景', exact: true }).click();
+  await expect(observatory).toHaveAttribute('data-light-phase', 'night');
+  await page.reload();
+  await expect(observatory).toHaveAttribute('data-light-phase', 'night');
+  await page.getByRole('button', { name: '工作室设置', exact: true }).click();
+  await expect(sky).toHaveValue('night');
+  await sky.selectOption('dusk');
+  await expect(observatory).toHaveAttribute('data-light-phase', 'dusk');
+  expect(shaderErrors).toEqual([]);
+});
+
+test('travels along the boardwalk into the observatory when motion is enabled', async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  const route = await page.evaluateHandle(async (fov) => {
+    const resource = performance
+      .getEntriesByType('resource')
+      .find((entry) => entry.name.includes('/@react-three_fiber.js'))!;
+    const { _roots, addAfterEffect } = await import(resource.name);
+    const { camera } = _roots.get(document.querySelector('.studio-canvas canvas')).store.getState();
+    const positions = new Set<number>();
+    const stop = addAfterEffect(() => {
+      if (camera.fov === fov) positions.add(camera.position.z);
+    });
+    return { positions, stop };
+  }, OBSERVATORY.fieldOfView);
+  try {
+    await page.getByLabel('场景视角与角色特写').selectOption('observatory');
+    await expect.poll(() => route.evaluate(({ positions }) => positions.size)).toBeGreaterThan(2);
+    await expect
+      .poll(async () => (await cameraState(page))!.position[2])
+      .toBeLessThan(OBSERVATORY.deck.entryZ);
+    await reset(page);
+  } finally {
+    await route.evaluate(({ stop }) => stop());
+    await route.dispose();
+  }
 });
 
 test('overview zooms closer and preserves orbit on resize with accessible narrow controls', async ({

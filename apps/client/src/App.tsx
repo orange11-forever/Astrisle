@@ -51,6 +51,7 @@ import {
 } from '@astrisle/contracts';
 import { StudioScene } from './Scene';
 import type { StudioDistrict } from './StudioCamera';
+import type { IslandLightMode } from './island-daylight';
 import { Archipelago } from './Archipelago';
 import { BudgetPanel } from './BudgetPanel';
 import { ArtifactReview, ArtifactWebSources } from './ArtifactReview';
@@ -72,6 +73,25 @@ import {
 import type { IslandThemeId } from './islands';
 
 const islandThemeStorageKey = 'astrisle-island-themes';
+const lightStorageKey = 'astrisle-island-light-mode';
+const districtNames: Record<StudioDistrict, string> = {
+  harbor: '花港街景',
+  garden: '温室花园',
+  observatory: '观星台',
+};
+function isDistrict(value: CharacterFocus | StudioDistrict | undefined): value is StudioDistrict {
+  return value !== undefined && Object.hasOwn(districtNames, value);
+}
+function LightOptions() {
+  return (
+    <>
+      <option value="auto">跟随本机时间</option>
+      <option value="day">白昼</option>
+      <option value="dusk">黄昏</option>
+      <option value="night">夜晚</option>
+    </>
+  );
+}
 const labels: Record<string, string> = {
   draft: '草稿',
   active: '进行中',
@@ -240,10 +260,29 @@ export function App() {
     }
   };
   const [reset, setReset] = useState(0);
+  const [lightMode, setLightMode] = useState<IslandLightMode>(() => {
+    try {
+      const saved = localStorage.getItem(lightStorageKey);
+      return saved === 'day' || saved === 'dusk' || saved === 'night' ? saved : 'auto';
+    } catch {
+      return 'auto';
+    }
+  });
+  const changeLightMode = (mode: IslandLightMode) => {
+    setLightMode(mode);
+    try {
+      localStorage.setItem(lightStorageKey, mode);
+    } catch {
+      setNotice('天色已应用到当前会话。无法保存到本机。');
+    }
+  };
   const [viewpoint, setViewpoint] = useState<CharacterFocus | StudioDistrict>();
-  const characterFocus = viewpoint === 'harbor' || viewpoint === 'garden' ? undefined : viewpoint;
-  const district = viewpoint === 'harbor' || viewpoint === 'garden' ? viewpoint : undefined;
-  const districtTitle = district === 'harbor' ? '花港街景' : '温室花园';
+  const characterFocus = isDistrict(viewpoint) ? undefined : viewpoint;
+  const district = isDistrict(viewpoint) ? viewpoint : undefined;
+  const visitObservatory = () => {
+    setViewpoint('observatory');
+    setFixed(false);
+  };
   const [reduced, setReduced] = useState(
     () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || false,
   );
@@ -668,9 +707,19 @@ export function App() {
                 : characterFocus && !flat
                   ? `${characterName(characterFocus)}的角色特写`
                   : district && !flat
-                    ? districtTitle
+                    ? districtNames[district]
                     : snapshot?.commission.title || workspace?.name || '星岛工作室'}
             </h1>
+            {!overview && !flat && district === 'observatory' && (
+              <select
+                className="observatory-time"
+                aria-label="观星台天色"
+                value={lightMode}
+                onChange={(event) => changeLightMode(event.target.value as IslandLightMode)}
+              >
+                <LightOptions />
+              </select>
+            )}
             {!overview && characterFocus && !flat && (
               <p>
                 {characters.find((profile) => profile.id === characterFocus)?.model?.filename ||
@@ -709,6 +758,7 @@ export function App() {
         ) : overview && !flat ? (
           <Archipelago
             quality={sceneQuality}
+            lightMode={lightMode}
             workspaces={bootstrap?.workspaces || []}
             themeOverrides={islandThemeOverrides}
             selectedId={workspaceId}
@@ -729,6 +779,8 @@ export function App() {
             fixed={fixed}
             focus={characterFocus}
             district={district}
+            lightMode={lightMode}
+            onVisitObservatory={visitObservatory}
             characters={characters}
             celebration={celebration.burst}
           />
@@ -807,8 +859,11 @@ export function App() {
               }}
             >
               <option value="">工作室全景</option>
-              <option value="harbor">花港街景</option>
-              <option value="garden">温室花园</option>
+              {Object.entries(districtNames).map(([id, name]) => (
+                <option key={id} value={id}>
+                  {name}
+                </option>
+              ))}
               {characters.map((profile) => (
                 <option key={profile.id} value={profile.id}>
                   {profile.displayName}
@@ -920,6 +975,8 @@ export function App() {
               onReduced={setReduced}
               quality={sceneQuality}
               onQuality={changeSceneQuality}
+              lightMode={lightMode}
+              onLightMode={changeLightMode}
               workspace={workspace}
               islandTheme={islandTheme}
               onIslandTheme={changeIslandTheme}
@@ -1763,6 +1820,8 @@ function SettingsPanel({
   onReduced,
   quality,
   onQuality,
+  lightMode,
+  onLightMode,
   workspace,
   islandTheme,
   onIslandTheme,
@@ -1777,6 +1836,8 @@ function SettingsPanel({
   onReduced: (v: boolean) => void;
   quality: SceneQuality;
   onQuality: (quality: SceneQuality) => void;
+  lightMode: IslandLightMode;
+  onLightMode: (mode: IslandLightMode) => void;
   workspace?: Workspace;
   islandTheme?: IslandThemeId;
   onIslandTheme: (themeId?: IslandThemeId) => void;
@@ -1828,6 +1889,14 @@ function SettingsPanel({
         <IslandThemeSelect workspace={workspace} themeId={islandTheme} onChange={onIslandTheme} />
       )}
       <SceneQualitySelect value={quality} onChange={onQuality} />
+      <label htmlFor="island-daylight">岛上天色</label>
+      <select
+        id="island-daylight"
+        value={lightMode}
+        onChange={(e) => onLightMode(e.target.value as IslandLightMode)}
+      >
+        <LightOptions />
+      </select>
       <label className="check-label">
         <input type="checkbox" checked={reduced} onChange={(e) => onReduced(e.target.checked)} />
         减少角色动作

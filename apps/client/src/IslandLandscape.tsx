@@ -18,6 +18,7 @@ import {
   pondPoint,
 } from './island-pond';
 import { createIslandTerrain, shoreGroundHeight, shoreRadius } from './island-terrain';
+import { OBSERVATORY, onObservatoryApproach } from './island-observatory';
 import { TeaGardenDressing } from './TeaGardenDressing';
 
 type V3 = [number, number, number];
@@ -451,6 +452,233 @@ function pointOnCliff(cliff: THREE.Mesh, ray: THREE.Raycaster, bearing: number, 
   return ray.intersectObject(cliff)[0]?.point;
 }
 
+const observatoryWood = ['#a18465', '#b29976', '#ad8d6b', '#bb9f79', '#a88c6b'];
+const observatoryIron = '#4b6264';
+const observatoryBrass = '#ba985c';
+const observatoryLampBases: [number, number, number][] = [
+  [4.23, 0.08, -5.54],
+  [5.61, 0.13, -6.04],
+  [6.12, OBSERVATORY.deck.height, -8.7],
+  [3.7, OBSERVATORY.deck.height, -8.7],
+];
+
+function observatorySurfaces() {
+  const deck: THREE.BufferGeometry[] = [];
+  const walk: THREE.BufferGeometry[] = [];
+  const telescope: THREE.BufferGeometry[] = [];
+  const lamps: THREE.BufferGeometry[] = [];
+  const { left, right, entryZ, farZ, height } = OBSERVATORY.deck;
+  const { x: entryX, width, startZ, endZ } = OBSERVATORY.boardwalk;
+  const box = (parts: THREE.BufferGeometry[], position: V3, size: V3, color: string, yaw = 0) =>
+    addPart(parts, new THREE.BoxGeometry(...size), color, { position, rotation: [0, yaw, 0] });
+
+  const rows = 12;
+  const run = (startZ - endZ) / rows;
+  const rise = (height - 0.014) / rows;
+  for (let row = 0; row < rows; row++) {
+    const y = 0.014 + (row + 1) * rise - 0.042;
+    box(
+      walk,
+      [entryX, y, startZ - (row + 0.5) * run],
+      [width - 0.02, 0.084, run - 0.008],
+      observatoryWood[row % observatoryWood.length]!,
+    );
+  }
+  for (const edge of [entryX - width / 2, entryX + width / 2]) {
+    addPart(
+      walk,
+      new THREE.BoxGeometry(0.07, 0.065, Math.hypot(startZ - endZ, height)),
+      '#756654',
+      {
+        position: [edge, 0.044, (startZ + endZ) / 2],
+        rotation: [Math.atan2(height - 0.014, startZ - endZ), 0, 0],
+      },
+    );
+  }
+
+  const chamfer = 0.36;
+  const plankDepth = (entryZ - farZ) / 17;
+  for (let row = 0; row < 17; row++) {
+    const z = entryZ - (row + 0.5) * plankDepth;
+    const bevel = Math.max(0, chamfer - Math.min(entryZ - z, z - farZ));
+    box(
+      deck,
+      [(left + right) / 2, height - 0.049, z],
+      [right - left - bevel * 2, 0.098, plankDepth - 0.009],
+      observatoryWood[row % observatoryWood.length]!,
+    );
+    for (const x of [left + 0.12 + bevel, right - 0.12 - bevel]) {
+      box(deck, [x, height + 0.002, z], [0.023, 0.005, 0.023], '#746653');
+    }
+  }
+  // Cantilevered beams and braces tie the overhanging seaward edge to the island.
+  for (const x of [3.93, 5.43]) {
+    box(deck, [x, -0.058, -7.73], [0.18, 0.23, 3.14], '#795e49');
+    box(deck, [x, -0.39, -6.78], [0.24, 0.83, 0.24], '#795e49');
+    addBranch(deck, [x, -0.71, -6.79], [x, -0.03, -9.02], 0.115, '#856e53');
+  }
+
+  // The entry stays open and the low rails preserve the horizon through the deck.
+  const rim: [number, number][] = [
+    [entryX - width / 2, entryZ - 0.045],
+    [left + chamfer, entryZ - 0.045],
+    [left + 0.045, entryZ - chamfer],
+    [left + 0.045, farZ + chamfer],
+    [left + chamfer, farZ + 0.045],
+    [right - chamfer, farZ + 0.045],
+    [right - 0.045, farZ + chamfer],
+    [right - 0.045, entryZ - chamfer],
+    [right - chamfer, entryZ - 0.045],
+    [entryX + width / 2, entryZ - 0.045],
+  ];
+  const post = (x: number, z: number) => {
+    box(deck, [x, height + 0.22, z], [0.078, 0.5, 0.078], observatoryIron);
+    box(deck, [x, height + 0.48, z], [0.092, 0.026, 0.092], observatoryBrass);
+  };
+  rim.forEach(([x, z], index) => {
+    post(x, z);
+    const next = rim[index + 1];
+    if (!next) return;
+    const [nx, nz] = next;
+    const yaw = Math.atan2(nx - x, nz - z);
+    const length = Math.hypot(nx - x, nz - z);
+    const midX = (nx + x) / 2;
+    const midZ = (nz + z) / 2;
+    if (length > 1.4) post(midX, midZ);
+    box(deck, [midX, height + 0.46, midZ], [0.061, 0.061, length], '#78827a', yaw);
+    box(deck, [midX, height + 0.21, midZ], [0.019, 0.019, length], observatoryIron, yaw);
+  });
+
+  // A brass compass set flush into the deck marks the northward sight line.
+  const compass: V3 = [4.98, height + 0.009, -8.3];
+  addPart(deck, new THREE.TorusGeometry(0.41, 0.012, 5, 32), observatoryBrass, {
+    position: compass,
+    rotation: [-Math.PI / 2, 0, 0],
+  });
+  box(deck, compass, [0.027, 0.012, 0.7], observatoryBrass);
+  box(deck, compass, [0.027, 0.012, 0.51], observatoryBrass, Math.PI / 2);
+  addPart(deck, new THREE.CylinderGeometry(0.063, 0.063, 0.012, 4), '#c7b486', {
+    position: [compass[0], compass[1], compass[2] - 0.33],
+  });
+
+  // A low field journal shelf sits beside the telescope's observing lane.
+  box(deck, [5.85, height + 0.28, -8.22], [0.18, 0.57, 0.27], observatoryIron);
+  box(deck, [5.85, height + 0.58, -8.22], [0.72, 0.07, 0.48], '#927455', -0.23);
+  box(deck, [5.84, height + 0.627, -8.24], [0.5, 0.026, 0.31], '#d6c39e', -0.3);
+  for (let i = 0; i < 5; i++) {
+    const angle = i * 2.4;
+    box(
+      deck,
+      [5.84 + Math.cos(angle) * 0.17, height + 0.643, -8.24 + Math.sin(angle) * 0.09],
+      [0.024, 0.005, 0.024],
+      '#72838b',
+      angle,
+    );
+  }
+
+  const [scopeX, scopeZ] = OBSERVATORY.telescope;
+  for (let i = 0; i < 3; i++) {
+    const angle = i * ((2 * Math.PI) / 3) + 0.44;
+    const x = scopeX + Math.cos(angle) * 0.33;
+    const z = scopeZ + Math.sin(angle) * 0.33;
+    addBranch(telescope, [x, height + 0.05, z], [scopeX, height + 0.91, scopeZ], 0.048, '#927751');
+    box(telescope, [x, height + 0.026, z], [0.14, 0.043, 0.14], observatoryIron, angle);
+  }
+  addPart(telescope, new THREE.CylinderGeometry(0.12, 0.1, 0.18, 10), observatoryIron, {
+    position: [scopeX, height + 0.91, scopeZ],
+  });
+  const axis = new THREE.Vector3(0.2, 0.52, -0.83).normalize();
+  const tube = new THREE.Vector3(scopeX, height + 1.02, scopeZ);
+  const tilt = new THREE.Euler().setFromQuaternion(
+    new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), axis),
+  );
+  for (const [offset, top, bottom, length, color] of [
+    [0, 0.158, 0.118, 1.18, '#3b6874'],
+    [-0.33, 0.146, 0.146, 0.046, observatoryBrass],
+    [0.23, 0.17, 0.17, 0.075, observatoryBrass],
+    [0.56, 0.197, 0.197, 0.118, '#b09462'],
+    [0.624, 0.155, 0.155, 0.02, '#548e9c'],
+    [-0.63, 0.08, 0.08, 0.16, observatoryBrass],
+    [-0.73, 0.095, 0.095, 0.058, '#374c57'],
+  ] as const) {
+    addPart(telescope, new THREE.CylinderGeometry(top, bottom, length, 18), color, {
+      position: tube.clone().addScaledVector(axis, offset).toArray(),
+      rotation: [tilt.x, tilt.y, tilt.z],
+    });
+  }
+
+  for (const [x, y, z] of observatoryLampBases) {
+    box(deck, [x, y + 0.098, z], [0.11, 0.23, 0.11], observatoryIron);
+    box(lamps, [x, y + 0.228, z], [0.118, 0.061, 0.118], '#eec58c');
+    addPart(deck, new THREE.CylinderGeometry(0.093, 0.106, 0.055, 8), observatoryIron, {
+      position: [x, y + 0.284, z],
+    });
+  }
+
+  return {
+    deck: finishSurface(deck),
+    walk: finishSurface(walk),
+    telescope: finishSurface(telescope),
+    lamps: finishSurface(lamps),
+  };
+}
+
+function ObservatoryDeck({
+  lampStrength,
+  onVisit,
+}: {
+  lampStrength: number;
+  onVisit?: () => void;
+}) {
+  const surface = useMemo(observatorySurfaces, []);
+  return (
+    <group name="island-observatory">
+      <mesh name="observatory-boardwalk" castShadow receiveShadow>
+        <SurfaceGeometry surface={surface.walk} />
+        <meshStandardMaterial vertexColors roughness={0.89} />
+      </mesh>
+      <mesh name="observatory-deck" castShadow receiveShadow>
+        <SurfaceGeometry surface={surface.deck} />
+        <meshStandardMaterial vertexColors roughness={0.85} />
+      </mesh>
+      <mesh
+        name="observatory-telescope"
+        castShadow
+        receiveShadow
+        onClick={
+          onVisit &&
+          ((event) => {
+            event.stopPropagation();
+            if (event.delta <= 4) onVisit();
+          })
+        }
+      >
+        <SurfaceGeometry surface={surface.telescope} />
+        <meshStandardMaterial vertexColors metalness={0.27} roughness={0.43} />
+      </mesh>
+      <mesh name="observatory-lamps">
+        <SurfaceGeometry surface={surface.lamps} />
+        <meshStandardMaterial
+          vertexColors
+          emissive="#ffb164"
+          emissiveIntensity={0.12 + lampStrength * 1.35}
+          roughness={0.45}
+        />
+      </mesh>
+      {[observatoryLampBases[1]!, observatoryLampBases[3]!].map(([x, y, z]) => (
+        <pointLight
+          key={z}
+          position={[x, y + 0.32, z]}
+          color="#ffc186"
+          intensity={lampStrength * 0.72}
+          distance={1.8}
+          decay={2}
+        />
+      ))}
+    </group>
+  );
+}
+
 function landscapeSurface(palette: Palette, cliff: THREE.Mesh): Surface {
   const parts = [cliff.geometry];
   const bench = FACILITIES['garden-bench'].position;
@@ -486,7 +714,8 @@ function landscapeSurface(palette: Palette, cliff: THREE.Mesh): Surface {
     for (const radius of [6.49, 7.73]) {
       if (
         nearFacility(x * radius, z * radius, 0.2) ||
-        nearGardenApproach(x * radius, z * radius, 0.2)
+        nearGardenApproach(x * radius, z * radius, 0.2) ||
+        onObservatoryApproach(x * radius, z * radius, 0.17)
       )
         continue;
       addPart(parts, new THREE.BoxGeometry(0.12, 0.065, 0.48), i % 3 ? '#c5bca2' : '#ded3b9', {
@@ -497,7 +726,7 @@ function landscapeSurface(palette: Palette, cliff: THREE.Mesh): Surface {
   }
   [
     [-7.2, -0.02, -4.5, 1.0],
-    [3.19, -0.02, -7.78, 0.9],
+    [2.38, -0.02, -7.73, 0.72],
     [1.2, -0.02, -8.3, 0.8],
     [6.6, -0.02, -5.1, 1.05],
     [-8.25, -0.02, 1.0, 0.82],
@@ -540,6 +769,9 @@ function landscapeSurface(palette: Palette, cliff: THREE.Mesh): Surface {
     if (
       nearFacility(x, z, 0.44) ||
       (Math.abs(x) < 0.9 && z < -8.2) ||
+      (x > OBSERVATORY.deck.left - 0.2 &&
+        x < OBSERVATORY.deck.right + 0.2 &&
+        z < OBSERVATORY.deck.entryZ) ||
       atGlasshouseAccess ||
       nearGardenApproach(x, z, 0.4) ||
       Math.hypot(x - POND_CENTER[0], z - POND_CENTER[2]) < 1.46
@@ -713,23 +945,6 @@ function landscapeSurface(palette: Palette, cliff: THREE.Mesh): Surface {
       shelter,
     );
   addFlowers(parts, [-1.05, 1.94, 0], palette, 7, shelter);
-  const telescope = place(4.2, -6.9, -0.6);
-  for (let i = 0; i < 3; i++)
-    addPart(parts, new THREE.CylinderGeometry(0.025, 0.035, 1.1, 6), '#a08d67', {
-      position: [Math.cos(i * 2.1) * 0.2, 0.55, Math.sin(i * 2.1) * 0.2],
-      rotation: [Math.sin(i * 2.1) * 0.35, 0, Math.cos(i * 2.1) * 0.35],
-      parent: telescope,
-    });
-  addPart(parts, new THREE.CylinderGeometry(0.16, 0.13, 0.95, 16), '#4b7278', {
-    position: [0, 1.2, 0],
-    rotation: [0.9, 0, 0],
-    parent: telescope,
-  });
-  addPart(parts, new THREE.CylinderGeometry(0.18, 0.18, 0.08, 16), '#ba994f', {
-    position: [0, 1.5, 0.36],
-    rotation: [0.9, 0, 0],
-    parent: telescope,
-  });
   const planter = place(-7.9, -0.7, 0.1);
   addPart(parts, new THREE.BoxGeometry(0.65, 0.22, 1.35), '#ac987d', {
     position: [0, 0.1, 0],
@@ -828,10 +1043,14 @@ export function IslandLandscape({
   workspaceId,
   themeId,
   reduced,
+  observatoryLampStrength = 0,
+  onVisitObservatory,
 }: {
   workspaceId: string;
   themeId?: IslandThemeId;
   reduced: boolean;
+  observatoryLampStrength?: number;
+  onVisitObservatory?: () => void;
 }) {
   const palette = useMemo(() => islandAppearance(workspaceId, themeId), [workspaceId, themeId]);
   const { surface, minerals } = useMemo(() => {
@@ -848,6 +1067,7 @@ export function IslandLandscape({
   useEffect(() => () => ripples.dispose(), [ripples]);
   return (
     <group name="island-landscape">
+      <ObservatoryDeck lampStrength={observatoryLampStrength} onVisit={onVisitObservatory} />
       <mesh castShadow receiveShadow>
         <SurfaceGeometry surface={surface} />
         <meshStandardMaterial vertexColors roughness={0.95} flatShading />
