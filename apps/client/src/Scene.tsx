@@ -10,7 +10,9 @@ import type { SceneIntent } from './director';
 import { IslandLandscape } from './IslandLandscape';
 import { CharacterVisual } from './characters/CharacterVisual';
 import type { CharacterMotion } from './characters/CharacterVisual';
-import { CosmicBackdrop } from './CosmicBackdrop';
+import { CosmicBackdrop, IslandSkyLighting } from './CosmicBackdrop';
+import type { IslandLight, IslandLightMode } from './island-daylight';
+import { useIslandLight } from './use-island-light';
 import { OuterIslets } from './OuterIslets';
 import { IslandGlasshouse } from './IslandGlasshouse';
 import { HarborQuarter } from './HarborQuarter';
@@ -517,6 +519,8 @@ function World({
   fixed,
   focus,
   district,
+  light,
+  onVisitObservatory,
   characters,
   celebration,
 }: {
@@ -530,6 +534,8 @@ function World({
   fixed: boolean;
   focus?: CharacterFocus;
   district?: StudioDistrict;
+  light: IslandLight;
+  onVisitObservatory?: () => void;
   characters?: CharacterProfile[];
   celebration?: number | null;
 }) {
@@ -617,17 +623,20 @@ function World({
   const placements = placeSceneActors(actors, intents);
   return (
     <>
-      <CosmicBackdrop reduced={reduced} />
+      <CosmicBackdrop reduced={reduced} light={light} />
       <HarborHorizon />
       <OuterIslets reduced={reduced} />
       <HarborQuarter snapshot={snapshot} onPanel={onPanel} />
       <IslandGlasshouse />
-      <ambientLight intensity={0.6} />
-      <hemisphereLight args={['#d3e5fe', '#71637d', 1.12]} />
-      <directionalLight position={[-8, 9, 6]} intensity={2.58} color="#ffe5bf" />
-      <directionalLight position={[6, 4, -8]} intensity={0.92} color="#a9c1f4" />
+      <IslandSkyLighting light={light} />
       <CameraRig reset={reset} fixed={fixed} reduced={reduced} district={district} />
-      <IslandLandscape workspaceId={workspaceId} themeId={themeId} reduced={reduced} />
+      <IslandLandscape
+        workspaceId={workspaceId}
+        themeId={themeId}
+        reduced={reduced}
+        observatoryLampStrength={light.dusk * 0.55 + light.night}
+        onVisitObservatory={district === 'observatory' ? undefined : onVisitObservatory}
+      />
       <IslandLeisure life={life} />
       {celebration != null && !reduced && <Confetti key={celebration} burst={celebration} />}
       <StudioDeck />
@@ -769,6 +778,8 @@ class SceneBoundary extends Component<{ children: ReactNode }, { error: boolean 
 }
 export function StudioScene(props: {
   workspaceId: string;
+  lightMode?: IslandLightMode;
+  onVisitObservatory?: () => void;
   themeId?: IslandThemeId;
   snapshot?: ProjectSnapshot;
   onPanel: (panel: Panel) => void;
@@ -784,6 +795,7 @@ export function StudioScene(props: {
 }) {
   const portal = useRef<HTMLDivElement>(null!);
   const active = useSceneActivity();
+  const light = useIslandLight(props.lightMode ?? 'auto', active && !props.focus);
   const quality = props.quality ?? 'clear';
   const dpr = useScenePixelRatio(quality, portal);
   return (
@@ -791,6 +803,7 @@ export function StudioScene(props: {
       <div
         className="studio-canvas"
         data-island-theme={islandAppearance(props.workspaceId, props.themeId).id}
+        data-light-phase={props.focus ? undefined : light.phase}
         style={{ position: 'absolute', inset: 0 }}
       >
         <div
@@ -808,7 +821,7 @@ export function StudioScene(props: {
           <SceneQualityContext.Provider value={quality}>
             <LabelPortal.Provider value={portal}>
               <Suspense fallback={null}>
-                <World key={props.workspaceId} {...props} />
+                <World key={props.workspaceId} {...props} light={light} />
               </Suspense>
             </LabelPortal.Provider>
           </SceneQualityContext.Provider>

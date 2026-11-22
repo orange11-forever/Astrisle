@@ -16,7 +16,9 @@ import type { Workspace } from '@astrisle/contracts';
 import { islandAppearance, islandPosition } from './islands';
 import type { IslandThemeId } from './islands';
 import { IslandTree, Pennant } from './IslandLandscape';
-import { CosmicBackdrop } from './CosmicBackdrop';
+import { CosmicBackdrop, IslandSkyLighting } from './CosmicBackdrop';
+import type { IslandLightMode } from './island-daylight';
+import { useIslandLight } from './use-island-light';
 import { SceneFrameBudget, useSceneActivity } from './render-budget';
 import { useScenePixelRatio } from './render-quality';
 import type { SceneQuality } from './render-quality';
@@ -196,6 +198,7 @@ export function Archipelago({
   onSelect,
   reduced,
   quality = 'clear',
+  lightMode = 'auto',
 }: {
   workspaces: Workspace[];
   themeOverrides: ReadonlyMap<string, IslandThemeId>;
@@ -203,9 +206,11 @@ export function Archipelago({
   onSelect: (id: string) => void;
   reduced: boolean;
   quality?: SceneQuality;
+  lightMode?: IslandLightMode;
 }) {
   const portal = useRef<HTMLDivElement>(null!);
   const active = useSceneActivity();
+  const light = useIslandLight(lightMode, active);
   const dpr = useScenePixelRatio(quality, portal);
   const rows = Math.ceil(workspaces.length / 3);
   const distance = Math.max(17, rows * 4.6 + 9);
@@ -230,10 +235,8 @@ export function Archipelago({
           <SceneFrameBudget reduced={reduced} active={active} />
           <LabelPortal.Provider value={portal}>
             <Suspense fallback={null}>
-              <CosmicBackdrop reduced={reduced} />
-              <ambientLight intensity={0.9} />
-              <hemisphereLight args={['#cedaff', '#665575', 1.4]} />
-              <directionalLight position={[-8, 14, 8]} intensity={2.0} color="#ffe7c5" />
+              <CosmicBackdrop reduced={reduced} light={light} />
+              <IslandSkyLighting light={light} overview />
               <OrbitControls
                 makeDefault
                 enablePan

@@ -497,6 +497,18 @@ nav button.active {
 .stage-cosmic .scene-caption {
   color: #c3cfdb;
 }
+.stage-title .observatory-time {
+  pointer-events: auto;
+  width: auto;
+  margin-top: 7px;
+  padding: 3px 6px;
+  border: 1px solid #6b7687;
+  border-radius: 5px;
+  background: #19273b;
+  color: #edf0ef;
+  font: inherit;
+  font-size: 12px;
+}
 .stage-cosmic .caption-line {
   background: #778bb0;
 }
