@@ -9,11 +9,10 @@ const project = resolve(fileURLToPath(new URL('../', import.meta.url)));
 const source = resolve(project, process.env.ASTRISLE_DATA_ROOT || '.astrisle-dev');
 const canvasSelector = '.studio-canvas canvas';
 
-async function screenshotDestination(rawArgs) {
-  const args = rawArgs[0] === '--' ? rawArgs.slice(1) : rawArgs;
+async function screenshotDestination(args) {
   if (!args.length) return;
   if (args.length !== 2 || args[0] !== '--screenshot' || extname(args[1]).toLowerCase() !== '.png')
-    throw new Error('用法：pnpm.cmd demo [--screenshot <新建的本地 PNG 路径>]');
+    throw new Error('用法：pnpm.cmd demo [--observatory] [--screenshot <新建的本地 PNG 路径>]');
   const path = resolve(args[1]);
   if (process.platform === 'win32' && path.startsWith('\\\\'))
     throw new Error('请选择本机磁盘上的截图路径。');
@@ -51,7 +50,11 @@ async function buildApplication(signal) {
 }
 
 async function launchDemo() {
-  const screenshot = await screenshotDestination(process.argv.slice(2));
+  const args = process.argv.slice(2);
+  if (args[0] === '--') args.shift();
+  const observatory = args[0] === '--observatory';
+  if (observatory) args.shift();
+  const screenshot = await screenshotDestination(args);
   const stop = new AbortController();
   const requestStop = () => stop.abort();
   process.once('SIGINT', requestStop);
@@ -139,6 +142,12 @@ async function launchDemo() {
         cause: error,
       });
     }
+    if (observatory) {
+      await whileRunning(page.getByLabel('场景视角与角色特写').selectOption('observatory'));
+      await whileRunning(page.getByLabel('观星台天色').selectOption('night'));
+      await whileRunning(page.locator('.studio-canvas[data-light-phase="night"]').waitFor());
+      await verifyModels();
+    }
     stop.signal.throwIfAborted();
     const visible = await nativeWindow.evaluate((window) => {
       if (window.isVisible()) throw new Error('演示窗口在角色核验前已显示。');
@@ -147,6 +156,7 @@ async function launchDemo() {
       return { pid: process.pid, title: window.getTitle(), shown: window.isVisible() };
     });
     if (!visible.shown) throw new Error('角色已核验，但演示窗口未能显示。');
+    if (observatory) console.log('演示已选中观星台，天色为夜晚。');
     console.log(
       `已核验全部 ${total} 个角色并显示窗口“${visible.title}”（PID ${visible.pid}）。关闭窗口会清理临时工作区。`,
     );
