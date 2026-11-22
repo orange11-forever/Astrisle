@@ -173,50 +173,50 @@ test.describe(() => {
       const resource = performance
         .getEntriesByType('resource')
         .find((entry) => entry.name.includes('/@react-three_fiber.js'))!;
-      const { _roots, addAfterEffect } = await import(resource.name);
-      const { camera, gl } = _roots
-        .get(document.querySelector('.studio-canvas canvas'))
-        .store.getState();
+      const { _roots } = await import(resource.name);
+      const readState = () =>
+        _roots.get(document.querySelector('.studio-canvas canvas')).store.getState();
+      const { frameloop } = readState();
+      // Pause automatic frames before holding the clock, then render only the sampled poses.
+      readState().setFrameloop('never');
       const originalNow = performance.now;
       let now = performance.now();
-      // Hold the transition clock at each checkpoint while the browser draws real frames.
       performance.now = () => now;
-      let frame = gl.info.render.frame;
-      let position: number[] | undefined;
-      const unsubscribe = addAfterEffect(() => {
-        if (camera.fov === fov && gl.info.render.frame !== frame)
-          position = camera.position.toArray();
-        frame = gl.info.render.frame;
-      });
+      const advance = (milliseconds: number) => {
+        const state = readState();
+        const frame = state.gl.info.render.frame;
+        now += milliseconds;
+        state.advance(state.clock.elapsedTime + milliseconds / 1000, false);
+        return {
+          position: state.camera.position.toArray() as number[],
+          rendered: state.gl.info.render.frame > frame,
+        };
+      };
       return {
-        position: () => position,
-        advance: (milliseconds: number) => {
-          now += milliseconds;
+        entered: () => {
+          const state = readState();
+          return state.camera.fov === fov && state.frameloop === 'never';
         },
+        sample: () => ({ entry: advance(0), midway: advance(350), arrival: advance(550) }),
         restore: () => {
-          unsubscribe();
           performance.now = originalNow;
+          readState().setFrameloop(frameloop);
+          readState().invalidate();
         },
       };
     }, OBSERVATORY.fieldOfView);
     try {
       const { boardwalk, deck } = OBSERVATORY;
-      const readPosition = () => route.evaluate(({ position }) => position());
       await page.getByLabel('场景视角与角色特写').selectOption('observatory');
-      await expect.poll(async () => (await readPosition())?.[2] ?? -Infinity).toBeCloseTo(-4.76, 2);
-
-      await route.evaluate(({ advance }) => advance(350));
-      await expect
-        .poll(async () => (await readPosition())?.[2] ?? Infinity)
-        .toBeLessThan(boardwalk.startZ);
-      const [x, , z] = (await readPosition())!;
+      await expect.poll(() => route.evaluate(({ entered }) => entered())).toBe(true);
+      const { entry, midway, arrival } = await route.evaluate(({ sample }) => sample());
+      expect(entry.rendered && midway.rendered && arrival.rendered).toBe(true);
+      expect(entry.position[2]).toBeCloseTo(-4.76, 2);
+      const [x, , z] = midway.position;
+      expect(z).toBeLessThan(boardwalk.startZ);
       expect(z).toBeGreaterThan(deck.entryZ);
       expect(Math.abs(x - boardwalk.x)).toBeLessThan(boardwalk.width / 2);
-
-      await route.evaluate(({ advance }) => advance(550));
-      await expect
-        .poll(async () => (await readPosition())?.[2] ?? Infinity)
-        .toBeLessThan(deck.entryZ);
+      expect(arrival.position[2]).toBeLessThan(deck.entryZ);
     } finally {
       await route.evaluate(({ restore }) => restore());
       await route.dispose();
