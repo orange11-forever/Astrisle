@@ -670,6 +670,7 @@ function ObservatoryDeck({
           key={z}
           position={[x, y + 0.32, z]}
           color="#ffc186"
+          visible={lampStrength > 0}
           intensity={lampStrength * 0.72}
           distance={1.8}
           decay={2}

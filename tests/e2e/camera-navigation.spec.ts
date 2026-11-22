@@ -14,6 +14,7 @@ async function cameraState(page: Page) {
     return {
       angle: state.controls.getAzimuthalAngle(),
       pitch: state.controls.getPolarAngle(),
+      aspect: state.camera.aspect as number,
       distance: state.camera.position.distanceTo(state.controls.target),
       target: state.controls.target.toArray() as number[],
       position: state.camera.position.toArray() as number[],
@@ -60,8 +61,9 @@ async function reset(page: Page) {
     .toEqual([13.5, 13.5, 20.3]);
 }
 
+test.use({ reducedMotion: 'reduce' });
+
 test.beforeEach(async ({ page }) => {
-  await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto('/');
   await expect.poll(() => cameraState(page)).not.toBeNull();
@@ -161,47 +163,101 @@ test('visits the observatory at night and keeps free navigation and the sky pref
   expect(shaderErrors).toEqual([]);
 });
 
-test('travels along the boardwalk into the observatory when motion is enabled', async ({
-  page,
-}) => {
-  await page.emulateMedia({ reducedMotion: 'no-preference' });
-  const route = await page.evaluateHandle(async (fov) => {
-    const resource = performance
-      .getEntriesByType('resource')
-      .find((entry) => entry.name.includes('/@react-three_fiber.js'))!;
-    const { _roots, addAfterEffect } = await import(resource.name);
-    const { camera } = _roots.get(document.querySelector('.studio-canvas canvas')).store.getState();
-    const positions = new Set<number>();
-    const stop = addAfterEffect(() => {
-      if (camera.fov === fov) positions.add(camera.position.z);
-    });
-    return { positions, stop };
-  }, OBSERVATORY.fieldOfView);
-  try {
-    await page.getByLabel('场景视角与角色特写').selectOption('observatory');
-    await expect.poll(() => route.evaluate(({ positions }) => positions.size)).toBeGreaterThan(2);
-    await expect
-      .poll(async () => (await cameraState(page))!.position[2])
-      .toBeLessThan(OBSERVATORY.deck.entryZ);
+test.describe(() => {
+  test.use({ reducedMotion: 'no-preference' });
+
+  test('travels along the boardwalk into the observatory when motion is enabled', async ({
+    page,
+  }) => {
+    const route = await page.evaluateHandle(async (fov) => {
+      const resource = performance
+        .getEntriesByType('resource')
+        .find((entry) => entry.name.includes('/@react-three_fiber.js'))!;
+      const { _roots, addAfterEffect } = await import(resource.name);
+      const { camera, gl } = _roots
+        .get(document.querySelector('.studio-canvas canvas'))
+        .store.getState();
+      const originalNow = performance.now;
+      let now = performance.now();
+      // Hold the transition clock at each checkpoint while the browser draws real frames.
+      performance.now = () => now;
+      let frame = gl.info.render.frame;
+      let position: number[] | undefined;
+      const unsubscribe = addAfterEffect(() => {
+        if (camera.fov === fov && gl.info.render.frame !== frame)
+          position = camera.position.toArray();
+        frame = gl.info.render.frame;
+      });
+      return {
+        position: () => position,
+        advance: (milliseconds: number) => {
+          now += milliseconds;
+        },
+        restore: () => {
+          unsubscribe();
+          performance.now = originalNow;
+        },
+      };
+    }, OBSERVATORY.fieldOfView);
+    try {
+      const { boardwalk, deck } = OBSERVATORY;
+      const readPosition = () => route.evaluate(({ position }) => position());
+      await page.getByLabel('场景视角与角色特写').selectOption('observatory');
+      await expect.poll(async () => (await readPosition())?.[2] ?? -Infinity).toBeCloseTo(-4.76, 2);
+
+      await route.evaluate(({ advance }) => advance(350));
+      await expect
+        .poll(async () => (await readPosition())?.[2] ?? Infinity)
+        .toBeLessThan(boardwalk.startZ);
+      const [x, , z] = (await readPosition())!;
+      expect(z).toBeGreaterThan(deck.entryZ);
+      expect(Math.abs(x - boardwalk.x)).toBeLessThan(boardwalk.width / 2);
+
+      await route.evaluate(({ advance }) => advance(550));
+      await expect
+        .poll(async () => (await readPosition())?.[2] ?? Infinity)
+        .toBeLessThan(deck.entryZ);
+    } finally {
+      await route.evaluate(({ restore }) => restore());
+      await route.dispose();
+    }
     await reset(page);
-  } finally {
-    await route.evaluate(({ stop }) => stop());
-    await route.dispose();
-  }
+  });
 });
 
 test('overview zooms closer and preserves orbit on resize with accessible narrow controls', async ({
   page,
 }) => {
+  // Start just beyond close range through the mounted controls. Each wheel event takes one step,
+  // regardless of its delta magnitude, so a single real gesture can now cross the threshold.
+  await page.evaluate(async () => {
+    const resource = performance
+      .getEntriesByType('resource')
+      .find((entry) => entry.name.includes('/@react-three_fiber.js'))!;
+    const { _roots } = await import(resource.name);
+    const { camera, controls } = _roots
+      .get(document.querySelector('.studio-canvas canvas'))
+      .store.getState();
+    controls.dollyIn(8.2 / camera.position.distanceTo(controls.target));
+  });
+  const initial = (await cameraState(page))!;
+  expect(initial.distance).toBeCloseTo(8.2, 2);
   const box = (await page.locator('.studio-canvas canvas').boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height * 0.45);
-  for (let i = 0; i < 25; i++) await page.mouse.wheel(0, -180);
+  await page.mouse.wheel(0, -180);
   await expect.poll(async () => (await cameraState(page))?.distance ?? Infinity).toBeLessThan(8);
   await drag(page, 0.12);
-  await page.waitForTimeout(600);
+  await expect
+    .poll(async () => Math.abs(((await cameraState(page))?.angle ?? initial.angle) - initial.angle))
+    .toBeGreaterThan(0.1);
   const before = (await cameraState(page))!;
   await page.setViewportSize({ width: 1200, height: 850 });
-  await page.waitForTimeout(500);
+  const resizedScene = (await page.locator('.studio-canvas').boundingBox())!;
+  const resizedAspect = resizedScene.width / resizedScene.height;
+  expect(resizedAspect).not.toBeCloseTo(before.aspect, 3);
+  await expect
+    .poll(async () => (await cameraState(page))?.aspect ?? 0)
+    .toBeCloseTo(resizedAspect, 3);
   const after = (await cameraState(page))!;
   expect(after.angle).toBeCloseTo(before.angle, 2);
   expect(after.distance).toBeCloseTo(before.distance, 2);

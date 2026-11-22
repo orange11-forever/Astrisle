@@ -15,7 +15,7 @@ const overviewHeight = 0.35;
 const harborLookOffset = [0.37, 0.65, 1.45] as const;
 export type StudioDistrict = 'harbor' | 'garden' | 'observatory';
 const observatoryTarget = observatoryApproachPose(1.4, 1).target;
-const approachDuration = 0.84;
+const approachDurationMs = 840;
 const cameraViews = {
   studio: { target: [0, overviewHeight, 0], offset: [13.5, 13.5 - overviewHeight, 20.3] },
   harbor: {
@@ -56,7 +56,7 @@ export function CameraRig({
   viewport.current = size;
   const motionOptions = useRef({ reduced, fixed });
   motionOptions.current = { reduced, fixed };
-  const approach = useRef<{ elapsed: number; aspect: number } | undefined>(undefined);
+  const approach = useRef<{ startedAt: number; aspect: number } | undefined>(undefined);
   useEffect(() => {
     if (!visiting || !(camera instanceof PerspectiveCamera)) return;
     const originalFov = camera.fov;
@@ -84,7 +84,7 @@ export function CameraRig({
       const { reduced, fixed } = motionOptions.current;
       const snap = reduced || fixed;
       const pose = observatoryApproachPose(aspect, snap ? 1 : 0);
-      if (!snap) approach.current = { elapsed: 0, aspect };
+      if (!snap) approach.current = { startedAt: performance.now(), aspect };
       camera.position.set(...pose.position);
       orbit.target.set(...pose.target);
       orbit.update();
@@ -111,14 +111,15 @@ export function CameraRig({
     // Resize updates the projection, but only an explicit view change reframes the camera.
   }, [reset, focus, focusX, focusZ, visiting, view, centerX, centerY, centerZ, camera, invalidate]);
 
-  useFrame((_, delta) => {
+  useFrame(() => {
     const travel = approach.current;
     const orbit = controls.current;
     if (!travel || !orbit) return;
-    // Demand rendering may leave a long gap before the first frame of a visit.
-    travel.elapsed += Math.min(delta, 1 / 20);
     const { reduced, fixed } = motionOptions.current;
-    const progress = reduced || fixed ? 1 : Math.min(1, travel.elapsed / approachDuration);
+    const progress =
+      reduced || fixed
+        ? 1
+        : Math.min(1, (performance.now() - travel.startedAt) / approachDurationMs);
     const pose = observatoryApproachPose(travel.aspect, progress);
     camera.position.set(...pose.position);
     orbit.target.set(...pose.target);
