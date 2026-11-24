@@ -1,9 +1,13 @@
 import { expect, test, type Page } from '@playwright/test';
 import { humanoidGlb, seedIslandLife } from '../fixtures/island-life';
 
-async function sceneState(page: Page, advanceToDesk = false, fiberUrl?: string) {
+async function sceneState(
+  page: Page,
+  advance?: 'walk' | 'firstWorkFrame' | 'desk',
+  fiberUrl?: string,
+) {
   return page.evaluate(
-    async ({ advanceToDesk, fiberUrl }) => {
+    async ({ advance, fiberUrl }) => {
       const moduleUrl =
         fiberUrl ??
         performance
@@ -15,27 +19,40 @@ async function sceneState(page: Page, advanceToDesk = false, fiberUrl?: string) 
       if (!state) return null;
       const avatar = state.scene.getObjectByName('avatar-mori'),
         thigh = avatar?.getObjectByName('gait-left-thigh');
-      let maxStep = 0;
-      if (advanceToDesk && avatar) {
-        // The walker caps each active frame at 50 ms. A slow software GPU can spend
-        // 20 wall-clock seconds rendering only a small fraction of the return trip.
-        for (let frame = 0; frame < 700; frame++) {
+      const start = avatar?.position.clone();
+      let maxStep = 0,
+        maxThighAngle = 0;
+      if (advance && avatar) {
+        // Advance the mounted character at its usual maximum delta. Render each sampled
+        // pose once so software GPU throughput does not determine the elapsed walk time.
+        state.setFrameloop('never');
+        const frames = { walk: 40, firstWorkFrame: 1, desk: 700 }[advance];
+        for (let frame = 0; frame < frames; frame++) {
           const { x, z } = avatar.position;
           for (const subscriber of state.internal.subscribers) subscriber.ref.current(state, 0.05);
           maxStep = Math.max(maxStep, Math.hypot(avatar.position.x - x, avatar.position.z - z));
-          if (Math.hypot(avatar.position.x + 3.45, avatar.position.z - 1.2) < 0.04) break;
+          maxThighAngle = Math.max(maxThighAngle, Math.abs(thigh?.rotation.x ?? 0));
+          if (
+            advance === 'desk' &&
+            Math.hypot(avatar.position.x + 3.45, avatar.position.z - 1.2) < 0.04
+          )
+            break;
         }
-        state.invalidate();
+        state.gl.render(state.scene, state.camera);
       }
       return {
         position: avatar?.position.toArray(),
         maxStep,
+        maxThighAngle,
+        displacement: start
+          ? Math.hypot(avatar.position.x - start.x, avatar.position.z - start.z)
+          : 0,
         thigh: thigh?.rotation.x,
         confetti: state.scene.getObjectByName('completion-confetti')?.count ?? 0,
         frame: state.gl.info.render.frame,
       };
     },
-    { advanceToDesk, fiberUrl },
+    { advance, fiberUrl },
   );
 }
 async function selectCommission(page: Page) {
@@ -46,27 +63,24 @@ test('idle companions move with real inferred bones and return to work without t
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.setViewportSize({ width: 1000, height: 700 });
   await seedIslandLife(page, [...humanoidGlb()]);
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto('/');
   await page.bringToFront();
   await expect.poll(async () => (await sceneState(page))?.thigh).not.toBeUndefined();
-  const initial = (await sceneState(page))!;
-  await expect
-    .poll(async () => {
-      const p = (await sceneState(page))!.position;
-      return Math.hypot(p[0] - initial.position[0], p[2] - initial.position[2]);
-    })
-    .toBeGreaterThan(0.25);
-  await expect.poll(async () => Math.abs((await sceneState(page))!.thigh!)).toBeGreaterThan(0.03);
+  const walking = (await sceneState(page, 'walk'))!;
+  expect(walking.displacement).toBeGreaterThan(0.25);
+  expect(walking.maxThighAngle).toBeGreaterThan(0.03);
+  expect(walking.frame).toBeGreaterThan(0);
   await selectCommission(page);
   const before = (await sceneState(page))!.position;
   await page.evaluate(() => (window as any).setLifeWorking());
-  const after = (await sceneState(page))!.position;
-  expect(Math.hypot(after[0] - before[0], after[2] - before[2])).toBeLessThan(0.3);
   await expect(page.locator('.scene-label').filter({ hasText: 'Mori' })).toContainText('工作中');
-  const returned = (await sceneState(page, true))!;
+  const after = (await sceneState(page, 'firstWorkFrame'))!.position;
+  expect(Math.hypot(after[0] - before[0], after[2] - before[2])).toBeLessThan(0.3);
+  const returned = (await sceneState(page, 'desk'))!;
   expect(returned.maxStep).toBeLessThan(0.07);
   expect(Math.hypot(returned.position[0] + 3.45, returned.position[2] - 1.2)).toBeLessThan(0.04);
   const activity = page.getByRole('region', { name: '委托动态' });
@@ -110,7 +124,7 @@ test('full acceptance launches confetti once and repeated snapshots do not repla
   );
   await page.goto('/');
   const fiberUrl = (await fiber).url();
-  const particleCount = async () => (await sceneState(page, false, fiberUrl))?.confetti;
+  const particleCount = async () => (await sceneState(page, undefined, fiberUrl))?.confetti;
   await page.bringToFront();
   await selectCommission(page);
   await page.evaluate(() => (window as any).setLifeStatus('accepted'));
