@@ -4,6 +4,7 @@ import type { ProjectSnapshot } from '@astrisle/contracts';
 import { createIslandPropBuilder, IslandPropGeometry } from './IslandPropGeometry';
 import { HarborBoats } from './HarborBoats';
 import { HarborHouses } from './HarborHouses';
+import { HarborLane } from './HarborLane';
 import { harborBridge, harborOrigin, harborYaw } from './harbor-layout';
 import type { Panel } from './Scene';
 import { ToolStation } from './ToolStation';
@@ -309,6 +310,7 @@ export function HarborQuarter({
       <HarborHouses onOffice={() => onPanel('goal')} />
       <HarborDispatch snapshot={snapshot} onActivate={() => onPanel('artifacts')} />
       <HarborBoats />
+      <HarborLane />
     </group>
   );
 }

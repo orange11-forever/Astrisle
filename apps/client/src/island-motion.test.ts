@@ -18,6 +18,78 @@ import {
   getIslandCharacterHomes,
 } from './island-motion';
 import { FACILITIES } from './island-facilities';
+import { nurseryToWorld, nurseryWalkingHeight } from './garden-access';
+import { coastLanding, coastLookout } from './coastal-islet';
+import { laneLanding, laneQuay } from './harbor-lane';
+
+it('connects all three districts through their actual landings in both directions', () => {
+  const bed = nurseryToWorld(2.08, 1.82);
+  for (const [start, end, landing] of [
+    [coastLookout, laneQuay, laneLanding],
+    [laneQuay, coastLookout, coastLanding],
+    [bed, coastLookout, coastLanding],
+    [laneQuay, bed, laneLanding],
+  ]) {
+    const path = findIslandRoute(start, end);
+    expect(path).toContainEqual(landing);
+    expect(path.at(-1)).toEqual(end);
+    let previous = start;
+    for (const point of path) {
+      expect(segmentIsWalkable(previous, point), String(point)).toBe(true);
+      previous = point;
+    }
+  }
+});
+
+it('connects the nursery terrace and glasshouse aisle to the harbor and workstations', () => {
+  const bed = nurseryToWorld(2.08, 1.82);
+  const aisle = nurseryToWorld(0, -0.21);
+  for (const [start, end] of [
+    [harborStops.market.point, bed],
+    [bed, aisle],
+    [aisle, STATION_POINTS.table],
+  ]) {
+    const route = findIslandRoute(start, end);
+    expect(route.at(-1)).toEqual(end);
+    let last = start;
+    for (const point of route) {
+      expect(segmentIsWalkable(last, point)).toBe(true);
+      last = point;
+    }
+  }
+  expect(isWalkable(nurseryToWorld(1, 0))).toBe(false);
+  expect(isWalkable(nurseryToWorld(2, -1))).toBe(false);
+  expect(nurseryWalkingHeight(aisle)).toBeCloseTo(0.192);
+  expect(nurseryWalkingHeight(bed)).toBeCloseTo(0.144);
+});
+
+it('rejects a short chord that cuts across the round table clearance between two clear points', () => {
+  const left: [number, number] = [-0.059, 1.6198];
+  const right: [number, number] = [0.059, 1.6198];
+  expect(isWalkable(left)).toBe(true);
+  expect(isWalkable(right)).toBe(true);
+  expect(segmentIsWalkable(left, right)).toBe(false);
+});
+
+it.each([
+  ['coast', coastLookout],
+  ['lane', laneQuay],
+] as const)(
+  'finishes the %s excursion or walks back to work if interrupted',
+  (stop, destination) => {
+    const state = createWalker('mori', STATION_POINTS.table);
+    state.harborVisits = stop === 'coast' ? 2 : 3;
+    state.harborDelay = 0;
+    for (let i = 0; i < 4000 && state.harborVisit?.stage !== 'watching'; i++)
+      advanceWalker(state, 0.05, { roaming: true });
+    expect(state.harborVisit).toMatchObject({ stop, stage: 'watching' });
+    expect(state.position).toEqual(destination);
+    for (let i = 0; i < 4000; i++)
+      advanceWalker(state, 0.05, { roaming: false, target: STATION_POINTS.table });
+    expect(state.harborVisit).toBeUndefined();
+    expect(state.position).toEqual(STATION_POINTS.table);
+  },
+);
 
 it('keeps saved homes stable when more partners arrive and connects them to island activities', () => {
   const ids: CharacterId[] = ['mori', 'luma', 'user'];

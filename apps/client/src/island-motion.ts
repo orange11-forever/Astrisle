@@ -1,7 +1,11 @@
 import type { CharacterId } from '@astrisle/contracts';
 import { FACILITY_OBSTACLES } from './island-facilities';
+import { nurseryLanding, nurseryRoute, onNurseryPath } from './garden-access';
+import { coastLanding, coastLookout, coastRoute, onCoastPath } from './coastal-islet';
+import { laneLanding, laneQuay, laneRoute, onLanePath } from './harbor-lane';
 import {
   atHarborRail,
+  crossesHarborRail,
   harborBridge,
   harborGardenLanding,
   harborStops,
@@ -10,7 +14,6 @@ import {
   onHarborBridge,
   onHarborStreet,
   worldToHarbor,
-  type HarborStop,
 } from './harbor-layout';
 
 export type GroundPoint = [number, number];
@@ -65,9 +68,19 @@ function isGardenWalkable([x, z]: GroundPoint) {
   );
 }
 
-export function isWalkable(point: GroundPoint) {
+function onMainPaths(point: GroundPoint) {
   const local = worldToHarbor(point);
   return onHarborBridge(local) || onHarborStreet(local) || isGardenWalkable(point);
+}
+
+const sidePaths = [
+  { contains: onNurseryPath, landing: nurseryLanding, route: nurseryRoute },
+  { contains: onCoastPath, landing: coastLanding, route: coastRoute },
+  { contains: onLanePath, landing: laneLanding, route: laneRoute },
+];
+
+export function isWalkable(point: GroundPoint) {
+  return onMainPaths(point) || sidePaths.some((path) => path.contains(point));
 }
 
 function segmentStaysWithin(
@@ -85,13 +98,35 @@ function segmentStaysWithin(
 }
 
 export function segmentIsWalkable(a: GroundPoint, b: GroundPoint) {
+  if (isGardenWalkable(a) && isGardenWalkable(b) && !crossesHarborRail(a, b))
+    return clearsGardenFurniture(a, b);
   return segmentStaysWithin(a, b, isWalkable);
+}
+
+// The garden boundary is convex. For two points on it, only furniture and the rail can cut a route.
+function clearsGardenFurniture([x, z]: GroundPoint, [endX, endZ]: GroundPoint) {
+  const dx = endX - x;
+  const dz = endZ - z;
+  const lengthSquared = dx * dx + dz * dz;
+  for (const [ox, oz, radius] of obstacles) {
+    const t = lengthSquared
+      ? Math.min(1, Math.max(0, ((ox - x) * dx + (oz - z) * dz) / lengthSquared))
+      : 0;
+    const offsetX = x + t * dx - ox;
+    const offsetZ = z + t * dz - oz;
+    if (offsetX * offsetX + offsetZ * offsetZ <= (radius + 0.55) ** 2) return false;
+  }
+  return true;
+}
+
+function gardenSegment(a: GroundPoint, b: GroundPoint) {
+  return clearsGardenFurniture(a, b) && !crossesHarborRail(a, b);
 }
 
 /** Small bounded visibility graph. Replanned only when a destination changes. */
 function findGardenRoute(start: GroundPoint, goal: GroundPoint): GroundPoint[] {
   if (!isGardenWalkable(start) || !isGardenWalkable(goal)) return [];
-  if (segmentStaysWithin(start, goal, isGardenWalkable)) return [[...goal]];
+  if (gardenSegment(start, goal)) return [[...goal]];
   const nodes: GroundPoint[] = [start, goal];
   for (const [x, z, radius] of obstacles) {
     const radiusWithClearance = radius + 0.75;
@@ -132,7 +167,7 @@ function findGardenRoute(start: GroundPoint, goal: GroundPoint): GroundPoint[] {
     for (let i = 1; i < nodes.length; i++) {
       if (visited.has(i)) continue;
       const score = scores[current] + distance(nodes[current], nodes[i]);
-      if (score < scores[i] && segmentStaysWithin(nodes[current], nodes[i], isGardenWalkable)) {
+      if (score < scores[i] && gardenSegment(nodes[current], nodes[i])) {
         scores[i] = score;
         previous[i] = current;
       }
@@ -166,7 +201,21 @@ function findHarborRoute(start: GroundPoint, goal: GroundPoint): GroundPoint[] {
 }
 
 export function findIslandRoute(start: GroundPoint, goal: GroundPoint): GroundPoint[] {
-  if (!isWalkable(start) || !isWalkable(goal)) return [];
+  const startOnMain = onMainPaths(start);
+  const goalOnMain = onMainPaths(goal);
+  const fromSide = startOnMain ? undefined : sidePaths.find((path) => path.contains(start));
+  const toSide = goalOnMain ? undefined : sidePaths.find((path) => path.contains(goal));
+  if ((!startOnMain && !fromSide) || (!goalOnMain && !toSide)) return [];
+  if (fromSide && fromSide === toSide) return fromSide.route(start, goal);
+  const main = findMainRoute(fromSide?.landing ?? start, toSide?.landing ?? goal);
+  if (!main.length) return [];
+  const outbound = fromSide ? fromSide.route(start, fromSide.landing) : [];
+  const inbound = toSide ? toSide.route(toSide.landing, goal) : [];
+  if ((fromSide && !outbound.length) || (toSide && !inbound.length)) return [];
+  return [...outbound, ...main, ...inbound];
+}
+
+function findMainRoute(start: GroundPoint, goal: GroundPoint): GroundPoint[] {
   const inGarden = isGardenWalkable(start);
   const toGarden = isGardenWalkable(goal);
   if (inGarden && toGarden) return findGardenRoute(start, goal);
@@ -240,7 +289,7 @@ export interface Walker {
   personality: number;
   harborDelay: number;
   harborVisits: number;
-  harborVisit?: { stop: HarborStop; stage: 'outbound' | 'watching' | 'returning'; wait: number };
+  harborVisit?: { stop: IslandStop; stage: 'outbound' | 'watching' | 'returning'; wait: number };
 }
 export function createWalker(id: string, home: GroundPoint): Walker {
   const personality = characterPersonality(id);
@@ -260,7 +309,13 @@ export function createWalker(id: string, home: GroundPoint): Walker {
   };
 }
 
-const harborTour: HarborStop[] = ['market', 'mooring'];
+export const islandStops = {
+  ...harborStops,
+  coast: { name: '看潮池', point: coastLookout, yaw: -1.26 },
+  lane: { name: '看码头作业', point: laneQuay, yaw: Math.PI + 0.25 },
+};
+type IslandStop = keyof typeof islandStops;
+const islandTour: IslandStop[] = ['market', 'mooring', 'coast', 'lane'];
 
 function turnTowards(state: Walker, yaw: number, dt: number) {
   const angle = Math.atan2(Math.sin(yaw - state.yaw), Math.cos(yaw - state.yaw));
@@ -273,8 +328,8 @@ function advanceHarborVisit(state: Walker, dt: number) {
   if (!visit) {
     state.harborDelay -= dt;
     if (state.harborDelay > 0) return;
-    const stop = harborTour[(state.personality + state.harborVisits) % harborTour.length]!;
-    const route = findIslandRoute(state.position, harborStops[stop].point);
+    const stop = islandTour[(state.personality + state.harborVisits) % islandTour.length]!;
+    const route = findIslandRoute(state.position, islandStops[stop].point);
     if (!route.length) {
       state.harborDelay = 8;
       return;
@@ -291,10 +346,13 @@ function advanceHarborVisit(state: Walker, dt: number) {
     return;
   }
   visit.stage = 'watching';
-  turnTowards(state, harborStops[visit.stop].yaw, dt);
+  turnTowards(state, islandStops[visit.stop].yaw, dt);
   visit.wait -= dt;
   if (visit.wait <= 0) {
-    state.route = findIslandRoute(state.position, harborGardenLanding);
+    state.route = findIslandRoute(
+      state.position,
+      visit.stop === 'coast' ? coastLanding : harborGardenLanding,
+    );
     visit.stage = 'returning';
   }
 }

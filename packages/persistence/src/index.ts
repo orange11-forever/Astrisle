@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { CommandResult, ProjectSnapshot, Workspace } from '../../contracts/src/index';
+import { DailyNewsStore } from './daily-news';
 export interface StoredCall {
   id: string;
   runtimeEpoch: number;
@@ -22,6 +23,7 @@ export interface StoredApplyOperation {
 export class RuntimeStore {
   private db: DatabaseSync;
   private runtimeEpoch = 0;
+  readonly dailyNews: DailyNewsStore;
   constructor(dataRoot: string) {
     mkdirSync(dataRoot, {
       recursive: true,
@@ -29,6 +31,7 @@ export class RuntimeStore {
     this.db = new DatabaseSync(join(dataRoot, 'astrisle.sqlite'));
     try {
       this.initialize();
+      this.dailyNews = this.transaction(() => new DailyNewsStore(this.db));
     } catch (error) {
       this.db.close();
       throw error;
@@ -114,6 +117,9 @@ export class RuntimeStore {
       .prepare('SELECT data FROM workspaces ORDER BY rowid')
       .all()
       .map((r) => JSON.parse(r.data as string));
+  }
+  workspaceExists(id: string): boolean {
+    return !!this.db.prepare('SELECT 1 FROM workspaces WHERE id=?').get(id);
   }
   addWorkspace(workspace: Workspace): void {
     this.db

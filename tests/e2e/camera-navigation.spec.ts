@@ -1,6 +1,9 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { OBSERVATORY } from '../../apps/client/src/island-observatory';
+import { nurseryToWorld } from '../../apps/client/src/garden-access';
+import { coastView } from '../../apps/client/src/coastal-islet';
+import { laneView } from '../../apps/client/src/harbor-lane';
 
 async function cameraState(page: Page) {
   return page.evaluate(async () => {
@@ -69,6 +72,26 @@ test.beforeEach(async ({ page }) => {
   await expect.poll(() => cameraState(page)).not.toBeNull();
 });
 
+test('frames the nursery terrace and allows a free orbit back to the studio', async ({ page }) => {
+  const view = page.getByLabel('场景视角与角色特写');
+  await view.selectOption({ label: '温室育苗区' });
+  const [x, z] = nurseryToWorld(0.96, 0.8);
+  await expect
+    .poll(async () => (await cameraState(page))?.target.map((v) => +v.toFixed(4)))
+    .toEqual([+x.toFixed(4), 1.32, +z.toFixed(4)]);
+  const before = (await cameraState(page))!.angle;
+  await drag(page, 0.16);
+  await expect
+    .poll(async () => Math.abs((await cameraState(page))!.angle - before))
+    .toBeGreaterThan(0.1);
+  await view.selectOption({ label: '温室内景' });
+  const [eyeX, eyeZ] = nurseryToWorld(0, 0.76);
+  await expect
+    .poll(async () => (await cameraState(page))?.position.map((v) => +v.toFixed(3)))
+    .toEqual([+eyeX.toFixed(3), 1.52, +eyeZ.toFixed(3)]);
+  await reset(page);
+});
+
 test('overview reaches both rear views and the full above-ground pitch range with real drags', async ({
   page,
 }) => {
@@ -86,6 +109,19 @@ test('overview reaches both rear views and the full above-ground pitch range wit
   await expect.poll(async () => (await cameraState(page))?.pitch ?? 0).toBeGreaterThan(1.45);
   expect((await cameraState(page))!.position[1]).toBeGreaterThan(0.35);
 });
+
+for (const [district, view] of [
+  ['潮池外岛', coastView],
+  ['制帆巷与码头', laneView],
+] as const) {
+  test(`opens ${district} and returns to the studio`, async ({ page }) => {
+    await page.getByLabel('场景视角与角色特写').selectOption({ label: district });
+    await expect
+      .poll(async () => (await cameraState(page))?.target.map((v) => +v.toFixed(3)))
+      .toEqual(view.target.map((v) => +v.toFixed(3)));
+    await reset(page);
+  });
+}
 
 test('overview pans on the island plane and bounds the target', async ({ page }) => {
   await drag(page, 0.14, 0.1, 'right');

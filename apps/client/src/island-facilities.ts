@@ -1,7 +1,13 @@
 import type { GroundPoint } from './island-motion';
+import { glasshouseAisle, glasshouseYaw, nurseryBed } from './garden-access';
 
-export type LeisureActivity = 'sit' | 'tea' | 'swing';
-export type FacilityId = 'garden-bench' | 'tea-chair' | 'garden-swing';
+export type LeisureActivity = 'sit' | 'tea' | 'swing' | 'tend';
+export type FacilityId =
+  | 'garden-bench'
+  | 'tea-chair'
+  | 'garden-swing'
+  | 'nursery-bed'
+  | 'glasshouse-aisle';
 export interface IslandFacility {
   id: FacilityId;
   activity: LeisureActivity;
@@ -15,6 +21,26 @@ export interface IslandFacility {
 
 /** Geometry, navigation and characters share these contact points. Facing is local +Z. */
 export const FACILITIES: Record<FacilityId, IslandFacility> = {
+  'nursery-bed': {
+    id: 'nursery-bed',
+    activity: 'tend',
+    name: '扦插床',
+    position: nurseryBed,
+    approach: nurseryBed,
+    yaw: glasshouseYaw + Math.PI,
+    seatHeight: 0,
+    duration: 12,
+  },
+  'glasshouse-aisle': {
+    id: 'glasshouse-aisle',
+    activity: 'tend',
+    name: '温室育苗台',
+    position: glasshouseAisle,
+    approach: glasshouseAisle,
+    yaw: glasshouseYaw + Math.PI / 2,
+    seatHeight: 0,
+    duration: 12,
+  },
   'garden-bench': {
     id: 'garden-bench',
     activity: 'sit',

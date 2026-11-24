@@ -17,19 +17,19 @@
 
 Astrisle 是一个面向 Windows 的多 Agent 桌面工作台。伙伴可以从零创建项目、修改代码、撰写报告和演示稿，并通过分工、交接、复核与返工推进委托。3D 场景呈现协作关系，工作面板提供文件、证据、权限和进度。
 
-**第十六阶段开发预览。** 点击主岛的望远镜，沿木栈道前往观星台。入夜后平台低灯亮起，可以自由抬头看星群与银河。[去观星台看夜空](#去观星台看夜空)
+**第十八阶段开发预览。** 在岛上的「日报邮箱」开启订阅，智能体每天从你选的新闻源收集原文，整理并复核后按日期投递。[订阅新闻日报](#订阅新闻日报) · [第十七阶段三区游览](docs/development/stage-17.md)
 
 第二至第五阶段已由 [PR #2：任务续跑、运行时保护与星岛角色配置](https://github.com/orange11-forever/Astrisle/pull/2) 合并。第六、七阶段已由 [PR #3：Windows 进程监督、岛屿散步与验收庆祝](https://github.com/orange11-forever/Astrisle/pull/3) 合并。自由视角和角色休闲见[第八阶段](docs/development/stage-8.md)，模型实测与角色导入见[第九阶段](docs/development/stage-9.md)，Windows 原项目写回与恢复见[第十阶段](docs/development/stage-10.md)。
 
-第十阶段记录了 331 项自动化测试，包括原生写回的文件竞争、崩溃与恢复。第九阶段的 DeepSeek 实测为 9/9，详见[验证摘要](docs/validation/stage-9-live-model-summary.json)。
+最近一次实机验收中，Astrisle 完全退出后，Windows 于 11:22 唤醒后台进程，DeepSeek Flash 根据公网原文整理并复核了 4 条新闻。23 秒后日报出现在邮箱，重新打开工作室仍可阅读。[11 月 24 日验收记录](docs/validation/2026-11-24-deepseek-flash.md)
 
-![夜间工作室全景，蓝发伙伴在主岛活动，右侧的栈道通往望远镜](docs/development/screenshots/stage-16-night-island.png)
+![主岛南岸的木栈桥通往潮池外岛与航标灯，蓝发伙伴在岛上活动](docs/development/screenshots/stage-17-coast.png)
 
-上图取自第十六阶段的 Electron 桌面，加载了本机已配置的蓝发女仆模型。下图是第十一阶段拍摄的角色和花港。
+三张图均取自实际 Electron 桌面，加载了本机配置的蓝发女仆模型。
 
-| 当前角色特写 | 花港街景 |
+| 温室育苗区 | 花港制帆巷与码头 |
 |---|---|
-| ![当前导入蓝发女仆的角色特写](docs/development/screenshots/stage-11-character.png) | ![沿岸花市、港务所与系泊船只](docs/development/screenshots/stage-11-harbor.png) |
+| ![玻璃花房外的育苗露台和扦插床](docs/development/screenshots/stage-17-nursery.png) | ![制帆棚、晒帆架、木码头与系泊小艇](docs/development/screenshots/stage-17-harbor-lane.png) |
 
 截图展示导入模型的效果；模型文件不随源码分发，首次启动仍提供默认回退角色，可在设置中导入自己的模型。
 
@@ -47,6 +47,7 @@ Astrisle 是一个面向 Windows 的多 Agent 桌面工作台。伙伴可以从�
 | 前端 | 360° 环绕与平移、花园星岛、自动坐椅／喝茶／荡秋千、散步与工位寻路、群岛管理、角色特写、验收彩纸礼炮、按需渲染、2D 模式和减少动效 |
 | 角色配置 | GLB／自包含 glTF、3MF、STL、OBJ、FBX 导入，伴随资源复制、独立解析检查、自动居中与尺寸归一化、四方向调整、跨岛屿保存与资源共享 |
 | 伙伴对话 | 3D 姓名牌和 2D 工作面板入口、按委托及伙伴区分的追问记录、任务与确切成果版本及复核证据的引用 |
+| 日报邮箱 | 每座岛独立订阅新闻，按本地时间自动收集 RSS／Atom 来源、整理与复核摘要，在邮箱按日期阅读和打开原文 |
 | 运行预算 | 累计模型步数与活动时间、暂停后调整总额度、并发调用限额、预算恢复和返工续接 |
 
 模型适配器已有协议测试，DeepSeek 的实际任务记录见第九阶段；这不代表所有厂商、模型和第三方兼容端点都已实测。兼容服务须支持工具调用，并填写其实际基础地址与模型名称。
@@ -105,7 +106,7 @@ pnpm.cmd dev
 
 **生成交付文件。** 预览 `.md` 或 `.markdown` 成果，选择“生成 Word”或“生成 PPTX”。演示稿用 `##` 标题分隔幻灯片。同样地，预览 `.csv` 或 `.tsv` 后可选择“生成 XLSX”。保存窗口使用你刚选定的那一版，可直接从历史版本出一份副本。
 
-右下角的视角选择器可以切换工作室全景、花港街景、温室花园、观星台或某位角色的特写。各区支持环绕、缩放，“回到全景”恢复工作室视角。工具说明在指向模型或使用键盘聚焦时显示，点击模型或触屏点按可直接打开面板。
+右下角的视角选择器可以切换工作室全景、花港街景、制帆巷与码头、温室花园、温室育苗区、温室内景、潮池外岛、观星台或角色特写。各区支持环绕和缩放，“回到全景”恢复工作室视角。空闲伙伴会去温室照看幼苗，也会到潮池和码头停留；接到任务后沿可行走的路线返岗。工具说明在指向模型或使用键盘聚焦时显示，点击模型或触屏点按可直接打开面板。
 
 全景支持拖动 360° 环绕、右键拖动平移和滚轮缩放；触屏使用单指环绕、双指平移缩放。可以从近俯视到接近水平观察，镜头保持在地面上方；平移目标限制在岛屿范围。“固定镜头”同时锁定旋转、平移和缩放，调整窗口大小不会重置已经选好的视角。
 
@@ -149,6 +150,18 @@ Windows 下，进程工具和源稿转换器从创建时就属于受监督的 Jo
 
 ![在观星台抬头，望远镜上方可见星群和银河尘带](docs/development/screenshots/stage-16-observatory.png)
 
+## 订阅新闻日报
+
+1. 在「工作室设置」配置支持工具调用的模型。打开岛上的「日报邮箱」，也可以从 2D 面板或侧栏进入。每座岛单独设置订阅。
+2. 勾选「开启每日新闻」，选择本地投递时间，按需填写新闻主题、调整订阅源并保存。默认时间为 09:00，首次开启会立即收集今天的新闻。最多可填写 8 个 RSS 或 Atom 地址，采集时只跟随获准来源的原文。初始订阅源取自[联合国中文新闻](https://news.un.org/zh/rss-feeds)和 [NASA 订阅目录](https://www.nasa.gov/rss-feeds/)。
+3. 回到邮箱查看「今日投递」，从「日报历史」打开某一天。每条保留原文发布日期、摘要和链接。没有符合条件的稿件时，邮箱会说明原因。来源或模型暂时不可用时可查看状态，失败后可重试。
+
+开启订阅时，Astrisle 为当前 Windows 用户注册对应岛屿的计划任务。关掉窗口后可在托盘继续收集；从托盘完全退出后，只要这台电脑开机且该用户已登录，Windows 就会在约定时间启动后台收集，投递完毕自动退出。已经打开工作室时会复用现有进程。电脑关机或用户注销期间错过的日期，会在恢复运行后逐期补收；历史原文仍须可取得并核实日期。
+
+关闭某座岛的订阅会停止后续收集并移除该岛的 Windows 计划任务，已经投递的日报仍可阅读。设置和日报保存在本机。原有「回信匣」继续处理委托输入和审批。
+
+![重新打开工作室后，日报邮箱显示 11 月 24 日已投递的 4 条新闻及第一条的出处和摘要](docs/development/screenshots/stage-18-daily-news.png)
+
 ## 联网调研
 
 在「新建委托」写下问题和验收条件。例如，目标可以是「根据项目官网的发布说明，查明这个版本新增了什么」，验收条件写「逐条列出变化、原文地址，由另一位伙伴核对」。
@@ -177,11 +190,13 @@ pnpm.cmd test:ui
 
 UI 测试当前使用 Microsoft Edge；桌面测试使用真实 Electron 和独立测试数据，验证工作区、预算、角色配置、模型副本的持久化及渲染进程权限。新增场景测试覆盖实际散步、任务打断、特写切换和验收礼炮；执行器测试使用真实子进程和 SQLite 核对停止回执与重启行为。
 
-最近的验证范围、审查修复与边界见[第十阶段](docs/development/stage-10.md)。历史记录：[第一阶段](docs/development/stage-1.md)、[第二阶段](docs/development/stage-2.md)、[第三阶段](docs/development/stage-3.md)、[第四阶段](docs/development/stage-4.md)、[第五阶段](docs/development/stage-5.md)、[第六阶段](docs/development/stage-6.md)、[第七阶段](docs/development/stage-7.md)、[第八阶段](docs/development/stage-8.md)、[第九阶段](docs/development/stage-9.md)。
+Windows 文件写回的并发、崩溃与恢复验收见[第十阶段](docs/development/stage-10.md)。历史记录：[第一阶段](docs/development/stage-1.md)、[第二阶段](docs/development/stage-2.md)、[第三阶段](docs/development/stage-3.md)、[第四阶段](docs/development/stage-4.md)、[第五阶段](docs/development/stage-5.md)、[第六阶段](docs/development/stage-6.md)、[第七阶段](docs/development/stage-7.md)、[第八阶段](docs/development/stage-8.md)、[第九阶段](docs/development/stage-9.md)。
 
 运行时集成测试使用本地脚本化 HTTP 模型替身，文件和数据库操作是真实的。这类测试验证协议与状态转换，不能替代真实模型能力验收。
 
 真实模型验收用 `pnpm.cmd acceptance --list` 查看场景，再按[配置步骤](docs/development/stage-9.md#使用)运行。密钥支持隐藏标准输入，结果保存在独立的 `.astrisle-acceptance/`；该目录与自动清理的浏览器测试输出分开。
+
+2026-11-24 的 DeepSeek Flash 实测覆盖编程、连续委托、Office、联网调研、对话返工、写回恢复和公网日报。Windows 完全退出后的定时投递另有实机记录。[逐项结果与 Office 复核问题](docs/validation/2026-11-24-deepseek-flash.md)
 
 ## 已知限制
 
@@ -225,8 +240,10 @@ docs/                 产品设计、概念图、计划和阶段记录
 - [鲸鱼角色参考、署名与使用条件](docs/concepts/blue-whale-girl-references.md)：角色视觉资产保留上游 CC BY-NC-SA 4.0 的署名、非商业与相同方式共享条件，具体范围见该文档。
 - [花港小镇与跨区行走](docs/development/stage-11.md)
 - [成果版本、定向返工与源稿发布](docs/development/stage-12.md)
+- [温室、潮池外岛与制帆巷](docs/development/stage-17.md)
+- [自动日报、Windows 唤醒与 DeepSeek Flash 实测](docs/validation/2026-11-24-deepseek-flash.md)
 - [自定义工作伙伴](docs/development/modern-features-backlog.md#自定义工作伙伴)
 - [用户确认的后续现代化功能](docs/development/modern-features-backlog.md)
 - README Logo 沿用软件现有标志，内侧星形使用 Lucide Sparkles；[许可说明](docs/assets/LICENSE-lucide.txt)。
 
-从 `main` 创建功能分支，在分支内实现和验证，再通过 PR 审查。第十一阶段已合并，见 [PR #7](https://github.com/orange11-forever/Astrisle/pull/7)。
+从 `main` 创建功能分支，在分支内实现和验证，再通过 PR 审查。各阶段的实现与验收范围可从[开发记录](docs/development/modern-features-backlog.md)查阅。

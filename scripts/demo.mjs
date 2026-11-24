@@ -8,11 +8,14 @@ import { build } from 'esbuild';
 const project = resolve(fileURLToPath(new URL('../', import.meta.url)));
 const source = resolve(project, process.env.ASTRISLE_DATA_ROOT || '.astrisle-dev');
 const canvasSelector = '.studio-canvas canvas';
+const districtOptions = ['nursery', 'glasshouse', 'coast', 'lane'];
 
 async function screenshotDestination(args) {
   if (!args.length) return;
   if (args.length !== 2 || args[0] !== '--screenshot' || extname(args[1]).toLowerCase() !== '.png')
-    throw new Error('用法：pnpm.cmd demo [--observatory] [--screenshot <新建的本地 PNG 路径>]');
+    throw new Error(
+      '用法：pnpm.cmd demo [--observatory 或 --view nursery|glasshouse|coast|lane] [--screenshot <新建的本地 PNG 路径>]',
+    );
   const path = resolve(args[1]);
   if (process.platform === 'win32' && path.startsWith('\\\\'))
     throw new Error('请选择本机磁盘上的截图路径。');
@@ -54,6 +57,13 @@ async function launchDemo() {
   if (args[0] === '--') args.shift();
   const observatory = args[0] === '--observatory';
   if (observatory) args.shift();
+  let district;
+  if (!observatory && args[0] === '--view') {
+    args.shift();
+    district = args.shift();
+    if (!districtOptions.includes(district))
+      throw new Error(`可用视角：${districtOptions.join('、')}`);
+  }
   const screenshot = await screenshotDestination(args);
   const stop = new AbortController();
   const requestStop = () => stop.abort();
@@ -141,6 +151,20 @@ async function launchDemo() {
       throw new Error('演示画布未在 90 秒内加载配置中的全部角色模型，演示窗口保持隐藏。', {
         cause: error,
       });
+    }
+    if (district) {
+      await whileRunning(page.getByLabel('场景视角与角色特写').selectOption(district));
+      await whileRunning(
+        page
+          .getByLabel('场景视角与角色特写')
+          .evaluate(
+            () =>
+              new Promise((resolve) =>
+                requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))),
+              ),
+          ),
+      );
+      await verifyModels();
     }
     if (observatory) {
       await whileRunning(page.getByLabel('场景视角与角色特写').selectOption('observatory'));

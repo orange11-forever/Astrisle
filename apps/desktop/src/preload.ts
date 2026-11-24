@@ -5,6 +5,11 @@ const invoke = <T>(method: string, ...args: unknown[]): Promise<T> =>
   ipcRenderer.invoke(`astrisle:${method}`, ...args);
 const api: HostAPI = {
   bootstrap: () => invoke('bootstrap'),
+  getDailyNewsMailbox: (id) => invoke('getDailyNewsMailbox', id),
+  getDailyNewsIssue: (id, date) => invoke('getDailyNewsIssue', id, date),
+  setDailyNewsSettings: (id, settings) => invoke('setDailyNewsSettings', id, settings),
+  retryDailyNews: (id, date) => invoke('retryDailyNews', id, date),
+  openDailyNewsSource: (id, date, url) => invoke('openDailyNewsSource', id, date, url),
   getCharacters: () => invoke('getCharacters'),
   createCharacter: (displayName) => invoke('createCharacter', displayName),
   updateCharacter: (id, patch) => invoke('updateCharacter', id, patch),

@@ -13,6 +13,9 @@ import type {
   Bootstrap,
   Budget,
   CommandResult,
+  DailyNewsIssue,
+  DailyNewsMailbox,
+  DailyNewsSettings,
   NewWorkspaceInput,
   PartnerDialogueInput,
   PartnerDialogueReply,
@@ -47,6 +50,8 @@ import { budgetExhausted, validBudget } from './budget';
 import { RuntimeOwnership } from './ownership';
 import { answerPartnerQuestion, dialogueError, validateDialogueInput } from './partner-dialogue';
 import { artifactWebSources, canSearchWeb, hasReviewedWebSources } from './web-research';
+import { DailyNewsScheduler, type DailyNewsWakeState } from './daily-news-scheduler';
+export type { DailyNewsWakeState } from './daily-news-scheduler';
 import {
   directedReworkOutputs,
   pathComparisonKey,
@@ -57,6 +62,13 @@ import {
 export interface RuntimeService {
   bootstrap(): Promise<Bootstrap>;
   createWorkspace(input: NewWorkspaceInput): Promise<Workspace>;
+  getDailyNewsMailbox(workspaceId: string): Promise<DailyNewsMailbox>;
+  getDailyNewsIssue(workspaceId: string, date: string): Promise<DailyNewsIssue>;
+  setDailyNewsSettings(workspaceId: string, settings: DailyNewsSettings): Promise<DailyNewsMailbox>;
+  retryDailyNews(workspaceId: string, date: string): Promise<DailyNewsMailbox>;
+  resumeDailyNews(): Promise<void>;
+  getDailyNewsWakeState(): Promise<DailyNewsWakeState>;
+  ackDailyNewsTaskCleanup(workspaceId: string): Promise<void>;
   submit(input: SubmitInput, roster?: AgentIdentity[]): Promise<CommandResult>;
   snapshot(id: string): Promise<ProjectSnapshot>;
   askPartner(
@@ -154,6 +166,13 @@ export function createRuntime(options: RuntimeOptions): RuntimeService {
   return {
     bootstrap: command(runtime.bootstrap),
     createWorkspace: command(runtime.createWorkspace),
+    getDailyNewsMailbox: command(runtime.getDailyNewsMailbox),
+    getDailyNewsIssue: command(runtime.getDailyNewsIssue),
+    setDailyNewsSettings: command(runtime.setDailyNewsSettings),
+    retryDailyNews: command(runtime.retryDailyNews),
+    resumeDailyNews: command(runtime.resumeDailyNews),
+    getDailyNewsWakeState: command(runtime.getDailyNewsWakeState),
+    ackDailyNewsTaskCleanup: command(runtime.ackDailyNewsTaskCleanup),
     submit: command(runtime.submit),
     snapshot: command(runtime.snapshot),
     askPartner: command(runtime.askPartner),
@@ -242,6 +261,7 @@ class Runtime implements RuntimeService {
   private waitingForAgent = new Set<string>();
   private store: RuntimeStore;
   private ownership: RuntimeOwnership;
+  private dailyNews: DailyNewsScheduler;
   private listeners = new Set<(snapshot: ProjectSnapshot) => void>();
   private running = new Map<
     string,
@@ -271,6 +291,7 @@ class Runtime implements RuntimeService {
         store: this.store,
         helperPath: options.applyHelperPath,
       });
+      this.dailyNews = new DailyNewsScheduler(this.store, () => this.options.getCredentials());
       this.budgetTimer = setInterval(() => this.checkpointBudgets(), 1000);
       this.budgetTimer.unref();
     } catch (error) {
@@ -530,6 +551,30 @@ class Runtime implements RuntimeService {
     const workspace = await createWorkspaceStorage(input, this.options.dataRoot);
     this.store.addWorkspace(workspace);
     return workspace;
+  }
+  async getDailyNewsMailbox(workspaceId: string): Promise<DailyNewsMailbox> {
+    return this.dailyNews.mailbox(workspaceId);
+  }
+  async getDailyNewsIssue(workspaceId: string, date: string): Promise<DailyNewsIssue> {
+    return this.dailyNews.issue(workspaceId, date);
+  }
+  async setDailyNewsSettings(
+    workspaceId: string,
+    settings: DailyNewsSettings,
+  ): Promise<DailyNewsMailbox> {
+    return this.dailyNews.updateSettings(workspaceId, settings);
+  }
+  async retryDailyNews(workspaceId: string, date: string): Promise<DailyNewsMailbox> {
+    return this.dailyNews.retry(workspaceId, date);
+  }
+  async resumeDailyNews(): Promise<void> {
+    this.dailyNews.resume();
+  }
+  async getDailyNewsWakeState(): Promise<DailyNewsWakeState> {
+    return this.dailyNews.wakeState();
+  }
+  async ackDailyNewsTaskCleanup(workspaceId: string): Promise<void> {
+    this.dailyNews.ackTaskCleanup(workspaceId);
   }
   async exportWorkspace(id: string, destination: string): Promise<CommandResult> {
     await exportWorkspaceStorage(this.store.get(id).workspace, destination);
@@ -2522,6 +2567,7 @@ class Runtime implements RuntimeService {
     if (this.closed) return;
     this.closing = true;
     clearInterval(this.budgetTimer);
+    this.dailyNews.close();
     this.dialogueShutdown.abort();
     for (const run of this.running.values()) run.controller.abort(new Error('Runtime closing'));
     await Promise.allSettled(pendingCommands);

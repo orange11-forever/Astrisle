@@ -41,6 +41,16 @@ function actor(id = 'mori') {
 }
 
 describe('automatic island leisure', () => {
+  it('walks onto the nursery terrace, tends the bed, and releases it when work arrives', () => {
+    const a = actor();
+    a.state.cycle = 3;
+    a.until(() => a.state.stage === 'enjoying');
+    expect(a.state.facility).toBe('nursery-bed');
+    expect(a.walker.position).toEqual(FACILITIES['nursery-bed'].position);
+    for (let i = 0; i < 3000; i++) a.tick(false);
+    expect(a.reservations.size).toBe(0);
+    expect(a.walker.position).toEqual(homes.mori);
+  });
   it('waits for its next activity instead of repeatedly choosing the same free seat', () => {
     const a = actor();
     a.until(() => a.state.stage === 'enjoying');

@@ -1,5 +1,10 @@
 import { expect, test, type Page } from '@playwright/test';
 import { humanoidGlb, seedIslandLife } from '../fixtures/island-life';
+import {
+  glasshouseAisle,
+  nurseryBed,
+  nurseryWalkingHeight,
+} from '../../apps/client/src/garden-access';
 
 async function inspect(
   page: Page,
@@ -124,10 +129,22 @@ test('island companions automatically sit, sip tea and share a synchronized swin
   page.on('pageerror', (e) => errors.push(e.message));
   await open(page);
   await pauseFrames(page);
-  for (const activity of ['sit', 'tea', 'swing']) {
-    const state = (await inspect(page, 120, { stage: 'enjoying', activity }))!;
+  for (const activity of ['sit', 'tea', 'swing', 'tend']) {
+    const state = (await inspect(page, activity === 'tend' ? 240 : 120, {
+      stage: 'enjoying',
+      activity,
+    }))!;
     const actor = state.actors.find((a) => a.stage === 'enjoying' && a.activity === activity);
     expect(actor?.blend, activity).toBe(1);
+    if (activity === 'tend') {
+      const [x, y, z] = actor!.position;
+      const bed = [nurseryBed, glasshouseAisle].find(
+        ([bx, bz]) => Math.hypot(x - bx, z - bz) < 0.02,
+      );
+      expect(bed).toBeDefined();
+      expect(y).toBeCloseTo(nurseryWalkingHeight(bed!) + 0.02, 2);
+      expect(actor!.cup).toBe(false);
+    }
     if (activity === 'tea') {
       expect(actor!.cup).toBe(true);
       expect(actor!.gripGap).toBeLessThan(0.025);

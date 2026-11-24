@@ -44,8 +44,28 @@ export function onHarborBridge([x, z]: GroundPoint) {
   return Math.abs(x - harborBridge.x) <= 0.21 && z >= harborStreetZ - 0.03 && z <= landingZ + 0.002;
 }
 
+const railHalfWidth = 0.91;
+const railStart = 4.85;
+const railEnd = harborBridge.gardenEnd + 0.23;
+
 export function atHarborRail([x, z]: GroundPoint) {
-  return Math.abs(x - harborBridge.x) < 0.91 && z >= 4.85 && z <= harborBridge.gardenEnd + 0.23;
+  return Math.abs(x - harborBridge.x) < railHalfWidth && z >= railStart && z <= railEnd;
+}
+
+/** Clip the segment to the rail's Z range, then test its remaining X span. */
+export function crossesHarborRail(a: GroundPoint, b: GroundPoint) {
+  const [x, z] = worldToHarbor(a);
+  const [endX, endZ] = worldToHarbor(b);
+  if (Math.max(z, endZ) < railStart || Math.min(z, endZ) > railEnd) return false;
+  const dz = endZ - z;
+  const enter = dz ? Math.max(0, Math.min((railStart - z) / dz, (railEnd - z) / dz)) : 0;
+  const exit = dz ? Math.min(1, Math.max((railStart - z) / dz, (railEnd - z) / dz)) : 1;
+  const firstX = x + enter * (endX - x);
+  const lastX = x + exit * (endX - x);
+  return (
+    Math.min(firstX, lastX) < harborBridge.x + railHalfWidth &&
+    Math.max(firstX, lastX) > harborBridge.x - railHalfWidth
+  );
 }
 
 export function harborWalkingHeight(point: GroundPoint) {

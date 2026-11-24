@@ -332,6 +332,13 @@ export function poseProceduralGait(
   const leisure = motion.leisure;
   if (!leisure || leisure.blend <= 0) return;
   const weight = leisure.blend;
+  if (leisure.activity === 'tend') {
+    joints.head.rotation.x = 0.2 * weight;
+    joints['right-arm'].rotation.x = -0.72 * weight;
+    joints['right-forearm'].rotation.x = (-0.32 + Math.sin(leisure.time * 1.4) * 0.13) * weight;
+    joints['left-arm'].rotation.x = -0.25 * weight;
+    return;
+  }
   const draped = !!root.userData.gaitLongGarment;
   const seatedHip = draped
     ? Number(root.userData.gaitRestHipY) +
