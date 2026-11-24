@@ -127,13 +127,20 @@ test('full acceptance launches confetti once and repeated snapshots do not repla
   const particleCount = async () => (await sceneState(page, undefined, fiberUrl))?.confetti;
   await page.bringToFront();
   await selectCommission(page);
+  // Keep both bursts observable even when an input or a GPU read takes longer than the burst.
+  // pauseAt fires outstanding timers once; reach this checkpoint before accepting the commission.
+  const clockTime = await page.evaluate(() => Date.now());
+  await page.clock.pauseAt(clockTime + 60_000);
   await page.evaluate(() => (window as any).setLifeStatus('accepted'));
+  await page.clock.runFor(32);
   await expect.poll(particleCount).toBe(160);
   // Expiry is an application timer; advance it independently of the runner's GPU frame rate.
   await page.clock.fastForward(4_000);
   await expect.poll(particleCount).toBe(0);
   await page.evaluate(() => (window as any).setLifeStatus('accepted'));
+  await page.clock.runFor(32);
   expect(await particleCount()).toBe(0);
   await page.getByRole('button', { name: '庆祝一下' }).click();
+  await page.clock.runFor(32);
   await expect.poll(particleCount).toBe(160);
 });
