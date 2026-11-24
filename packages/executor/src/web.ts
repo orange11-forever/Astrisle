@@ -56,26 +56,37 @@ async function readResponse(response: Response): Promise<string> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-export async function webRead(url: string, context: ToolContext): Promise<ToolResult> {
+export async function webRead(
+  url: string,
+  context: ToolContext,
+  options: { accept?: string; allowedOrigin?: string; fullOutput?: boolean } = {},
+): Promise<ToolResult> {
   const hosts = authorizedSources(context);
   const searchService = configuredSearchService(context);
   const signal = AbortSignal.any([AbortSignal.timeout(WEB_TIMEOUT), context.signal]);
   let current = new URL(url);
   for (let count = 0; count <= 5; count++) {
-    if (!sourceAllowed(current, hosts))
+    if (
+      !sourceAllowed(current, hosts) ||
+      (options.allowedOrigin &&
+        (current.origin !== options.allowedOrigin ||
+          current.href.length > MAX_SOURCE_URL ||
+          current.href !== redact(current.href)))
+    )
       throw new ToolError('SCOPE_DENIED', 'URL host or protocol is not authorized');
     if (searchService && isSearchServiceUrl(current, searchService))
       throw new ToolError('SCOPE_DENIED', 'Use web_search for the configured search endpoint');
     const response = await fetch(current, {
       signal,
       redirect: 'manual',
-      headers: { accept: 'text/plain,text/html,application/json' },
+      headers: { accept: options.accept ?? 'text/plain,text/html,application/json' },
     });
     if (response.status >= 300 && response.status < 400) {
       await response.body?.cancel();
       const location = response.headers.get('location');
       if (!location) throw new ToolError('NETWORK_FAILED', 'Redirect has no destination');
       current = new URL(location, current);
+      if (options.allowedOrigin) current.hash = '';
       continue;
     }
     const output = redact(await readResponse(response));
@@ -84,7 +95,7 @@ export async function webRead(url: string, context: ToolContext): Promise<ToolRe
     return {
       ok: response.ok,
       output:
-        output.length > MAX_READ_OUTPUT
+        !options.fullOutput && output.length > MAX_READ_OUTPUT
           ? `${output.slice(0, MAX_READ_OUTPUT)}\n[output truncated]`
           : output,
       metadata,

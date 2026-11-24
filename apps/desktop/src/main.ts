@@ -5,18 +5,22 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  powerMonitor,
   safeStorage,
   shell,
   Tray,
 } from 'electron';
-import { mkdir, copyFile } from 'node:fs/promises';
-import { basename, extname, join } from 'node:path';
+import { mkdir, copyFile, stat } from 'node:fs/promises';
+import { basename, extname, isAbsolute, join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import {
   findArtifactVersion,
   isSearchEndpoint,
   isSourceHostname,
+  isDailyNewsUrl,
+  parseDailyNewsSettings,
   PARTNER_DIALOGUE_ERRORS,
   PARTNER_DIALOGUE_LIMITS,
   sourceExportFormats,
@@ -25,12 +29,17 @@ import type {
   ArtifactPreview,
   ApplyPreview,
   Bootstrap,
+  DailyNewsIssue,
+  DailyNewsMailbox,
   ProjectSnapshot,
 } from '@astrisle/contracts';
 import { CredentialStore } from './credentials';
 import { isTrustedSender, canOpenExternally } from './security';
 import { RuntimeBridge } from './runtime-bridge';
 import { CharacterStore } from './characters';
+import { syncDailyNewsTask, dailyNewsWakeArgv, DailyNewsWakeHandoff } from './daily-news-wake';
+import { DailyNewsSubscriptions } from './daily-news-subscriptions';
+import type { DailyNewsWakeState } from '../../../packages/runtime/src/daily-news-scheduler';
 import { createCharacterInspector } from './character-validator';
 import { agentsFromCharacters } from '../../../packages/domain/src/index';
 
@@ -38,6 +47,15 @@ app.setName('Astrisle');
 const automation = process.env.ASTRISLE_AUTOMATION === '1';
 const modelDemo = process.env.ASTRISLE_MODEL_DEMO === '1';
 const initiallyHidden = automation || modelDemo;
+const wakeFlag = '--daily-news-background';
+const wakeLaunch = process.argv.includes(wakeFlag);
+let backgroundOnly = wakeLaunch;
+const wakeArgument = (name: string) =>
+  process.argv.find((arg) => arg.startsWith(name + '='))?.slice(name.length + 1);
+const wakeRoot = wakeLaunch ? wakeArgument('--daily-news-root') : undefined;
+const wakeIsland = wakeLaunch ? wakeArgument('--daily-news-island') : undefined;
+if (wakeLaunch && (!wakeRoot || !isAbsolute(wakeRoot) || !wakeIsland))
+  throw new Error('无效的日报后台启动参数。');
 const studioTitle = automation
   ? 'Astrisle · 自动化测试'
   : modelDemo
@@ -45,6 +63,7 @@ const studioTitle = automation
     : 'Astrisle · 星岛工作室';
 const projectRoot = app.getAppPath();
 const dataRoot =
+  wakeRoot ||
   process.env.ASTRISLE_DATA_ROOT ||
   (app.isPackaged ? app.getPath('userData') : join(projectRoot, '.astrisle-dev'));
 app.setPath('userData', dataRoot);
@@ -52,8 +71,15 @@ let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
 let bridge: RuntimeBridge;
 let closing = false;
+const wakeHandoff = new DailyNewsWakeHandoff((workspaceId) => {
+  app.relaunch({
+    args: dailyNewsWakeArgv({ workspaceId, dataRoot, projectRoot, packaged: app.isPackaged }),
+  });
+});
+let subscriptions: DailyNewsSubscriptions | undefined;
 const preparedApplies = new Map<string, ApplyPreview>();
 const identifier = z.string().min(1).max(200);
+const issueDate = z.iso.date();
 const bool = z.boolean();
 const budgetSchema = z
   .object({
@@ -97,6 +123,31 @@ const submitSchema = z
   .strict();
 
 async function start() {
+  const schedule = (workspaceId: string, time: string | null) => {
+    if (modelDemo || (automation && process.env.ASTRISLE_TEST_DAILY_NEWS_TASKS !== '1'))
+      return Promise.resolve();
+    return syncDailyNewsTask({
+      dataRoot,
+      workspaceId,
+      time,
+      executable: process.execPath,
+      projectRoot,
+      packaged: app.isPackaged,
+    });
+  };
+  if (
+    wakeLaunch &&
+    !(await stat(join(dataRoot, 'astrisle.sqlite')).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    }))
+  ) {
+    await schedule(wakeIsland!, null);
+    if (backgroundOnly) {
+      app.quit();
+      return;
+    }
+  }
   await mkdir(dataRoot, { recursive: true });
   const characters = new CharacterStore(dataRoot, createCharacterInspector(__dirname));
   const vault = new CredentialStore(join(dataRoot, 'provider.json'), {
@@ -110,6 +161,30 @@ async function start() {
     dataRoot,
     credentials: await vault.credentials(),
   });
+  const wakeState = () => bridge.call<DailyNewsWakeState>('getDailyNewsWakeState');
+  subscriptions = new DailyNewsSubscriptions({
+    read: (id) => bridge.call<DailyNewsMailbox>('getDailyNewsMailbox', id),
+    save: (id, settings) => bridge.call<DailyNewsMailbox>('setDailyNewsSettings', id, settings),
+    schedule,
+    state: wakeState,
+    acknowledgeRemoval: (id) => bridge.call('ackDailyNewsTaskCleanup', id),
+  });
+  powerMonitor.on('resume', () => {
+    if (!closing) void bridge.call('resumeDailyNews').catch(() => {});
+  });
+  if (wakeLaunch) {
+    await bridge.call('resumeDailyNews');
+    await subscriptions.reconcileWake(wakeIsland!);
+    let state = await wakeState();
+    while (backgroundOnly && !closing && state.pending) {
+      await delay(1000);
+      if (!closing) state = await wakeState();
+    }
+    if (backgroundOnly || closing) {
+      if (!closing) app.quit();
+      return;
+    }
+  }
   const devURL = process.env.ASTRISLE_DEV_URL;
   if (devURL && devURL !== 'http://127.0.0.1:5173')
     throw new Error('Unsupported development origin');
@@ -135,6 +210,27 @@ async function start() {
     characters: await characters.profiles(),
   }));
   register('getCharacters', () => characters.profiles());
+  register('getDailyNewsMailbox', (id) => bridge.call('getDailyNewsMailbox', identifier.parse(id)));
+  register('setDailyNewsSettings', (id, settings) =>
+    subscriptions!.update(identifier.parse(id), parseDailyNewsSettings(settings)),
+  );
+  register('getDailyNewsIssue', (id, date) =>
+    bridge.call('getDailyNewsIssue', identifier.parse(id), issueDate.parse(date)),
+  );
+  register('retryDailyNews', (id, date) =>
+    bridge.call('retryDailyNews', identifier.parse(id), issueDate.parse(date)),
+  );
+  register('openDailyNewsSource', async (id, date, rawUrl) => {
+    const url = z.string().refine(isDailyNewsUrl).parse(rawUrl);
+    const issue = await bridge.call<DailyNewsIssue>(
+      'getDailyNewsIssue',
+      identifier.parse(id),
+      issueDate.parse(date),
+    );
+    if (issue.status !== 'delivered' || !issue.items.some((item) => item.url === url))
+      throw new Error('找不到这期日报中的原文。');
+    await shell.openExternal(url);
+  });
   register('createCharacter', (displayName) => characters.create(displayName));
   register('updateCharacter', (id, patch) => characters.update(id, patch));
   register('loadCharacterModel', (assetId) => characters.loadModel(assetId));
@@ -477,12 +573,31 @@ async function start() {
     });
   });
   await window.loadURL(expectedURL);
+  void subscriptions.restore().catch((error) => console.error('无法恢复日报唤醒计划', error));
 }
 
 if (!automation && !app.requestSingleInstanceLock()) app.quit();
 else {
   if (!initiallyHidden)
-    app.on('second-instance', () => {
+    app.on('second-instance', (_event, argv) => {
+      if (argv.includes(wakeFlag)) {
+        const id = argv
+          .find((arg) => arg.startsWith('--daily-news-island='))
+          ?.slice('--daily-news-island='.length);
+        if (!id || id.length > 200) return;
+        wakeHandoff.received(id, closing);
+        if (!closing && subscriptions)
+          void subscriptions
+            .reconcileWake(id)
+            .then(() => bridge.call('resumeDailyNews'))
+            .catch((error) => console.error('日报唤醒失败', error));
+        return;
+      }
+      backgroundOnly = false;
+      if (closing) {
+        app.relaunch({ args: app.isPackaged ? [] : [projectRoot] });
+        return;
+      }
       window?.show();
       window?.focus();
     });
@@ -494,8 +609,13 @@ else {
       app.quit();
       return;
     }
-    bridge
-      .close()
+    Promise.resolve(subscriptions?.settle())
+      .then(() =>
+        wakeHandoff.beforeExit(
+          async () => (await bridge.call<DailyNewsWakeState>('getDailyNewsWakeState')).pending,
+        ),
+      )
+      .then(() => bridge.close())
       .catch((error) => console.error('Shutdown incomplete:', error.message))
       .finally(() => {
         tray?.destroy();
@@ -506,9 +626,17 @@ else {
     .whenReady()
     .then(start)
     .catch((error) => {
-      if (initiallyHidden) console.error(`${studioTitle} startup failed:`, error.message);
+      if (initiallyHidden || backgroundOnly)
+        console.error(`${studioTitle} startup failed:`, error.message);
       else dialog.showErrorBox('Astrisle 启动失败', error.message);
-      closing = true;
-      app.quit();
+      if (backgroundOnly) {
+        closing = true;
+        void Promise.resolve(bridge?.close())
+          .catch(() => {})
+          .finally(() => app.exit(1));
+      } else {
+        closing = true;
+        app.quit();
+      }
     });
 }

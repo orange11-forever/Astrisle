@@ -5,7 +5,8 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { islandAppearance, type IslandThemeId } from './islands';
 import { PROMENADE_RADIUS } from './island-motion';
 import { FACILITIES, TEA_TABLE } from './island-facilities';
-import { gardenApproaches, nearGardenApproach } from './garden-access';
+import { gardenApproaches, nearGardenApproach, nearNurseryDeck } from './garden-access';
+import { nearCoastApproach } from './coastal-islet';
 import {
   POND_BEARING,
   POND_CENTER,
@@ -716,6 +717,7 @@ function landscapeSurface(palette: Palette, cliff: THREE.Mesh): Surface {
       if (
         nearFacility(x * radius, z * radius, 0.2) ||
         nearGardenApproach(x * radius, z * radius, 0.2) ||
+        nearCoastApproach(x * radius, z * radius, 0.2) ||
         onObservatoryApproach(x * radius, z * radius, 0.17)
       )
         continue;
@@ -730,7 +732,7 @@ function landscapeSurface(palette: Palette, cliff: THREE.Mesh): Surface {
     [2.38, -0.02, -7.73, 0.72],
     [1.2, -0.02, -8.3, 0.8],
     [6.6, -0.02, -5.1, 1.05],
-    [-8.25, -0.02, 1.0, 0.82],
+    [-8.55, -0.02, 0.18, 0.68],
     [-5.15, -0.02, 6.64, 0.7],
   ].forEach(([x, y, z, scale]) => addTree(parts, palette, [x!, y!, z!], scale!));
   // Continue both bridge decks in matching stone setts up to the circular promenade.
@@ -775,6 +777,8 @@ function landscapeSurface(palette: Palette, cliff: THREE.Mesh): Surface {
         z < OBSERVATORY.deck.entryZ) ||
       atGlasshouseAccess ||
       nearGardenApproach(x, z, 0.4) ||
+      nearNurseryDeck([x, z], 0.85) ||
+      nearCoastApproach(x, z, 0.4) ||
       Math.hypot(x - POND_CENTER[0], z - POND_CENTER[2]) < 1.46
     )
       continue;
@@ -798,7 +802,7 @@ function landscapeSurface(palette: Palette, cliff: THREE.Mesh): Surface {
         0.64 + (i % 4) * 0.09,
       );
     }
-    if (i % 3 === 0)
+    if (i % 3 === 0 && !nearNurseryDeck([Math.cos(angle) * 8.61, Math.sin(angle) * 8.61], 0.58))
       addFlowers(parts, [Math.cos(angle) * 8.61, -0.026, Math.sin(angle) * 8.61], palette, 5);
   }
   // Four planted pockets: a soil middle, flowering layer and low leafy border.
@@ -1098,7 +1102,7 @@ export function IslandLandscape({
           <meshBasicMaterial vertexColors transparent depthWrite={false} />
         </mesh>
       </group>
-      <Pennant position={[-7.2, 0, 4.1]} palette={palette} reduced={reduced} />
+      <Pennant position={[-6.0, 0, 6.45]} palette={palette} reduced={reduced} />
       <TeaGardenDressing />
     </group>
   );

@@ -56,6 +56,12 @@ export function poseDefaultCharacter(
         ? -0.6
         : Math.sin(t * 0.9 + 1) * 0.05 * movement;
   if (!leisure || weight <= 0) return;
+  if (leisure.activity === 'tend') {
+    joints.head.rotation.x = 0.21 * weight;
+    joints.rightArm.rotation.x = (-0.85 + 0.16 * Math.sin(leisure.time * 1.4)) * weight;
+    joints.leftArm.rotation.x = -0.32 * weight;
+    return;
+  }
   // This chibi's knees are hidden by its short skirt: the stocking pivots hang from the seat.
   model.root.position.y += (leisure.seatHeight - 0.21) * weight;
   const kick = leisure.activity === 'swing' ? Math.sin(leisure.time * 1.65) * 0.15 : 0;

@@ -1,5 +1,7 @@
 /** Shared public boundary. Never expose provider credentials to snapshots. */
 export { isSearchEndpoint, isSourceHostname } from './web-research';
+import type { DailyNewsSettings, DailyNewsMailbox, DailyNewsIssue } from './daily-news';
+export * from './daily-news';
 
 export type CommissionStatus =
   | 'draft'
@@ -399,6 +401,14 @@ export interface ApplyOperation {
   canRollback: boolean;
 }
 export interface HostAPI {
+  getDailyNewsMailbox?(workspaceId: string): Promise<DailyNewsMailbox>;
+  getDailyNewsIssue?(workspaceId: string, date: string): Promise<DailyNewsIssue>;
+  setDailyNewsSettings?(
+    workspaceId: string,
+    settings: DailyNewsSettings,
+  ): Promise<DailyNewsMailbox>;
+  retryDailyNews?(workspaceId: string, date: string): Promise<DailyNewsMailbox>;
+  openDailyNewsSource?(workspaceId: string, date: string, url: string): Promise<void>;
   bootstrap(): Promise<Bootstrap>;
   getCharacters?(): Promise<CharacterProfile[]>;
   createCharacter?(displayName: string): Promise<CharacterProfile>;

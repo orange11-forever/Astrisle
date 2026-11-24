@@ -2,7 +2,12 @@ import { useMemo } from 'react';
 import * as THREE from 'three';
 import { createIslandPropBuilder, IslandPropGeometry, type PropPoint } from './IslandPropGeometry';
 
-import { glasshousePosition as position, glasshouseYaw as yaw } from './garden-access';
+import {
+  glasshousePosition as position,
+  glasshouseYaw as yaw,
+  glasshouseVerticalScale,
+} from './garden-access';
+import { buildNurseryTerrace } from './NurseryTerrace';
 const fieldstone = '#8e9588';
 const limestone = '#aba99b';
 const floorWood = '#bc9f7c';
@@ -70,7 +75,8 @@ function buildGlasshouse() {
     box([0, 0.012 + (6 - step) * 0.003, z], [1.18, 0.088, 0.195], step % 2 ? limestone : '#b6b29e');
   }
   for (const x of [-0.54, 0.54]) {
-    box([x, 0.091, 1.77], [0.105, 0.09, 1.42], fieldstone);
+    if (x < 0) box([x, 0.091, 1.77], [0.105, 0.09, 1.42], fieldstone);
+    else for (const z of [1.24, 2.33]) box([x, 0.091, z], [0.105, 0.09, 0.32], fieldstone);
     for (const z of [1.14, 2.42]) {
       box([x, 0.165, z], [0.15, 0.23, 0.15], limestone);
       box([x, 0.285, z], [0.185, 0.05, 0.185], '#c1bdab');
@@ -100,7 +106,7 @@ function buildGlasshouse() {
     box([0, eave, z], [3.1, 0.074, 0.087], green);
     box([0, eave + 0.024, z * 1.052], [3.13, 0.022, 0.023], trim);
     const bays =
-      z > 0 ? [-wallX, -0.94, -0.44, 0.44, 0.94, wallX] : [-wallX, -0.75, 0, 0.75, wallX];
+      z > 0 ? [-wallX, -1.04, -0.61, 0.61, 1.04, wallX] : [-wallX, -0.75, 0, 0.75, wallX];
     for (const x of bays) {
       box([x, 0.53 * eave, z], [0.057, eave - 0.12, 0.073], green);
       box([x, 1.1, z * 1.033], [0.021, 1.36, 0.016], patina);
@@ -113,11 +119,11 @@ function buildGlasshouse() {
         curvedTrim(
           structure,
           [
-            [-0.439, 1.66, z],
-            [-0.31, 1.784, z],
+            [-0.61, 1.66, z],
+            [-0.43, 1.784, z],
             [0, 1.855, z],
-            [0.31, 1.784, z],
-            [0.439, 1.66, z],
+            [0.43, 1.784, z],
+            [0.61, 1.66, z],
           ],
           0.032,
           green,
@@ -125,19 +131,19 @@ function buildGlasshouse() {
         curvedTrim(
           structure,
           [
-            [-0.446, 1.68, z + 0.024],
-            [-0.31, 1.807, z + 0.024],
+            [-0.616, 1.68, z + 0.024],
+            [-0.43, 1.807, z + 0.024],
             [0, 1.88, z + 0.024],
-            [0.31, 1.807, z + 0.024],
-            [0.446, 1.68, z + 0.024],
+            [0.43, 1.807, z + 0.024],
+            [0.616, 1.68, z + 0.024],
           ],
           0.009,
           brass,
         );
         beam([0, 1.858, z], [0, eave, z], 0.023, trim);
         for (const side of [-1, 1]) {
-          box([side * 0.422, 1.03, z + 0.046], [0.04, 0.16, 0.017], darkBrass);
-          box([side * 0.423, 1.05, z + 0.06], [0.034, 0.074, 0.025], brass);
+          box([side * 0.602, 1.03, z + 0.046], [0.04, 0.16, 0.017], darkBrass);
+          box([side * 0.603, 1.05, z + 0.06], [0.034, 0.074, 0.025], brass);
         }
         continue;
       }
@@ -327,13 +333,19 @@ function buildGlasshouse() {
     }
   }
 
+  buildNurseryTerrace(structure);
   return { structure: finish(), panes: glass.finish() };
 }
 
 export function IslandGlasshouse() {
   const { structure, panes } = useMemo(buildGlasshouse, []);
   return (
-    <group name="island-glasshouse" position={position} rotation={[0, yaw, 0]}>
+    <group
+      name="island-glasshouse"
+      position={position}
+      rotation={[0, yaw, 0]}
+      scale={[1, glasshouseVerticalScale, 1]}
+    >
       <mesh name="glasshouse-structure">
         <IslandPropGeometry surface={structure} />
         <meshStandardMaterial vertexColors roughness={0.78} />

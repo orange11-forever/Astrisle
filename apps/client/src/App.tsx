@@ -15,6 +15,7 @@ import {
   Layers,
   Maximize2,
   MessageCircle,
+  Newspaper,
   Pause,
   Play,
   Plus,
@@ -58,6 +59,7 @@ import { ArtifactReview, ArtifactWebSources } from './ArtifactReview';
 import { ArtifactSourceExport } from './ArtifactSourceExport';
 import { artifactVersionFamilies } from '../../../packages/artifacts/src/history';
 import { CommissionActivity } from './CommissionActivity';
+import { DailyNewsPanel, supportsDailyNews } from './DailyNewsPanel';
 import { PartnerCreator } from './PartnerCreator';
 import { PartnerDialogue, usePartnerDialogue, type DialogueTarget } from './PartnerDialogue';
 import { WritebackHistory, WritebackPreview } from './WritebackHistory';
@@ -76,7 +78,11 @@ const islandThemeStorageKey = 'astrisle-island-themes';
 const lightStorageKey = 'astrisle-island-light-mode';
 const districtNames: Record<StudioDistrict, string> = {
   harbor: '花港街景',
+  lane: '制帆巷与码头',
   garden: '温室花园',
+  nursery: '温室育苗区',
+  glasshouse: '温室内景',
+  coast: '潮池外岛',
   observatory: '观星台',
 };
 function isDistrict(value: CharacterFocus | StudioDistrict | undefined): value is StudioDistrict {
@@ -121,6 +127,7 @@ const panelNames: Record<Panel, string> = {
   evidence: '检查与证据',
   artifacts: '成果与验收',
   requests: '输入与审批',
+  dailyNews: '日报邮箱',
   settings: '工作室设置',
 };
 const protocolPresets: Record<
@@ -222,6 +229,9 @@ export function App() {
   const [taskId, setTaskId] = useState('');
   const [overview, setOverview] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  const dailyNewsHeading = useRef<HTMLHeadingElement>(null);
+  const dailyNewsTrigger = useRef<HTMLButtonElement | null>(null);
+  const dailyNewsNav = useRef<HTMLButtonElement>(null);
   const [navOpen, setNavOpen] = useState(false);
   const [flat, setFlat] = useState(false);
   const [fixed, setFixed] = useState(false);
@@ -351,6 +361,11 @@ export function App() {
     },
     [commissionId, inspectorOpen],
   );
+  useEffect(() => {
+    if (inspectorOpen && panel === 'dailyNews') {
+      dailyNewsHeading.current?.focus({ preventScroll: true });
+    }
+  }, [inspectorOpen, panel]);
   const run = async (action: () => Promise<CommandResult | unknown>, success?: string) => {
     setBusy(true);
     try {
@@ -373,6 +388,8 @@ export function App() {
     }
   };
   const workspace = bootstrap?.workspaces.find((w) => w.id === workspaceId);
+  const dailyNewsHost = supportsDailyNews(host) ? host : undefined;
+  const dailyNewsAvailable = !!workspace && !!dailyNewsHost;
   const openRequests = snapshot?.requests.filter((r) => r.status === 'open') || [];
   const task = snapshot?.tasks.find((t) => t.id === taskId);
   const provider = bootstrap?.provider;
@@ -471,11 +488,22 @@ export function App() {
     }
   };
   const openPanel = (next: Panel) => {
+    if (next === 'dailyNews') {
+      dailyNewsTrigger.current =
+        document.activeElement instanceof HTMLButtonElement ? document.activeElement : null;
+    }
     dialoguePreviewRequest.current++;
     setDialogueSource(undefined);
     setPanel(next);
     setInspectorOpen(true);
     setNavOpen(false);
+  };
+  const closeInspector = () => {
+    setInspectorOpen(false);
+    if (panel === 'dailyNews') {
+      const trigger = dailyNewsTrigger.current;
+      (trigger?.isConnected ? trigger : dailyNewsNav.current)?.focus({ preventScroll: true });
+    }
   };
   const openDialogue = (partnerId: string) => {
     if (!commissionPartners.some((agent) => agent.id === partnerId)) {
@@ -589,7 +617,12 @@ export function App() {
             className="panel-toggle"
             aria-label={inspectorOpen ? '收起工作面板' : '打开工作面板'}
             aria-expanded={inspectorOpen}
-            onClick={() => setInspectorOpen((v) => !v)}
+            onClick={(event) => {
+              if (!inspectorOpen && panel === 'dailyNews') {
+                dailyNewsTrigger.current = event.currentTarget;
+              }
+              setInspectorOpen((v) => !v);
+            }}
           >
             <PanelRightOpen size={17} />
             <span>工作面板</span>
@@ -675,24 +708,28 @@ export function App() {
               ['goal', Compass],
               ['tasks', Layers],
               ['requests', Inbox],
+              ['dailyNews', Newspaper],
               ['artifacts', Archive],
               ['evidence', FileCheck2],
             ] as const
-          ).map(([key, Icon]) => (
-            <button
-              key={key}
-              title={panelNames[key]}
-              aria-label={panelNames[key]}
-              className={panel === key && inspectorOpen ? 'active' : ''}
-              onClick={() => openPanel(key)}
-            >
-              <Icon size={17} />
-              {panelNames[key]}
-              {key === 'requests' && openRequests.length > 0 && (
-                <span className="count">{openRequests.length}</span>
-              )}
-            </button>
-          ))}
+          )
+            .filter(([key]) => key !== 'dailyNews' || dailyNewsAvailable)
+            .map(([key, Icon]) => (
+              <button
+                key={key}
+                ref={key === 'dailyNews' ? dailyNewsNav : undefined}
+                title={panelNames[key]}
+                aria-label={panelNames[key]}
+                className={panel === key && inspectorOpen ? 'active' : ''}
+                onClick={() => openPanel(key)}
+              >
+                <Icon size={17} />
+                {panelNames[key]}
+                {key === 'requests' && openRequests.length > 0 && (
+                  <span className="count">{openRequests.length}</span>
+                )}
+              </button>
+            ))}
         </nav>
       </aside>
       <main
@@ -773,6 +810,7 @@ export function App() {
             themeId={islandTheme}
             snapshot={snapshot}
             onPanel={openPanel}
+            dailyNewsAvailable={dailyNewsAvailable}
             onPartner={openDialogue}
             reduced={reduced}
             reset={reset}
@@ -818,6 +856,12 @@ export function App() {
                 <Archive />
                 成果 {artifactFamilies.length}
               </button>
+              {dailyNewsAvailable && (
+                <button onClick={() => openPanel('dailyNews')}>
+                  <Newspaper />
+                  日报邮箱
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -943,15 +987,15 @@ export function App() {
       >
         <header className="inspector-header">
           <div>
-            <h2>{panelTitle}</h2>
+            <h2 ref={dailyNewsHeading} tabIndex={panel === 'dailyNews' ? -1 : undefined}>
+              {panelTitle}
+            </h2>
           </div>
           <div>
-            {snapshot && <span className="revision">修订 {snapshot.commission.revision}</span>}
-            <button
-              className="icon-button"
-              aria-label="收起工作面板"
-              onClick={() => setInspectorOpen(false)}
-            >
+            {snapshot && panel !== 'dailyNews' && (
+              <span className="revision">修订 {snapshot.commission.revision}</span>
+            )}
+            <button className="icon-button" aria-label="收起工作面板" onClick={closeInspector}>
               <X size={18} />
             </button>
           </div>
@@ -967,7 +1011,19 @@ export function App() {
                 <ArrowLeft size={14} aria-hidden="true" /> 返回对话
               </button>
             )}
-          {panel === 'settings' ? (
+          {panel === 'dailyNews' ? (
+            workspace && dailyNewsHost ? (
+              inspectorOpen && (
+                <DailyNewsPanel
+                  key={workspace.id}
+                  host={dailyNewsHost}
+                  workspaceId={workspace.id}
+                />
+              )
+            ) : (
+              <Empty title="尚未选择岛屿">选择一座岛屿后，可查看它的日报邮箱。</Empty>
+            )
+          ) : panel === 'settings' ? (
             <SettingsPanel
               provider={provider}
               busy={busy || (!!host && !bootstrap)}

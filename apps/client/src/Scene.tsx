@@ -15,8 +15,12 @@ import type { IslandLight, IslandLightMode } from './island-daylight';
 import { useIslandLight } from './use-island-light';
 import { OuterIslets } from './OuterIslets';
 import { IslandGlasshouse } from './IslandGlasshouse';
+import { nurseryWalkingHeight } from './garden-access';
 import { HarborQuarter } from './HarborQuarter';
-import { harborStops, harborWalkingHeight } from './harbor-layout';
+import { harborWalkingHeight } from './harbor-layout';
+import { CoastalIslet } from './CoastalIslet';
+import { coastWalkingHeight } from './coastal-islet';
+import { laneWalkingHeight } from './harbor-lane';
 import { HarborHorizon } from './HarborHorizon';
 import {
   ArmillaryStand,
@@ -33,6 +37,7 @@ import {
   advanceWalker,
   createWalker,
   getIslandCharacterHomes,
+  islandStops,
   type GroundPoint,
 } from './island-motion';
 import { Confetti } from './Confetti';
@@ -66,6 +71,7 @@ export type Panel =
   | 'evidence'
   | 'artifacts'
   | 'requests'
+  | 'dailyNews'
   | 'settings';
 export type CharacterFocus = CharacterId;
 type V3 = [number, number, number];
@@ -394,7 +400,16 @@ function Avatar({
     root.current.position.set(
       THREE.MathUtils.lerp(state.position[0], facility?.position[0] ?? state.position[0], weight) +
         Math.sin(facility?.yaw ?? 0) * sway,
-      characterHeight + (preview ? 0 : harborWalkingHeight(state.position)) + lift,
+      characterHeight +
+        (preview
+          ? 0
+          : Math.max(
+              harborWalkingHeight(state.position),
+              nurseryWalkingHeight(state.position),
+              coastWalkingHeight(state.position),
+              laneWalkingHeight(state.position),
+            )) +
+        lift,
       THREE.MathUtils.lerp(state.position[1], facility?.position[1] ?? state.position[1], weight) +
         Math.cos(facility?.yaw ?? 0) * sway,
     );
@@ -440,23 +455,31 @@ function Avatar({
     const walkingLabel = !visit
       ? '散步'
       : visit.stage === 'watching'
-        ? harborStops[visit.stop].name
+        ? islandStops[visit.stop].name
         : visit.stage === 'outbound'
-          ? '走向花港'
+          ? visit.stop === 'coast'
+            ? '走向潮池'
+            : '走向花港'
           : '返回花园';
     const description =
       leisure.stage === 'approaching'
         ? `走向${facility!.name}`
         : leisure.stage === 'settling'
-          ? '坐下休息'
+          ? facility?.activity === 'tend'
+            ? '俯身察看'
+            : '坐下休息'
           : leisure.stage === 'leaving'
-            ? '起身'
+            ? facility?.activity === 'tend'
+              ? '收手'
+              : '起身'
             : leisure.stage === 'enjoying'
-              ? facility!.activity === 'tea'
-                ? '喝茶'
-                : facility!.activity === 'swing'
-                  ? '荡秋千'
-                  : '小憩'
+              ? facility!.activity === 'tend'
+                ? '照看幼苗'
+                : facility!.activity === 'tea'
+                  ? '喝茶'
+                  : facility!.activity === 'swing'
+                    ? '荡秋千'
+                    : '小憩'
               : reduced
                 ? '空闲'
                 : walkingLabel;
@@ -513,6 +536,7 @@ function World({
   themeId,
   snapshot,
   onPanel,
+  dailyNewsAvailable,
   onPartner,
   reduced,
   reset,
@@ -528,6 +552,7 @@ function World({
   themeId?: IslandThemeId;
   snapshot?: ProjectSnapshot;
   onPanel: (panel: Panel) => void;
+  dailyNewsAvailable?: boolean;
   onPartner: (partnerId: CharacterId) => void;
   reduced: boolean;
   reset: number;
@@ -626,6 +651,7 @@ function World({
       <CosmicBackdrop reduced={reduced} light={light} />
       <HarborHorizon />
       <OuterIslets reduced={reduced} />
+      <CoastalIslet />
       <HarborQuarter snapshot={snapshot} onPanel={onPanel} />
       <IslandGlasshouse />
       <IslandSkyLighting light={light} />
@@ -715,6 +741,26 @@ function World({
         <Box position={[0, 1.18, 0]} scale={[0.8, 0.67, 0.24]} color="#d3dfdc" />
         <Box position={[0, 1.22, 0.14]} scale={[0.49, 0.06, 0.03]} color={c.ink} />
       </ToolStation>
+      {dailyNewsAvailable && (
+        <ToolStation
+          position={[-1.8, 0, 4.1]}
+          rotation={[0, 0.12, 0]}
+          labelPosition={[0, 1.35, 0.7]}
+          label="日报邮箱"
+          onActivate={() => onPanel('dailyNews')}
+        >
+          <group name="island-daily-news-postbox">
+            <Cylinder radius={0.35} height={0.12} position={[0, 0.07, 0]} color="#a79173" />
+            <Cylinder radius={0.085} height={0.81} position={[0, 0.47, 0]} color="#6c625a" />
+            <RoundedBox position={[0, 1.05, 0]} args={[0.78, 0.57, 0.65]} radius={0.14}>
+              <meshStandardMaterial color="#a85848" roughness={0.64} />
+            </RoundedBox>
+            <Box position={[0, 1.14, 0.327]} scale={[0.44, 0.085, 0.025]} color="#ddba77" />
+            <Box position={[0, 1.14, 0.342]} scale={[0.37, 0.036, 0.022]} color="#443339" />
+            <Box position={[0, 0.96, 0.325]} scale={[0.23, 0.075, 0.02]} color="#f1dfaf" />
+          </group>
+        </ToolStation>
+      )}
       <ToolStation
         position={[4.2, 0, 2.7]}
         labelPosition={[0, 0.95, 0.9]}
@@ -783,6 +829,7 @@ export function StudioScene(props: {
   themeId?: IslandThemeId;
   snapshot?: ProjectSnapshot;
   onPanel: (panel: Panel) => void;
+  dailyNewsAvailable?: boolean;
   onPartner: (partnerId: CharacterId) => void;
   reduced: boolean;
   reset: number;

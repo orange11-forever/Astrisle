@@ -10,13 +10,29 @@ import {
   observatoryTargetHeight,
 } from './island-observatory';
 import { harborOrigin } from './islands';
+import { nurseryToWorld } from './garden-access';
+import { coastView } from './coastal-islet';
+import { laneView } from './harbor-lane';
 
 const overviewHeight = 0.35;
 const harborLookOffset = [0.37, 0.65, 1.45] as const;
-export type StudioDistrict = 'harbor' | 'garden' | 'observatory';
+export type StudioDistrict =
+  | 'harbor'
+  | 'garden'
+  | 'nursery'
+  | 'glasshouse'
+  | 'coast'
+  | 'lane'
+  | 'observatory';
+const nurseryCenter = nurseryToWorld(0.96, 0.8);
+const nurseryEye = nurseryToWorld(3.95, 7.35);
+const aisleTarget = nurseryToWorld(0, -0.7);
+const aisleEye = nurseryToWorld(0, 0.76);
 const observatoryTarget = observatoryApproachPose(1.4, 1).target;
 const approachDurationMs = 840;
 const cameraViews = {
+  coast: coastView,
+  lane: laneView,
   studio: { target: [0, overviewHeight, 0], offset: [13.5, 13.5 - overviewHeight, 20.3] },
   harbor: {
     target: [
@@ -27,6 +43,14 @@ const cameraViews = {
     offset: [-8.42, 12.38, 16.8],
   },
   garden: { target: [-6.95, 0.62, 5.25], offset: [5.2, 3.8, 6.6] },
+  nursery: {
+    target: [nurseryCenter[0], 1.32, nurseryCenter[1]],
+    offset: [nurseryEye[0] - nurseryCenter[0], 2.75, nurseryEye[1] - nurseryCenter[1]],
+  },
+  glasshouse: {
+    target: [aisleTarget[0], 1.23, aisleTarget[1]],
+    offset: [aisleEye[0] - aisleTarget[0], 0.29, aisleEye[1] - aisleTarget[1]],
+  },
   observatory: { target: observatoryTarget },
 } as const;
 // Keep the point of interest inside the island, with room to look around its edge.
@@ -50,6 +74,7 @@ export function CameraRig({
   const view = cameraViews[district ?? 'studio'];
   const [centerX, centerY, centerZ] = view.target;
   const focus = !!focusHome;
+  const inside = district === 'glasshouse' && !focus;
   const visiting = district === 'observatory' && !focus;
   const [focusX, focusZ] = focusHome ?? [];
   const viewport = useRef(size);
@@ -58,9 +83,9 @@ export function CameraRig({
   motionOptions.current = { reduced, fixed };
   const approach = useRef<{ startedAt: number; aspect: number } | undefined>(undefined);
   useEffect(() => {
-    if (!visiting || !(camera instanceof PerspectiveCamera)) return;
+    if ((!visiting && !inside) || !(camera instanceof PerspectiveCamera)) return;
     const originalFov = camera.fov;
-    camera.fov = OBSERVATORY.fieldOfView;
+    camera.fov = inside ? 64 : OBSERVATORY.fieldOfView;
     camera.updateProjectionMatrix();
     invalidate();
     return () => {
@@ -68,7 +93,7 @@ export function CameraRig({
       camera.updateProjectionMatrix();
       invalidate();
     };
-  }, [visiting, camera, invalidate]);
+  }, [visiting, inside, camera, invalidate]);
 
   useEffect(() => {
     const orbit = controls.current;
@@ -79,7 +104,7 @@ export function CameraRig({
     orbit.enableDamping = false;
     orbit.update();
     const aspect = Math.max(1, viewport.current.width) / Math.max(1, viewport.current.height);
-    const fit = Math.max(1, 1.05 / aspect);
+    const fit = inside ? 1 : Math.max(1, 1.05 / aspect);
     if (visiting) {
       const { reduced, fixed } = motionOptions.current;
       const snap = reduced || fixed;
@@ -109,7 +134,20 @@ export function CameraRig({
     orbit.enableDamping = damping;
     invalidate();
     // Resize updates the projection, but only an explicit view change reframes the camera.
-  }, [reset, focus, focusX, focusZ, visiting, view, centerX, centerY, centerZ, camera, invalidate]);
+  }, [
+    reset,
+    focus,
+    focusX,
+    focusZ,
+    visiting,
+    inside,
+    view,
+    centerX,
+    centerY,
+    centerZ,
+    camera,
+    invalidate,
+  ]);
 
   useFrame(() => {
     const travel = approach.current;
@@ -133,7 +171,7 @@ export function CameraRig({
     if (!orbit || focus || approach.current) return;
     const { target } = orbit;
     const radius = Math.hypot(target.x - centerX, target.z - centerZ);
-    const limit = visiting ? 3.3 : panRadius;
+    const limit = inside ? 0.85 : visiting ? 3.3 : panRadius;
     const scale = radius > limit ? limit / radius : 1;
     const x = centerX + (target.x - centerX) * scale;
     const y = visiting ? observatoryTargetHeight(camera.position.y, target.y, centerY) : centerY;
@@ -155,7 +193,7 @@ export function CameraRig({
       enableZoom={!fixed}
       enableDamping={!reduced}
       screenSpacePanning={false}
-      minDistance={focus ? 2.3 : visiting ? 1.65 : 3}
+      minDistance={inside ? 0.32 : focus ? 2.3 : visiting ? 1.65 : 3}
       maxDistance={focus ? 9 : visiting ? 22 : 70}
       minPolarAngle={focus ? 0.2 : 0.1}
       maxPolarAngle={focus ? 1.65 : visiting ? 2.92 : 1.5}

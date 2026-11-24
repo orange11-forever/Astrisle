@@ -14,6 +14,13 @@ let service: RuntimeService | undefined;
 let credentials: (ProviderInput & { apiKey: string }) | null = null;
 const permitted = new Set([
   'bootstrap',
+  'getDailyNewsMailbox',
+  'getDailyNewsIssue',
+  'setDailyNewsSettings',
+  'retryDailyNews',
+  'resumeDailyNews',
+  'getDailyNewsWakeState',
+  'ackDailyNewsTaskCleanup',
   'createWorkspace',
   'submit',
   'snapshot',

@@ -39,7 +39,13 @@ export function releaseLeisure(state: LeisureState, reservations: Map<FacilityId
   state.elapsed = 0;
   state.wait = 7 + (state.cycle % 4);
 }
-const order: FacilityId[] = ['garden-bench', 'tea-chair', 'garden-swing'];
+const order: FacilityId[] = [
+  'garden-bench',
+  'tea-chair',
+  'garden-swing',
+  'nursery-bed',
+  'glasshouse-aisle',
+];
 const ease = (value: number) => {
   const t = Math.min(1, Math.max(0, value));
   return t * t * (3 - 2 * t);
