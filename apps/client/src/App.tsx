@@ -61,8 +61,10 @@ import { artifactVersionFamilies } from '../../../packages/artifacts/src/history
 import { CommissionActivity } from './CommissionActivity';
 import { DailyNewsPanel, supportsDailyNews } from './DailyNewsPanel';
 import { PartnerCreator } from './PartnerCreator';
+import { PartnerSkills } from './PartnerSkills';
 import { PartnerDialogue, usePartnerDialogue, type DialogueTarget } from './PartnerDialogue';
 import { WritebackHistory, WritebackPreview } from './WritebackHistory';
+import { GitDeliveryPanel } from './GitDeliveryPanel';
 import { SceneQualitySelect, type SceneQuality } from './render-quality';
 import type { CharacterFocus, Panel } from './Scene';
 import { useCompletionCelebration } from './celebration';
@@ -1267,53 +1269,74 @@ export function App() {
                       遇到信息缺口或需要授权的操作时，伙伴会把具体问题放在这里。
                     </Empty>
                   ) : (
-                    openRequests.map((r) => (
-                      <form
-                        className="request"
-                        key={r.id}
-                        onSubmit={(e) => {
-                          e.preventDefault();
-                          const answer = String(new FormData(e.currentTarget).get('answer') || '');
-                          run(() =>
-                            host!.answer(r.id, answer, r.kind === 'approval' ? true : undefined),
-                          );
-                        }}
-                      >
-                        <span className="request-type">
-                          {r.kind === 'approval' ? (
-                            <ShieldCheck size={16} />
-                          ) : (
-                            <CircleHelp size={16} />
-                          )}{' '}
-                          {r.kind === 'approval' ? '等待你授权' : '等待你补充'}
-                        </span>
-                        <h3>{r.title}</h3>
-                        <p className="preserve">{r.detail}</p>
-                        <label htmlFor={`answer-${r.id}`}>
-                          {r.kind === 'approval' ? '授权说明（可选）' : '你的回复'}
-                        </label>
-                        <textarea
-                          id={`answer-${r.id}`}
-                          name="answer"
-                          rows={3}
-                          required={r.kind === 'input'}
-                        />
-                        <div className="button-row">
-                          <button type="submit" className="primary" disabled={busy}>
-                            {r.kind === 'approval' ? '批准此项操作' : '发送回复'}
-                          </button>
-                          {r.kind === 'approval' && (
+                    openRequests.map((r) =>
+                      r.purpose === 'git_delivery' ? (
+                        <section className="request" key={r.id}>
+                          <h3>{r.title}</h3>
+                          <p>{r.detail}</p>
+                          <div className="button-row">
+                            <button type="button" onClick={() => openPanel('artifacts')}>
+                              查看 Git 交付
+                            </button>
                             <button
                               type="button"
                               disabled={busy}
-                              onClick={() => run(() => host!.answer(r.id, '用户拒绝授权', false))}
+                              onClick={() => void run(() => host!.answer(r.id, '暂缓推送', false))}
                             >
-                              拒绝
+                              暂缓推送
                             </button>
-                          )}
-                        </div>
-                      </form>
-                    ))
+                          </div>
+                        </section>
+                      ) : (
+                        <form
+                          className="request"
+                          key={r.id}
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            const answer = String(
+                              new FormData(e.currentTarget).get('answer') || '',
+                            );
+                            run(() =>
+                              host!.answer(r.id, answer, r.kind === 'approval' ? true : undefined),
+                            );
+                          }}
+                        >
+                          <span className="request-type">
+                            {r.kind === 'approval' ? (
+                              <ShieldCheck size={16} />
+                            ) : (
+                              <CircleHelp size={16} />
+                            )}{' '}
+                            {r.kind === 'approval' ? '等待你授权' : '等待你补充'}
+                          </span>
+                          <h3>{r.title}</h3>
+                          <p className="preserve">{r.detail}</p>
+                          <label htmlFor={`answer-${r.id}`}>
+                            {r.kind === 'approval' ? '授权说明（可选）' : '你的回复'}
+                          </label>
+                          <textarea
+                            id={`answer-${r.id}`}
+                            name="answer"
+                            rows={3}
+                            required={r.kind === 'input'}
+                          />
+                          <div className="button-row">
+                            <button type="submit" className="primary" disabled={busy}>
+                              {r.kind === 'approval' ? '批准此项操作' : '发送回复'}
+                            </button>
+                            {r.kind === 'approval' && (
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => run(() => host!.answer(r.id, '用户拒绝授权', false))}
+                              >
+                                拒绝
+                              </button>
+                            )}
+                          </div>
+                        </form>
+                      ),
+                    )
                   )}
                   {snapshot.requests.filter((r) => r.status !== 'open').length > 0 && (
                     <details>
@@ -1434,6 +1457,16 @@ export function App() {
                       项。接受成果不会自动写回原项目。
                     </p>
                   )}
+                  {snapshot.workspace.sourcePath &&
+                    snapshot.commission.status === 'accepted' &&
+                    host?.prepareGitDelivery &&
+                    host.latestGitDelivery && (
+                      <GitDeliveryPanel
+                        key={commissionId}
+                        host={host}
+                        commissionId={commissionId}
+                      />
+                    )}
                   <WritebackHistory
                     operations={snapshot.applyOperations ?? []}
                     busy={busy}
@@ -1664,6 +1697,12 @@ function CommissionModal({
       .split(',')
       .map((host) => host.trim())
       .filter(Boolean);
+    if (
+      allowNetwork &&
+      d.has('githubSkills') &&
+      !allowedHosts.some((host) => host.toLowerCase() === 'api.github.com')
+    )
+      allowedHosts.push('api.github.com');
     const searchEndpoint = String(d.get('searchEndpoint') || '').trim();
     let invalidField: typeof networkError;
     if (searchEndpoint && !isSearchEndpoint(searchEndpoint)) invalidField = 'searchEndpoint';
@@ -1697,6 +1736,7 @@ function CommissionModal({
         maxRework: 2,
       },
       planningMode: d.has('review') ? 'review_first' : 'auto',
+      ...(workspace.sourcePath && d.has('gitDelivery') ? { gitDeliveryRequested: true } : {}),
     });
   };
   return (
@@ -1733,6 +1773,12 @@ function CommissionModal({
         <details className="scope-details" ref={permissions}>
           <summary>权限与工作预算</summary>
           <p className="quiet">文件工具的读写范围限制在项目工作副本。</p>
+          {workspace.sourcePath && (
+            <label className="check-label">
+              <input name="gitDelivery" type="checkbox" />
+              全部验收后，在回信匣提醒我确认 Git 推送
+            </label>
+          )}
           <label className="check-label">
             <input name="process" type="checkbox" />
             允许受信任的本机命令（测试、构建及工具）
@@ -1765,6 +1811,12 @@ function CommissionModal({
           <p className="field-hint" id="hosts-hint">
             搜索结果和网页原文限定在这里列出的域名。使用搜索时至少填写一个域名。
           </p>
+          {characters.some((p) => p.id !== 'user' && p.skills?.autoDiscover) && (
+            <label className="check-label">
+              <input name="githubSkills" type="checkbox" disabled={!allowNetwork} />将
+              api.github.com 加入授权域名，允许伙伴查找并下载热门公共仓库的技能
+            </label>
+          )}
           <label htmlFor="search-endpoint">SearXNG 搜索地址（可选）</label>
           <input
             id="search-endpoint"
@@ -2217,6 +2269,15 @@ function CharacterSettings({
         </>
       ) : (
         <p className="field-hint">使用默认角色模型。</p>
+      )}
+      {profile.id !== 'user' && host?.updateCharacter && (
+        <PartnerSkills
+          saved={profile.skills}
+          busy={busy}
+          onSave={(skills) =>
+            run(() => host.updateCharacter!(profile.id, { skills }), '伙伴技能已保存')
+          }
+        />
       )}
     </section>
   );

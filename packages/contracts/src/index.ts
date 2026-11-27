@@ -2,6 +2,17 @@
 export { isSearchEndpoint, isSourceHostname } from './web-research';
 import type { DailyNewsSettings, DailyNewsMailbox, DailyNewsIssue } from './daily-news';
 export * from './daily-news';
+import type { GitDeliveryPreview, GitDeliveryReceipt } from './git-delivery';
+export * from './git-delivery';
+
+export interface GitPullRequestStatus {
+  number: number;
+  url: string;
+  state: 'open' | 'closed' | 'merged';
+  checks: 'none' | 'pending' | 'passed' | 'failed' | 'unavailable';
+}
+import type { PartnerSkillSettings } from './partner-skills';
+export * from './partner-skills';
 
 export type CommissionStatus =
   | 'draft'
@@ -53,6 +64,7 @@ export interface AgentIdentity {
   id: string;
   name: string;
   temperament: 'explorer' | 'organizer';
+  skills?: PartnerSkillSettings;
 }
 export interface TaskInput {
   taskId: string;
@@ -113,6 +125,7 @@ export interface Artifact {
   validity: 'current' | 'stale' | 'missing';
 }
 export interface ProjectEvent {
+  operationId?: string;
   id: string;
   commissionId: string;
   sequence: number;
@@ -124,6 +137,7 @@ export interface ProjectEvent {
   createdAt: string;
 }
 export interface UserRequest {
+  purpose?: 'git_delivery';
   id: string;
   commissionId: string;
   taskId?: string;
@@ -135,6 +149,7 @@ export interface UserRequest {
   createdAt: string;
 }
 export interface Commission {
+  gitDeliveryRequested?: boolean;
   id: string;
   workspaceId: string;
   title: string;
@@ -208,11 +223,13 @@ export interface CharacterProfile {
   /** Changes only after a successful import, including repair of the same content hash. */
   modelRevision?: number;
   rotationY?: 0 | 90 | 180 | 270;
+  skills?: PartnerSkillSettings;
 }
 export interface CharacterUpdate {
   displayName?: string;
   resetModel?: boolean;
   rotationY?: 0 | 90 | 180 | 270;
+  skills?: PartnerSkillSettings;
 }
 export interface CharacterImportInspection {
   triangleCount: number;
@@ -241,6 +258,7 @@ export interface NewWorkspaceInput {
   sourcePath?: string;
 }
 export interface SubmitInput {
+  gitDeliveryRequested?: boolean;
   requestId: string;
   workspaceId: string;
   goal: string;
@@ -401,6 +419,22 @@ export interface ApplyOperation {
   canRollback: boolean;
 }
 export interface HostAPI {
+  prepareGitDelivery?(commissionId: string): Promise<GitDeliveryPreview>;
+  latestGitDelivery?(commissionId: string): Promise<GitDeliveryReceipt | null>;
+  publishGitDelivery?(
+    commissionId: string,
+    operationId: string,
+  ): Promise<GitDeliveryReceipt | null>;
+  inspectGitDelivery?(commissionId: string, operationId: string): Promise<GitDeliveryReceipt>;
+  getGitPullRequestStatus?(
+    commissionId: string,
+    operationId: string,
+  ): Promise<GitPullRequestStatus | null>;
+  openGitDeliveryOnGitHub?(
+    commissionId: string,
+    operationId: string,
+    target: 'compare' | 'pr',
+  ): Promise<void>;
   getDailyNewsMailbox?(workspaceId: string): Promise<DailyNewsMailbox>;
   getDailyNewsIssue?(workspaceId: string, date: string): Promise<DailyNewsIssue>;
   setDailyNewsSettings?(
@@ -461,6 +495,8 @@ export interface ToolContext {
   runId: string;
   workPath: string;
   scope: Scope;
+  /** Applies to the initial web_read request and every redirect destination. */
+  pinnedWebReadUrls?: ReadonlySet<string>;
   signal: AbortSignal;
 }
 export interface ToolDefinition {
@@ -482,10 +518,13 @@ export interface ToolExecutor {
   capabilities(): Promise<Capability[]>;
 }
 export interface RuntimeOptions {
+  /** Only set by isolated Git delivery test fixtures. */
+  gitDeliveryLocalRemoteRoot?: string;
   dataRoot: string;
   executor: ToolExecutor;
   getCredentials: () => Promise<(ProviderInput & { apiKey: string }) | null>;
   applyHelperPath?: string;
+  githubSkillFetch?: typeof fetch;
 }
 export interface ModelTaskProposal {
   key: string;

@@ -36,6 +36,8 @@ import type {
 import { CredentialStore } from './credentials';
 import { isTrustedSender, canOpenExternally } from './security';
 import { RuntimeBridge } from './runtime-bridge';
+import { comparePage, readPublishedPullRequest } from './git-pr-status';
+import type { GitDeliveryReceipt } from '@astrisle/contracts';
 import { CharacterStore } from './characters';
 import { syncDailyNewsTask, dailyNewsWakeArgv, DailyNewsWakeHandoff } from './daily-news-wake';
 import { DailyNewsSubscriptions } from './daily-news-subscriptions';
@@ -119,6 +121,7 @@ const submitSchema = z
     scope,
     budget: budgetSchema,
     planningMode: z.enum(['auto', 'review_first']),
+    gitDeliveryRequested: z.boolean().optional(),
   })
   .strict();
 
@@ -442,6 +445,61 @@ async function start() {
     );
     const result = await bridge.call('exportWorkspace', commissionId, target);
     return result;
+  });
+  register('prepareGitDelivery', (id) => bridge.call('prepareGitDelivery', identifier.parse(id)));
+  register('latestGitDelivery', (id) => bridge.call('latestGitDelivery', identifier.parse(id)));
+  const gitReceipt = async (id: string, op: string) => {
+    const receipt = await bridge.call<GitDeliveryReceipt | null>('latestGitDelivery', id);
+    if (!receipt || receipt.preview.operationId !== op || receipt.preview.commissionId !== id)
+      throw new Error('Git 预览已变更，请重新打开交付记录。');
+    return receipt;
+  };
+  register('inspectGitDelivery', (rawId, rawOp) =>
+    bridge.call('inspectGitDelivery', identifier.parse(rawId), z.uuid().parse(rawOp)),
+  );
+  register('publishGitDelivery', async (rawId, rawOp) => {
+    const id = identifier.parse(rawId),
+      op = z.uuid().parse(rawOp);
+    let receipt = await gitReceipt(id, op);
+    if (receipt.status === 'unknown')
+      receipt = await bridge.call<GitDeliveryReceipt>('inspectGitDelivery', id, op);
+    if (receipt.status === 'published' || receipt.status === 'blocked') return receipt;
+    const { remote, baseBranch, baseCommit, targetBranch, changes } = receipt.preview;
+    const choice = await dialog.showMessageBox(window!, {
+      type: 'question',
+      title: '确认 Git 推送',
+      message:
+        receipt.status === 'unknown'
+          ? '重新核查远端，并用原交付编号重试推送？'
+          : `推送已验收的 ${changes.length} 个文件变更？`,
+      detail: `远端：${remote}\n基线：${baseBranch} · ${baseCommit}\n新分支：${targetBranch}`,
+      buttons: ['取消', '推送新分支'],
+      defaultId: 0,
+      cancelId: 0,
+    });
+    if (choice.response !== 1) return null;
+    await gitReceipt(id, op);
+    return bridge.call('publishGitDelivery', id, op);
+  });
+  register('getGitPullRequestStatus', async (rawId, rawOp) =>
+    readPublishedPullRequest(await gitReceipt(identifier.parse(rawId), z.uuid().parse(rawOp))),
+  );
+  register('openGitDeliveryOnGitHub', async (rawId, rawOp, rawTarget) => {
+    const target = z.enum(['compare', 'pr']).parse(rawTarget);
+    const receipt = await gitReceipt(identifier.parse(rawId), z.uuid().parse(rawOp));
+    if (
+      target === 'compare' &&
+      !(await bridge.call<boolean>(
+        'matchesPublishedGitHead',
+        receipt.preview.commissionId,
+        receipt.preview.operationId,
+      ))
+    )
+      throw new Error('远端分支已移动或已删除，请先核查交付记录。');
+    const url =
+      target === 'compare' ? comparePage(receipt) : (await readPublishedPullRequest(receipt))?.url;
+    if (!url) throw new Error('还没有关联到这次提交的 PR。');
+    await shell.openExternal(url);
   });
   register('prepareApply', async (id) => {
     const preview = await bridge.call<ApplyPreview>('prepareApply', identifier.parse(id));

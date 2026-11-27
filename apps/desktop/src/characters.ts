@@ -2,7 +2,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import { z } from 'zod';
-import { DEFAULT_CHARACTERS, isValidCharacterName } from '@astrisle/contracts';
+import {
+  DEFAULT_CHARACTERS,
+  isValidCharacterName,
+  partnerSkillSettingsSchema,
+} from '@astrisle/contracts';
 import type {
   CharacterId,
   CharacterModel,
@@ -32,6 +36,7 @@ const updateSchema = z
     displayName: nameSchema.optional(),
     resetModel: z.boolean().optional(),
     rotationY: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional(),
+    skills: partnerSkillSettingsSchema.optional(),
   })
   .strict();
 const modelSchema = z
@@ -52,6 +57,7 @@ const profileSchema = z
     model: modelSchema.optional(),
     modelRevision: z.number().int().nonnegative().optional(),
     rotationY: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional(),
+    skills: partnerSkillSettingsSchema.optional(),
   })
   .strict();
 const savedProfilesSchema = z.discriminatedUnion('version', [
@@ -435,11 +441,13 @@ export class CharacterStore {
   async update(rawId: unknown, rawPatch: unknown): Promise<CharacterProfile> {
     const id = idSchema.parse(rawId);
     const patch = updateSchema.parse(rawPatch);
+    if (id === 'user' && patch.skills) throw new Error('技能仅可配置给 AI 工作伙伴。');
     return this.transaction(async () => {
       const profiles = await this.readProfiles();
       const profile = requireProfile(profiles, id);
       if (patch.displayName !== undefined) profile.displayName = patch.displayName;
       if (patch.rotationY !== undefined) profile.rotationY = patch.rotationY;
+      if (patch.skills !== undefined) profile.skills = patch.skills;
       if (patch.resetModel) {
         delete profile.model;
         delete profile.rotationY;

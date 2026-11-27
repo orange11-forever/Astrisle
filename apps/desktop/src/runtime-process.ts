@@ -37,6 +37,11 @@ const permitted = new Set([
   'resolveArtifactPath',
   'exportWorkspace',
   'prepareApply',
+  'prepareGitDelivery',
+  'latestGitDelivery',
+  'publishGitDelivery',
+  'inspectGitDelivery',
+  'matchesPublishedGitHead',
   'apply',
   'inspectApply',
   'prepareRollback',
@@ -66,6 +71,9 @@ port.on('message', async ({ data: request }) => {
         executor,
         getCredentials: async () => credentials,
         applyHelperPath: join(input.projectRoot, 'dist/helpers/safe-apply.exe'),
+        ...(process.env.ASTRISLE_AUTOMATION === '1' && process.env.ASTRISLE_TEST_LOCAL_GIT === '1'
+          ? { gitDeliveryLocalRemoteRoot: join(input.dataRoot, 'git-remotes') }
+          : {}),
       });
       service.subscribe((snapshot: ProjectSnapshot) =>
         port.postMessage({ event: 'snapshot', value: snapshot }),

@@ -123,6 +123,42 @@ it('validates every redirect target before making a cross-host request', async (
   expect(result.code).toBe('SCOPE_DENIED');
   expect(forbiddenRequested).toBe(false);
 });
+it('restricts every redirect hop to pinned sources when given a task URL set', async () => {
+  const { context, executor } = await fixture();
+  const requests: Array<string | undefined> = [];
+  const server = createServer((req, res) => {
+    requests.push(req.url);
+    if (req.url === '/pinned') {
+      res.writeHead(302, { location: '/unpinned' });
+      res.end();
+    } else res.end('final source');
+  });
+  servers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const url = `${origin}/pinned`;
+  const restricted = await executor.execute('web_read', { url }, {
+    ...context,
+    pinnedWebReadUrls: new Set([url]),
+  } satisfies ToolContext);
+  expect(restricted.code).toBe('SCOPE_DENIED');
+  expect(requests).toEqual(['/pinned']);
+
+  const normal = await executor.execute('web_read', { url }, context);
+  expect(normal).toMatchObject({ ok: true, output: 'final source' });
+  expect(requests).toEqual(['/pinned', '/pinned', '/unpinned']);
+
+  const pinnedRedirect = await executor.execute(
+    'web_read',
+    { url },
+    {
+      ...context,
+      pinnedWebReadUrls: new Set([url, `${origin}/unpinned`]),
+    },
+  );
+  expect(pinnedRedirect).toMatchObject({ ok: true, output: 'final source' });
+  expect(requests.slice(3)).toEqual(['/pinned', '/unpinned']);
+});
 it('rejects missing required write content and oversized input', async () => {
   const { context, executor } = await fixture();
   expect((await executor.execute('workspace_write', { path: 'bad' }, context)).ok).toBe(false);

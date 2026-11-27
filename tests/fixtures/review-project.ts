@@ -14,8 +14,8 @@ const initialText = '# Reviewed title\n\nReviewed draft marker.\n';
 
 export const reviewProject = { commissionId, authorId, reviewId, file, originalText };
 
-export async function seedReview(dataRoot: string) {
-  const workspace = await createWorkspaceStorage({ name: '成果验收岛' }, dataRoot);
+export async function seedReview(dataRoot: string, sourcePath?: string) {
+  const workspace = await createWorkspaceStorage({ name: '成果验收岛', sourcePath }, dataRoot);
   const source = join(workspace.workPath, file);
   const publish = async (text: string) => {
     await writeFile(source, text);

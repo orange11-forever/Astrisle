@@ -3,6 +3,7 @@ import { mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CharacterStore, validateCharacterModel } from '../../apps/desktop/src/characters';
+import { agentsFromCharacters } from '../../packages/domain/src/index';
 import { characterBytes, characterDocument, makeGlb } from '../fixtures/character-model';
 
 const directories: string[] = [];
@@ -20,6 +21,118 @@ async function fixture() {
 }
 
 describe('private local character profiles', () => {
+  it('keeps built-in and custom partner skills independent across restart and profile edits', async () => {
+    const { directory, source, store } = await fixture();
+    const mori = await store.importFile('mori', source);
+    const partner = await store.create('晨星');
+    const drafting = {
+      instructions: [{ name: '写作', content: '先写提纲。' }],
+      autoDiscover: false,
+      repositories: [],
+    };
+    const review = {
+      instructions: [{ name: '复核', description: '稿件复核', content: '检查引文。' }],
+      autoDiscover: true,
+      repositories: ['openai/skills'],
+    };
+    await Promise.all([
+      store.update('mori', { skills: drafting }),
+      store.update(partner.id, { skills: review }),
+    ]);
+    await store.update('mori', { displayName: '小蓝', rotationY: 90 });
+
+    const profiles = await new CharacterStore(join(directory, 'profile')).profiles();
+    expect(profiles).toEqual([
+      { ...mori, displayName: '小蓝', rotationY: 90, skills: drafting },
+      { id: 'luma', displayName: 'Luma' },
+      { id: 'user', displayName: '我' },
+      { ...partner, skills: review },
+    ]);
+  });
+
+  it('copies skill settings into the submitted roster and excludes the user avatar', async () => {
+    const { store } = await fixture();
+    await store.update('mori', {
+      skills: {
+        instructions: [{ name: '复核', content: '检查引文。' }],
+        autoDiscover: true,
+        repositories: ['openai/skills'],
+      },
+    });
+    const profiles = await store.profiles();
+    const roster = agentsFromCharacters(profiles);
+    profiles[0].skills!.instructions[0].content = '改写内容';
+    profiles[0].skills!.repositories.push('other/repo');
+
+    expect(roster).toEqual([
+      {
+        id: 'mori',
+        name: 'Mori',
+        temperament: 'explorer',
+        skills: {
+          instructions: [{ name: '复核', content: '检查引文。' }],
+          autoDiscover: true,
+          repositories: ['openai/skills'],
+        },
+      },
+      { id: 'luma', name: 'Luma', temperament: 'organizer' },
+    ]);
+  });
+
+  it('persists public GitHub discovery without a repository list in both the profile and roster', async () => {
+    const { directory, store } = await fixture();
+    await store.update('luma', {
+      skills: {
+        instructions: [],
+        autoDiscover: true,
+        discoveryScope: 'public',
+        repositories: [],
+      },
+    });
+
+    const profiles = await new CharacterStore(join(directory, 'profile')).profiles();
+    expect(profiles.find(({ id }) => id === 'luma')?.skills).toEqual({
+      instructions: [],
+      autoDiscover: true,
+      discoveryScope: 'public',
+      repositories: [],
+    });
+    expect(agentsFromCharacters(profiles).find(({ id }) => id === 'luma')?.skills).toMatchObject({
+      discoveryScope: 'public',
+      repositories: [],
+    });
+    expect(profiles.find(({ id }) => id === 'mori')?.skills).toBeUndefined();
+  });
+
+  it('rejects invalid skill settings and the user avatar without changing a persisted partner', async () => {
+    const { store } = await fixture();
+    const skills = { instructions: [], autoDiscover: false, repositories: [] };
+    const saved = await store.update('mori', { skills });
+    await expect(store.update('user', { skills })).rejects.toThrow(/伙伴/);
+    for (const invalid of [
+      { ...skills, autoDiscover: true },
+      { ...skills, autoDiscover: true, discoveryScope: 'selected' },
+      { ...skills, repositories: ['https://github.com/openai/skills'] },
+      { ...skills, repositories: ['openai/../skills'] },
+      { ...skills, repositories: ['openai/.'] },
+      { ...skills, repositories: ['openai/skills', 'OpenAI/Skills'] },
+      { ...skills, instructions: [{ name: '写作', content: '' }] },
+      { ...skills, instructions: [{ name: '写作', content: '星'.repeat(200_000) }] },
+      {
+        ...skills,
+        instructions: [
+          { name: '写作', content: 'a'.repeat(48 * 1024) },
+          { name: '复核', content: 'b'.repeat(24 * 1024 + 1) },
+        ],
+      },
+      { ...skills, instructions: [{ name: '写作', content: '请阅读\u0000正文' }] },
+      { ...skills, instructions: [{ name: '写作', content: '写作', script: 'build' }] },
+    ]) {
+      await expect(store.update('mori', { skills: invalid })).rejects.toThrow(/技能|仓库/);
+    }
+    expect((await store.profiles())[0]).toEqual(saved);
+  });
+
   it('adds a stable partner without losing the model or orientation in a version 1 profile file', async () => {
     const { directory, source, bytes, store } = await fixture();
     const imported = await store.importFile('mori', source);

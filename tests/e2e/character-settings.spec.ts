@@ -1,5 +1,106 @@
 import { test, expect } from '@playwright/test';
+import type { CharacterProfile, HostAPI } from '../../packages/contracts/src/index';
 import { makeGlb } from '../fixtures/character-model';
+
+test('saves partner skills with public or selected GitHub discovery and preserves legacy scope', async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.addInitScript(() => {
+    const profiles: CharacterProfile[] = JSON.parse(
+      localStorage.getItem('test-character-skills') || 'null',
+    ) ?? [
+      { id: 'mori', displayName: 'Mori' },
+      {
+        id: 'luma',
+        displayName: 'Luma',
+        skills: { instructions: [], autoDiscover: false, repositories: ['anthropics/skills'] },
+      },
+      { id: 'user', displayName: '我' },
+    ];
+    const host: Pick<HostAPI, 'bootstrap' | 'updateCharacter' | 'onSnapshot'> = {
+      bootstrap: async () => ({
+        workspaces: [],
+        commissions: [],
+        characters: structuredClone(profiles),
+        provider: {
+          kind: 'openai-compatible',
+          baseUrl: '',
+          model: '',
+          configured: false,
+          hasApiKey: false,
+        },
+        capabilities: [],
+        version: 'fixture',
+      }),
+      updateCharacter: async (id, patch) => {
+        const profile = profiles.find((item) => item.id === id)!;
+        profile.skills = patch.skills;
+        localStorage.setItem('test-character-skills', JSON.stringify(profiles));
+        return structuredClone(profile);
+      },
+      onSnapshot: () => () => {},
+    };
+    window.astrisle = host as HostAPI;
+  });
+  const openSettings = () => page.getByRole('button', { name: '工作室设置', exact: true }).click();
+  await page.goto('/');
+  await openSettings();
+  const mori = page.getByRole('region', { name: 'Mori 的角色设置' });
+  await mori.getByText('伙伴技能', { exact: true }).click({ timeout: 5_000 });
+  const file = '---\nname: 引文复核\n---\n逐项核对来源。\n';
+  await mori.getByLabel('导入 SKILL.md').setInputFiles({
+    name: 'SKILL.md',
+    mimeType: 'text/markdown',
+    buffer: Buffer.from(file),
+  });
+  await expect(mori.getByLabel('技能名称')).toHaveValue('引文复核');
+  await expect(mori.getByLabel('技能正文')).toHaveValue(file);
+  await expect(mori.getByLabel('自动从 GitHub 发现技能')).not.toBeChecked();
+  await mori.getByLabel('自动从 GitHub 发现技能').check();
+  await expect(mori.getByLabel('GitHub 技能查找范围')).toHaveValue('public', { timeout: 5_000 });
+  await expect(mori.getByRole('option', { name: 'GitHub 热门公共技能仓库' })).toBeAttached();
+  await expect(mori.getByLabel('允许查找的 GitHub 仓库')).toHaveCount(0);
+  await mori.getByRole('button', { name: '保存伙伴技能' }).click();
+  await expect(page.getByText('伙伴技能已保存', { exact: true })).toBeVisible();
+  await expect(mori.getByLabel('技能正文')).toBeVisible();
+
+  await page.reload();
+  await openSettings();
+  await mori.getByText('伙伴技能', { exact: true }).click();
+  await expect(mori.getByLabel('技能正文')).toHaveValue(file);
+  await expect(mori.getByLabel('自动从 GitHub 发现技能')).toBeChecked();
+  await expect(mori.getByLabel('GitHub 技能查找范围')).toHaveValue('public');
+  await mori.getByLabel('GitHub 技能查找范围').selectOption('selected');
+  await mori.getByRole('button', { name: '保存伙伴技能' }).click();
+  await expect(mori.getByRole('alert')).toContainText('至少一个 GitHub 仓库');
+  await mori.getByLabel('允许查找的 GitHub 仓库').fill('https://github.com/openai/skills');
+  await mori.getByRole('button', { name: '保存伙伴技能' }).click();
+  await expect(mori.getByRole('alert')).toContainText('owner/repo');
+  await mori.getByLabel('允许查找的 GitHub 仓库').clear();
+  await mori.getByRole('button', { name: '添加 openai/skills', exact: true }).click();
+  await mori.getByRole('button', { name: '保存伙伴技能' }).click();
+  await expect(page.getByText('伙伴技能已保存', { exact: true })).toBeVisible();
+  await expect(mori.getByLabel('技能正文')).toBeVisible();
+
+  await page.reload();
+  await openSettings();
+  await mori.getByText('伙伴技能', { exact: true }).click();
+  await expect(mori.getByLabel('技能正文')).toHaveValue(file);
+  await expect(mori.getByLabel('自动从 GitHub 发现技能')).toBeChecked();
+  await expect(mori.getByLabel('GitHub 技能查找范围')).toHaveValue('selected');
+  await expect(mori.getByLabel('允许查找的 GitHub 仓库')).toHaveValue('openai/skills');
+  const luma = page.getByRole('region', { name: 'Luma 的角色设置' });
+  await luma.getByText('伙伴技能', { exact: true }).click();
+  await expect(luma.getByLabel('技能名称')).toHaveCount(0);
+  await expect(luma.getByLabel('自动从 GitHub 发现技能')).not.toBeChecked();
+  await luma.getByLabel('自动从 GitHub 发现技能').check();
+  await expect(luma.getByLabel('GitHub 技能查找范围')).toHaveValue('selected');
+  await expect(luma.getByLabel('允许查找的 GitHub 仓库')).toHaveValue('anthropics/skills');
+  await expect(
+    page.getByRole('region', { name: '我 的角色设置' }).getByText('伙伴技能'),
+  ).toHaveCount(0);
+});
 
 test('character names update current labels and survive reload; imports expose static model details', async ({
   page,
