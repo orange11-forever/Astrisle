@@ -267,7 +267,7 @@ export class RuntimeStore {
           code: reason,
           output:
             reason === 'interrupted'
-              ? 'Model request interrupted; no returned actions were dispatched.'
+              ? 'Read-only request interrupted before a durable result.'
               : 'Runtime stopped before a durable tool receipt.',
         }),
         id,
@@ -297,12 +297,21 @@ export class RuntimeStore {
     return this.db
       .prepare(
         `SELECT * FROM calls WHERE project_id=? AND task_id=?
-      AND coalesce(json_extract(request_data,'$.kind'),'legacy') NOT IN ('model','plan')
+      AND coalesce(json_extract(request_data,'$.kind'),'legacy') NOT IN ('model','plan','github_skill')
       ORDER BY rowid DESC LIMIT ?`,
       )
       .all(projectId, taskId, limit)
       .map((r) => this.callRow(r))
       .reverse();
+  }
+  taskGitHubSkillCalls(projectId: string, taskId: string): StoredCall[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM calls WHERE project_id=? AND task_id=?
+      AND json_extract(request_data,'$.kind')='github_skill' ORDER BY rowid`,
+      )
+      .all(projectId, taskId)
+      .map((r) => this.callRow(r));
   }
   reconcileCalls(projectId: string, taskId: string | undefined, answer: string): void {
     for (const call of this.unknownCalls()) {

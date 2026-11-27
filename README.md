@@ -17,11 +17,11 @@
 
 Astrisle 是一个面向 Windows 的多 Agent 桌面工作台。伙伴可以从零创建项目、修改代码、撰写报告和演示稿，并通过分工、交接、复核与返工推进委托。3D 场景呈现协作关系，工作面板提供文件、证据、权限和进度。
 
-**第十八阶段开发预览。** 在岛上的「日报邮箱」开启订阅，智能体每天从你选的新闻源收集原文，整理并复核后按日期投递。[订阅新闻日报](#订阅新闻日报) · [第十七阶段三区游览](docs/development/stage-17.md)
+**第十九阶段开发预览。** 工作伙伴可以使用各自的技能，也可以按任务在 GitHub 寻找热门公共技能仓库。代码成果验收后，用户可以预览差异，确认推送到新的远端功能分支。[配置伙伴技能](#配置伙伴技能) · [交付到 Git 分支](#交付到-git-分支) · [订阅新闻日报](#订阅新闻日报)
 
 第二至第五阶段已由 [PR #2：任务续跑、运行时保护与星岛角色配置](https://github.com/orange11-forever/Astrisle/pull/2) 合并。第六、七阶段已由 [PR #3：Windows 进程监督、岛屿散步与验收庆祝](https://github.com/orange11-forever/Astrisle/pull/3) 合并。自由视角和角色休闲见[第八阶段](docs/development/stage-8.md)，模型实测与角色导入见[第九阶段](docs/development/stage-9.md)，Windows 原项目写回与恢复见[第十阶段](docs/development/stage-10.md)。
 
-最近一次实机验收中，Astrisle 完全退出后，Windows 于 11:22 唤醒后台进程，DeepSeek Flash 根据公网原文整理并复核了 4 条新闻。23 秒后日报出现在邮箱，重新打开工作室仍可阅读。[11 月 24 日验收记录](docs/validation/2026-11-24-deepseek-flash.md)
+第十九阶段的公网验收用 `pptx` 找到 7 个候选仓库，从 `anthropics/skills` 下载并校验了 28,365 字节的技能指南。Git 分支交付另在隔离的本地裸仓库中实测，覆盖取消推送、重启后核查和重试。[第十九阶段验收记录](docs/development/stage-19.md) · [此前的日报实机验收](docs/validation/2026-11-24-deepseek-flash.md)
 
 ![主岛南岸的木栈桥通往潮池外岛与航标灯，蓝发伙伴在岛上活动](docs/development/screenshots/stage-17-coast.png)
 
@@ -150,6 +150,23 @@ Windows 下，进程工具和源稿转换器从创建时就属于受监督的 Jo
 
 ![在观星台抬头，望远镜上方可见星群和银河尘带](docs/development/screenshots/stage-16-observatory.png)
 
+## 配置伙伴技能
+
+1. 在「工作室设置 → 角色外观与名称」找到 Mori、Luma 或自定义伙伴，展开「伙伴技能」。可以手写名称、简介和指令，也可以导入 UTF-8 的 `SKILL.md`。保存后，新委托会记录当时的伙伴配置；修改设置不会改变已经提交的委托。
+2. 想让伙伴自行选技能，开启 GitHub 自动发现，选择搜索热门公共仓库后保存。此模式无需填写仓库名。也可以将某位伙伴限定在指定仓库，例如 `anthropics/skills`。两种模式均要求仓库公开、未归档且至少有 100 个 stars。新建委托时，在「权限与工作预算」中允许联网并授权 `api.github.com`。
+3. 例如给 Mori 一份制作演示稿的任务。伙伴可以用 `pptx` 等公开技术关键词在 GitHub 发现热门仓库，再查找和选择实际的 `SKILL.md`。候选按 stars 排序，下载前重新核实仓库资格、固定提交、文件路径和 Git blob。任务保存所用正文，重启后继续使用同一版。在「检查与证据」中可查看启用记录。
+
+手工技能每位伙伴最多 6 份，单份上限 48 KiB，总正文最多 72 KiB。自动发现从符合所选范围的热门公共仓库读取 Markdown 指南，单个任务最多启用 2 份。启用后，该任务可在自己的工作副本中产出成果，并可回读已固定的来源。需要运行命令或安装依赖时，应将这些步骤分配给已获得进程授权且未启用外部指南的任务。
+
+## 交付到 Git 分支
+
+1. 导入一个普通 Git 仓库根目录，使用无内嵌凭据的 GitHub HTTPS `origin`。桌面端使用已安装的 Git 及本机 Git Credential Manager 的现有登录。新建委托时可勾选「全部验收后，在回信匣提醒我确认 Git 推送」。
+2. 完成独立复核并接受全部当前成果。在「成果与验收 → Git 分支交付」选择「预览 Git 推送」，核对远端、默认分支的基线提交、拟创建的 `astrisle/` 分支和逐文件差异。确认前可展开文本补丁。二进制文件显示变更提示。
+3. 在系统窗口确认后，工作室才会创建远端功能分支。提交来自已验收的不可变版本；原项目的暂存区、本地分支和未提交改动保留原状。网络中断时可先核查远端，再用同一交付编号重试。
+4. 推送成功后点击「在 GitHub 创建或查看 PR」，在 GitHub 确认创建。返回工作室选择「查询 PR 与 CI」，可查询相同仓库、分支和提交的公开 PR 以及该提交的检查结果。合并检查和私有 PR 可在 GitHub 页面查看。
+
+首批支持新增和修改普通文件。触及文件的远端内容若已偏离导入基线，请先更新并重新导入仓库。需要 Git LFS、其他内容过滤器或工作树编码转换的路径会在预览阶段给出原因。
+
 ## 订阅新闻日报
 
 1. 在「工作室设置」配置支持工具调用的模型。打开岛上的「日报邮箱」，也可以从 2D 面板或侧栏进入。每座岛单独设置订阅。
@@ -242,6 +259,7 @@ docs/                 产品设计、概念图、计划和阶段记录
 - [成果版本、定向返工与源稿发布](docs/development/stage-12.md)
 - [温室、潮池外岛与制帆巷](docs/development/stage-17.md)
 - [自动日报、Windows 唤醒与 DeepSeek Flash 实测](docs/validation/2026-11-24-deepseek-flash.md)
+- [伙伴技能发现与 Git 分支交付](docs/development/stage-19.md)
 - [自定义工作伙伴](docs/development/modern-features-backlog.md#自定义工作伙伴)
 - [用户确认的后续现代化功能](docs/development/modern-features-backlog.md)
 - README Logo 沿用软件现有标志，内侧星形使用 Lucide Sparkles；[许可说明](docs/assets/LICENSE-lucide.txt)。

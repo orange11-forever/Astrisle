@@ -74,6 +74,8 @@ export async function webRead(
           current.href !== redact(current.href)))
     )
       throw new ToolError('SCOPE_DENIED', 'URL host or protocol is not authorized');
+    if (context.pinnedWebReadUrls && !context.pinnedWebReadUrls.has(current.href))
+      throw new ToolError('SCOPE_DENIED', 'Only pinned source URLs are authorized for this task');
     if (searchService && isSearchServiceUrl(current, searchService))
       throw new ToolError('SCOPE_DENIED', 'Use web_search for the configured search endpoint');
     const response = await fetch(current, {

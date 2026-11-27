@@ -614,6 +614,18 @@ nav button.active {
 .character-settings .text-button {
   margin-top: 8px;
 }
+.partner-skills {
+  margin-top: 12px;
+}
+.partner-skill-instruction {
+  display: grid;
+  gap: 8px;
+  padding: 12px 0;
+  border-block-start: 1px solid var(--line);
+}
+.partner-skill-instruction button {
+  justify-self: start;
+}
 .scene-label b {
   max-width: 140px;
   display: inline-block;
@@ -2815,4 +2827,23 @@ details > p {
 .scene-caption.camera-hint {
   display: flex;
   text-shadow: 0 1px 5px #10182a;
+}
+.git-delivery {
+  margin-block: 1rem;
+  border-top: 1px solid currentColor;
+  padding-top: 0.75rem;
+  overflow-wrap: anywhere;
+}
+.git-delivery dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.25rem 0.75rem;
+}
+.git-delivery dd {
+  margin: 0;
+}
+.git-delivery pre {
+  max-height: 18rem;
+  overflow: auto;
+  font-size: 0.8rem;
 }

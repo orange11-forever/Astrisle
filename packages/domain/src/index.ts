@@ -11,10 +11,11 @@ import { DEFAULT_CHARACTERS } from '../../contracts/src/index';
 export function agentsFromCharacters(profiles: readonly CharacterProfile[]): AgentIdentity[] {
   return profiles
     .filter((profile) => profile.id !== 'user')
-    .map(({ id, displayName }) => ({
+    .map(({ id, displayName, skills }) => ({
       id,
       name: displayName,
       temperament: id === 'luma' ? 'organizer' : 'explorer',
+      ...(skills ? { skills: structuredClone(skills) } : {}),
     }));
 }
 
