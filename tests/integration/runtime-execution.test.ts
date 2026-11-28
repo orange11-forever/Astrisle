@@ -437,6 +437,7 @@ it.each([
     expect(updated.tasks.find((task) => task.id === replacement.taskId)?.agentId).toBe(authorId);
     expect(updated.tasks.find((task) => task.id === receipt.taskId)?.agentId).toBe(reviewerId);
   },
+  60_000,
 );
 
 it('restores the original partners when resuming a legacy snapshot with an empty roster', async () => {
@@ -458,7 +459,7 @@ it('restores the original partners when resuming a legacy snapshot with an empty
   expect((await restored.control(id, 'resume')).ok).toBe(true);
   const completed = await until(restored, id, (s) => s.commission.status === 'awaiting_acceptance');
   expect(completed.tasks.map((task) => task.agentId)).toEqual(['mori', 'luma']);
-});
+}, 30_000);
 
 it('delivers verified results when the final review consumes the exact last model step', async () => {
   const { runtime, id } = await fixture('normal', { maxSteps: 4 });

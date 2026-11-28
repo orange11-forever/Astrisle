@@ -197,8 +197,8 @@ export function createExecutor(options: {
       const probe = await runProcess(python, workerArgs, {
         cwd: path.dirname(worker),
         supervisorPath,
-        signal: AbortSignal.timeout(5000),
-        timeoutMs: 5000,
+        signal: AbortSignal.timeout(15000),
+        timeoutMs: 15000,
         input: JSON.stringify({ operation: 'capabilities', schemaVersion: 1 }),
         outputLimit: 4096,
       });
