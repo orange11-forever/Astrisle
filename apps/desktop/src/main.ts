@@ -34,7 +34,8 @@ import type {
   ProjectSnapshot,
 } from '@astrisle/contracts';
 import { CredentialStore } from './credentials';
-import { isTrustedSender, canOpenExternally } from './security';
+import { resolveDesktopPaths } from './paths';
+import { canOpenExternally, contentSecurityPolicy, isTrustedSender } from './security';
 import { RuntimeBridge } from './runtime-bridge';
 import { comparePage, readPublishedPullRequest } from './git-pr-status';
 import type { GitDeliveryReceipt } from '@astrisle/contracts';
@@ -158,10 +159,16 @@ async function start() {
     encrypt: (value) => safeStorage.encryptString(value),
     decrypt: (value) => safeStorage.decryptString(value),
   });
+  const paths = resolveDesktopPaths({
+    projectRoot,
+    resourcesPath: process.resourcesPath,
+    packaged: app.isPackaged,
+  });
   bridge = new RuntimeBridge(join(__dirname, 'runtime.cjs'));
   await bridge.call('initialize', {
     projectRoot,
     dataRoot,
+    paths,
     credentials: await vault.credentials(),
   });
   const wakeState = () => bridge.call<DailyNewsWakeState>('getDailyNewsWakeState');
@@ -586,6 +593,22 @@ async function start() {
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) =>
     callback(false),
   );
+  const csp = contentSecurityPolicy(devURL);
+  window.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    const matchesStudio =
+      isTrustedSender(details.url, expectedURL, true) ||
+      (devURL ? details.url.startsWith(devURL) : details.url.startsWith('file://'));
+    if (!matchesStudio) {
+      callback({ cancel: false });
+      return;
+    }
+    const responseHeaders = { ...details.responseHeaders };
+    for (const key of Object.keys(responseHeaders)) {
+      if (key.toLowerCase() === 'content-security-policy') delete responseHeaders[key];
+    }
+    responseHeaders['Content-Security-Policy'] = [csp];
+    callback({ responseHeaders });
+  });
   bridge.on('snapshot', (snapshot: ProjectSnapshot) => {
     if (window && !window.isDestroyed()) window.webContents.send('astrisle:snapshot', snapshot);
   });

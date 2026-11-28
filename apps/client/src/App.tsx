@@ -68,6 +68,7 @@ import { GitDeliveryPanel } from './GitDeliveryPanel';
 import { SceneQualitySelect, type SceneQuality } from './render-quality';
 import type { CharacterFocus, Panel } from './Scene';
 import { useCompletionCelebration } from './celebration';
+import { deriveDockAction, syncBootstrapCommission } from './dock-status';
 import {
   islandAppearance,
   islandThemes,
@@ -198,6 +199,8 @@ function Modal({
 export function App() {
   const host = window.astrisle;
   const [bootstrap, setBootstrap] = useState<Bootstrap>();
+  const bootstrapRef = useRef<Bootstrap>(undefined);
+  bootstrapRef.current = bootstrap;
   const [loadError, setLoadError] = useState('');
   const refreshOrder = useRef({ issued: 0, applied: 0 });
   const [snapshot, setSnapshot] = useState<ProjectSnapshot>();
@@ -312,6 +315,7 @@ export function App() {
     if (!next.characters && host.getCharacters) next.characters = await host.getCharacters();
     if (request < refreshOrder.current.applied) return;
     refreshOrder.current.applied = request;
+    bootstrapRef.current = next;
     setLoadError('');
     setBootstrap(next);
     setWorkspaceId((current) => current || next.workspaces[0]?.id || '');
@@ -339,7 +343,16 @@ export function App() {
     () =>
       host?.onSnapshot((s) => {
         receiveSnapshot(s);
-        refresh().catch(() => {});
+        const current = bootstrapRef.current;
+        if (!current || !current.commissions.some((c) => c.id === s.commission.id)) {
+          void refresh().catch(() => {});
+          return;
+        }
+        setBootstrap((previous) => {
+          const next = syncBootstrapCommission(previous, s.commission);
+          bootstrapRef.current = next;
+          return next;
+        });
       }),
     [host, refresh, receiveSnapshot],
   );
@@ -393,6 +406,14 @@ export function App() {
   const dailyNewsHost = supportsDailyNews(host) ? host : undefined;
   const dailyNewsAvailable = !!workspace && !!dailyNewsHost;
   const openRequests = snapshot?.requests.filter((r) => r.status === 'open') || [];
+  const dockAction = deriveDockAction(snapshot);
+  const showDockJump =
+    dockAction &&
+    !(
+      inspectorOpen &&
+      (panel === dockAction.targetPanel ||
+        (panel === 'requests' && dockAction.targetPanel === 'artifacts'))
+    );
   const task = snapshot?.tasks.find((t) => t.id === taskId);
   const provider = bootstrap?.provider;
   const characters = bootstrap?.characters || [...DEFAULT_CHARACTERS];
@@ -423,7 +444,12 @@ export function App() {
     setBootstrap((previous) => {
       if (!previous || previous.characters?.some((entry) => entry.id === profile.id))
         return previous;
-      return { ...previous, characters: [...(previous.characters ?? DEFAULT_CHARACTERS), profile] };
+      const next = {
+        ...previous,
+        characters: [...(previous.characters ?? DEFAULT_CHARACTERS), profile],
+      };
+      bootstrapRef.current = next;
+      return next;
     });
     setNotice(`${profile.displayName} 已加入工作室`);
     void refresh().catch(() => {});
@@ -967,8 +993,17 @@ export function App() {
                   已完成 {snapshot.tasks.filter((t) => t.status === 'passed').length} /{' '}
                   {snapshot.tasks.length} 项任务
                 </strong>
-                {openRequests.length > 0 && <p>{openRequests.length} 项待回复</p>}
+                {dockAction && <p title={dockAction.summary}>{dockAction.summary}</p>}
               </div>
+            )}
+            {snapshot && showDockJump && (
+              <button
+                type="button"
+                className="dock-jump"
+                onClick={() => openPanel(dockAction.targetPanel)}
+              >
+                {dockAction.actionLabel}
+              </button>
             )}
             <button
               className="primary"

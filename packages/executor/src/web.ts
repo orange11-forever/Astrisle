@@ -1,3 +1,5 @@
+import { lookup as dnsLookup } from 'node:dns/promises';
+import { BlockList, isIP } from 'node:net';
 import type { ToolContext, ToolResult } from '../../contracts/src/index';
 import {
   isSearchEndpoint,
@@ -13,6 +15,74 @@ const MAX_READ_OUTPUT = 64 * 1024;
 const MAX_SEARCH_RESULTS = 8;
 const MAX_SOURCE_URL = 2048;
 const WEB_TIMEOUT = 15_000;
+
+export type HostLookup = (
+  hostname: string,
+  options: { all: true; verbatim: true },
+) => Promise<ReadonlyArray<{ address: string; family?: number }>>;
+
+const RESTRICTED_IPS = new BlockList();
+RESTRICTED_IPS.addSubnet('0.0.0.0', 8, 'ipv4');
+RESTRICTED_IPS.addSubnet('10.0.0.0', 8, 'ipv4');
+RESTRICTED_IPS.addSubnet('100.64.0.0', 10, 'ipv4');
+RESTRICTED_IPS.addSubnet('127.0.0.0', 8, 'ipv4');
+RESTRICTED_IPS.addSubnet('169.254.0.0', 16, 'ipv4');
+RESTRICTED_IPS.addSubnet('172.16.0.0', 12, 'ipv4');
+RESTRICTED_IPS.addSubnet('192.0.0.0', 24, 'ipv4');
+RESTRICTED_IPS.addSubnet('192.168.0.0', 16, 'ipv4');
+RESTRICTED_IPS.addSubnet('198.18.0.0', 15, 'ipv4');
+RESTRICTED_IPS.addSubnet('224.0.0.0', 4, 'ipv4');
+RESTRICTED_IPS.addSubnet('240.0.0.0', 4, 'ipv4');
+RESTRICTED_IPS.addAddress('::', 'ipv6');
+RESTRICTED_IPS.addAddress('::1', 'ipv6');
+RESTRICTED_IPS.addSubnet('fe80::', 10, 'ipv6');
+RESTRICTED_IPS.addSubnet('fc00::', 7, 'ipv6');
+RESTRICTED_IPS.addSubnet('ff00::', 8, 'ipv6');
+
+function bareHost(hostname: string): string {
+  return hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
+}
+
+export function isRestrictedIpAddress(rawAddress: string): boolean {
+  const bare = bareHost(rawAddress.trim());
+  const address = bare.includes('%') ? bare.slice(0, bare.indexOf('%')) : bare;
+  const family = isIP(address);
+  if (family === 4) return RESTRICTED_IPS.check(address, 'ipv4');
+  if (family !== 6) return false;
+  if (RESTRICTED_IPS.check(address, 'ipv6')) return true;
+  const canonical = URL.parse(`http://[${address}]`)?.hostname;
+  const mapped = canonical?.match(/^\[::(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})\]$/i);
+  if (!mapped) return false;
+  const hi = Number.parseInt(mapped[1], 16);
+  const lo = Number.parseInt(mapped[2], 16);
+  const ipv4 = `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+  return RESTRICTED_IPS.check(ipv4, 'ipv4');
+}
+
+async function assertPublicHostResolution(
+  url: URL,
+  signal: AbortSignal,
+  lookup: HostLookup = dnsLookup,
+): Promise<void> {
+  const host = bareHost(url.hostname).toLowerCase();
+  if (host === 'localhost' || isIP(host) !== 0) return;
+  let addresses: ReadonlyArray<{ address: string; family?: number }>;
+  try {
+    addresses = await lookup(host, { all: true, verbatim: true });
+  } catch (error) {
+    if (signal.aborted) throw new ToolError('ABORTED', 'Operation cancelled');
+    if (error instanceof ToolError) throw error;
+    throw new ToolError('NETWORK_FAILED', 'Could not resolve URL host');
+  }
+  if (signal.aborted) throw new ToolError('ABORTED', 'Operation cancelled');
+  if (!addresses.length) throw new ToolError('NETWORK_FAILED', 'Could not resolve URL host');
+  if (addresses.some((entry) => isRestrictedIpAddress(entry.address))) {
+    throw new ToolError(
+      'SCOPE_DENIED',
+      'URL host resolves to a restricted private or local address',
+    );
+  }
+}
 
 function sourceAllowed(url: URL, hosts: ReadonlySet<string>): boolean {
   return (
@@ -59,7 +129,12 @@ async function readResponse(response: Response): Promise<string> {
 export async function webRead(
   url: string,
   context: ToolContext,
-  options: { accept?: string; allowedOrigin?: string; fullOutput?: boolean } = {},
+  options: {
+    accept?: string;
+    allowedOrigin?: string;
+    fullOutput?: boolean;
+    lookup?: HostLookup;
+  } = {},
 ): Promise<ToolResult> {
   const hosts = authorizedSources(context);
   const searchService = configuredSearchService(context);
@@ -78,6 +153,7 @@ export async function webRead(
       throw new ToolError('SCOPE_DENIED', 'Only pinned source URLs are authorized for this task');
     if (searchService && isSearchServiceUrl(current, searchService))
       throw new ToolError('SCOPE_DENIED', 'Use web_search for the configured search endpoint');
+    await assertPublicHostResolution(current, signal, options.lookup);
     const response = await fetch(current, {
       signal,
       redirect: 'manual',
@@ -152,7 +228,11 @@ function siteScopedQuery(query: string, hosts: ReadonlySet<string>): string {
   return `${sites.length === 1 ? group : `(${group})`} ${query}`;
 }
 
-export async function webSearch(rawQuery: string, context: ToolContext): Promise<ToolResult> {
+export async function webSearch(
+  rawQuery: string,
+  context: ToolContext,
+  options: { lookup?: HostLookup } = {},
+): Promise<ToolResult> {
   const hosts = authorizedSources(context);
   const url = configuredSearchService(context);
   if (!url)
@@ -175,6 +255,7 @@ export async function webSearch(rawQuery: string, context: ToolContext): Promise
   const timeout = AbortSignal.timeout(WEB_TIMEOUT);
   const signal = AbortSignal.any([timeout, context.signal]);
   try {
+    await assertPublicHostResolution(url, signal, options.lookup);
     const response = await fetch(url, {
       signal,
       redirect: 'manual',

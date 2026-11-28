@@ -77,6 +77,48 @@ export type CharacterFocus = CharacterId;
 type V3 = [number, number, number];
 const characterHeight = 0.02;
 const partnerAccents = ['#866d8b', '#937555', '#577c8e', '#728555'];
+const UNIT_BOX_GEOMETRY = new THREE.BoxGeometry(1, 1, 1);
+const UNIT_SPHERE_GEOMETRY = new THREE.SphereGeometry(1, 16, 12);
+const PLANT_POT_GEOMETRY = new THREE.CylinderGeometry(0.29, 0.21, 0.55, 12);
+const cylinderGeometryCache = new Map<string, THREE.CylinderGeometry>();
+const torusGeometryCache = new Map<string, THREE.TorusGeometry>();
+const standardMaterialCache = new Map<string, THREE.MeshStandardMaterial>();
+
+function getCylinderGeometry(radius: number, height: number): THREE.CylinderGeometry {
+  const segments = radius < 0.12 ? 8 : radius > 4 ? 96 : radius >= 0.7 ? 48 : 24;
+  const key = `${radius}:${height}:${segments}`;
+  let geometry = cylinderGeometryCache.get(key);
+  if (!geometry) {
+    geometry = new THREE.CylinderGeometry(radius, radius, height, segments);
+    cylinderGeometryCache.set(key, geometry);
+  }
+  return geometry;
+}
+
+function getTorusGeometry(radius: number, arc: number): THREE.TorusGeometry {
+  const key = `${radius}:${arc}`;
+  let geometry = torusGeometryCache.get(key);
+  if (!geometry) {
+    geometry = new THREE.TorusGeometry(radius, 0.026, 6, 100, arc);
+    torusGeometryCache.set(key, geometry);
+  }
+  return geometry;
+}
+
+function getStandardMaterial(
+  color: string,
+  roughness: number,
+  metalness = 0,
+): THREE.MeshStandardMaterial {
+  const key = `${color}|${roughness}|${metalness}`;
+  let material = standardMaterialCache.get(key);
+  if (!material) {
+    material = new THREE.MeshStandardMaterial({ color, roughness, metalness });
+    standardMaterialCache.set(key, material);
+  }
+  return material;
+}
+
 function Box({
   position = [0, 0, 0],
   scale = [1, 1, 1],
@@ -91,10 +133,16 @@ function Box({
   onClick?: () => void;
 }) {
   return (
-    <mesh castShadow receiveShadow position={position} scale={scale} rotation={rotation} {...props}>
-      <boxGeometry />
-      <meshStandardMaterial color={color} roughness={0.72} />
-    </mesh>
+    <mesh
+      castShadow
+      receiveShadow
+      position={position}
+      scale={scale}
+      rotation={rotation}
+      geometry={UNIT_BOX_GEOMETRY}
+      material={getStandardMaterial(color, 0.72)}
+      {...props}
+    />
   );
 }
 function Sphere({
@@ -107,10 +155,13 @@ function Sphere({
   color?: string;
 }) {
   return (
-    <mesh castShadow position={position} scale={scale}>
-      <sphereGeometry args={[1, 16, 12]} />
-      <meshStandardMaterial color={color} roughness={0.8} />
-    </mesh>
+    <mesh
+      castShadow
+      position={position}
+      scale={scale}
+      geometry={UNIT_SPHERE_GEOMETRY}
+      material={getStandardMaterial(color, 0.8)}
+    />
   );
 }
 function Cylinder({
@@ -125,17 +176,13 @@ function Cylinder({
   color?: string;
 }) {
   return (
-    <mesh castShadow receiveShadow position={position}>
-      <cylinderGeometry
-        args={[
-          radius,
-          radius,
-          height,
-          radius < 0.12 ? 8 : radius > 4 ? 96 : radius >= 0.7 ? 48 : 24,
-        ]}
-      />
-      <meshStandardMaterial color={color} roughness={0.7} />
-    </mesh>
+    <mesh
+      castShadow
+      receiveShadow
+      position={position}
+      geometry={getCylinderGeometry(radius, height)}
+      material={getStandardMaterial(color, 0.7)}
+    />
   );
 }
 function Ring({
@@ -152,10 +199,12 @@ function Ring({
   rotation?: number;
 }) {
   return (
-    <mesh position={[0, y, 0]} rotation={[-Math.PI / 2, 0, rotation]}>
-      <torusGeometry args={[radius, 0.026, 6, 100, arc]} />
-      <meshStandardMaterial color={color} metalness={0.6} roughness={0.4} />
-    </mesh>
+    <mesh
+      position={[0, y, 0]}
+      rotation={[-Math.PI / 2, 0, rotation]}
+      geometry={getTorusGeometry(radius, arc)}
+      material={getStandardMaterial(color, 0.4, 0.6)}
+    />
   );
 }
 function Label({
@@ -191,10 +240,11 @@ function Label({
 function Plant({ position, scale = 1 }: { position: V3; scale?: number }) {
   return (
     <group position={position} scale={scale}>
-      <mesh position={[0, 0.27, 0]}>
-        <cylinderGeometry args={[0.29, 0.21, 0.55, 12]} />
-        <meshStandardMaterial color="#d0c2ad" />
-      </mesh>
+      <mesh
+        position={[0, 0.27, 0]}
+        geometry={PLANT_POT_GEOMETRY}
+        material={getStandardMaterial('#d0c2ad', 1)}
+      />
       {Array.from({ length: 7 }, (_, i) => (
         <group key={i} rotation={[0.2 * Math.sin(i), i * 2.4, 0.35]}>
           <Cylinder position={[0, 0.72, 0]} radius={0.024} height={0.8} color="#4b685c" />
@@ -236,6 +286,7 @@ const deskPedestal = [
   [0.69, 1.035],
   [0, 1.06],
 ].map(([r, y]) => new THREE.Vector2(r, y));
+const DESK_PEDESTAL_GEOMETRY = new THREE.LatheGeometry(deskPedestal, 40);
 function Desk({ x, onClick }: { x: number; onClick: () => void }) {
   return (
     <group
@@ -247,10 +298,7 @@ function Desk({ x, onClick }: { x: number; onClick: () => void }) {
       }}
     >
       <Cylinder position={[0, 1.12, 0]} radius={1.12} height={0.14} color={c.wood} />
-      <mesh>
-        <latheGeometry args={[deskPedestal, 40]} />
-        <meshStandardMaterial color="#648480" roughness={0.54} />
-      </mesh>
+      <mesh geometry={DESK_PEDESTAL_GEOMETRY} material={getStandardMaterial('#648480', 0.54)} />
       <Ring radius={0.66} y={0.12} />
       <Ring radius={1.109} y={1.1} />
       <WritingSet />

@@ -97,12 +97,12 @@ it('rejects implicit review deadlocks and accepts a review before the next autho
     ),
   ).toHaveLength(3);
 });
-it('waits for a complete author handoff before pinning review inputs', () => {
+it('waits for a complete author handoff before starting review or downstream artifact_available tasks', () => {
   const author: Task = {
     id: 'build',
     kind: 'implement',
     status: 'running',
-    outputArtifactIds: ['one'],
+    outputArtifactIds: ['one-draft', 'one'],
     commissionId: 'c',
     agentId: 'mori',
     title: 'Build',
@@ -125,14 +125,38 @@ it('waits for a complete author handoff before pinning review inputs', () => {
     dependencyKinds: { build: 'artifact_available' },
     outputArtifactIds: [],
   };
+  const consumer: Task = {
+    ...reviewer,
+    id: 'render',
+    agentId: 'nova',
+    kind: 'implement',
+  };
+  const strictConsumer: Task = {
+    ...consumer,
+    id: 'strict-render',
+    dependencyKinds: { build: 'task_passed' },
+  };
   const snapshot = {
-    tasks: [author, reviewer],
-    artifacts: [{ id: 'one', validity: 'current' }],
+    tasks: [author, reviewer, consumer, strictConsumer],
+    artifacts: [
+      { id: 'one-draft', validity: 'stale' },
+      { id: 'one', validity: 'current' },
+    ],
   } as ProjectSnapshot;
   expect(ready(reviewer, snapshot)).toBe(false);
-  expect(ready({ ...reviewer, kind: 'investigate' }, snapshot)).toBe(true);
+  expect(ready(consumer, snapshot)).toBe(false);
+  expect(ready({ ...consumer, kind: 'investigate' }, snapshot)).toBe(false);
+  expect(ready({ ...consumer, kind: 'integrate' }, snapshot)).toBe(false);
+  author.outputArtifactIds.push('two');
+  snapshot.artifacts.push({ id: 'two', validity: 'current' } as ProjectSnapshot['artifacts'][0]);
+  expect(ready(consumer, snapshot)).toBe(false);
   author.status = 'awaiting_review';
   expect(ready(reviewer, snapshot)).toBe(true);
+  expect(ready(consumer, snapshot)).toBe(true);
+  expect(ready(strictConsumer, snapshot)).toBe(false);
+  author.status = 'passed';
+  expect(ready(strictConsumer, snapshot)).toBe(true);
   author.status = 'failed';
   expect(ready(reviewer, snapshot)).toBe(false);
+  expect(ready(consumer, snapshot)).toBe(false);
 });

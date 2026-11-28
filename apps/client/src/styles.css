@@ -2334,10 +2334,10 @@ details > p {
   left: var(--stage-gutter);
   right: auto;
   width: max-content;
-  max-width: min(465px, calc(100% - 340px));
+  max-width: min(520px, calc(100% - 340px));
   bottom: var(--dock-bottom);
   padding: 8px 9px 8px 12px;
-  gap: 16px;
+  gap: 10px;
   color: var(--shell-ink);
   flex-wrap: nowrap;
 }
@@ -2347,19 +2347,45 @@ details > p {
   background: transparent;
 }
 .commission-dock > div {
+  flex: 1 1 auto;
   min-width: 0;
 }
 .commission-dock strong {
+  display: block;
   font-size: 13px;
   font-weight: 600;
-  overflow-wrap: anywhere;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .commission-dock p {
+  display: block;
   font-size: 11px;
+  line-height: 1.35;
   color: var(--shell-muted);
-  margin-top: 2px;
+  margin: 2px 0 0;
+  max-width: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.commission-dock .dock-jump {
+  flex-shrink: 0;
+  min-height: 36px;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-radius: 5px;
+  white-space: nowrap;
+  background: var(--shell-active);
+  border-color: var(--shell-rule);
+  color: var(--shell-ink);
+}
+.commission-dock .dock-jump:hover {
+  background: #cfe0d3;
 }
 .commission-dock .primary {
+  margin-left: 0;
   font-size: 12px;
   min-height: 36px;
   padding: 6px 12px;
@@ -2758,12 +2784,22 @@ details > p {
   }
   .commission-dock {
     padding: 7px 8px 7px 10px;
-    gap: 13px;
+    gap: 8px;
   }
   .commission-dock strong {
     font-size: 12px;
   }
+  .commission-dock .dock-jump {
+    min-height: 34px;
+    padding: 5px 8px;
+    font-size: 11px;
+  }
   .commission-dock .primary {
+    min-height: 34px;
+    padding: 5px 9px;
+  }
+  .commission-dock.empty-dock .primary {
+    min-height: 36px;
     padding: 6px 9px;
   }
   .scene-caption {
