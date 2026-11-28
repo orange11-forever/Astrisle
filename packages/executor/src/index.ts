@@ -9,7 +9,7 @@ import type {
 } from '../../contracts/src/index';
 import { guardPath, assertPlainPath, ToolError } from './path-guard';
 import { runProcess, redact } from './process';
-import { MAX_WEB_QUERY, webRead, webSearch } from './web';
+import { MAX_WEB_QUERY, webRead, webSearch, type HostLookup } from './web';
 
 const MAX_TEXT = 1024 * 1024,
   MAX_OUTPUT = 64 * 1024,
@@ -172,8 +172,15 @@ function numeric(value: unknown, fallback: number, max: number) {
 export function createExecutor(options: {
   projectRoot: string;
   pythonPath?: string;
+  supervisorPath?: string;
+  safeApplyPath?: string;
+  workerPath?: string;
+  lookup?: HostLookup;
 }): ToolExecutor {
-  const supervisorPath = path.join(options.projectRoot, 'dist/helpers/process-supervisor.exe');
+  const supervisorPath =
+    options.supervisorPath || path.join(options.projectRoot, 'dist/helpers/process-supervisor.exe');
+  const safeApplyPath =
+    options.safeApplyPath || path.join(options.projectRoot, 'dist/helpers/safe-apply.exe');
   const python =
     options.pythonPath ||
     path.join(
@@ -181,17 +188,17 @@ export function createExecutor(options: {
       '.venv',
       process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python',
     );
-  const worker = path.join(options.projectRoot, 'workers/office/worker.py');
+  const worker = options.workerPath || path.join(options.projectRoot, 'workers/office/worker.py');
   const workerArgs = ['-I', worker];
   let publishingProbe: Promise<{ available: boolean; detail: string }> | undefined;
   async function publishingCapability() {
     try {
       await Promise.all([fs.access(python), fs.access(worker)]);
       const probe = await runProcess(python, workerArgs, {
-        cwd: options.projectRoot,
+        cwd: path.dirname(worker),
         supervisorPath,
-        signal: AbortSignal.timeout(5000),
-        timeoutMs: 5000,
+        signal: AbortSignal.timeout(15000),
+        timeoutMs: 15000,
         input: JSON.stringify({ operation: 'capabilities', schemaVersion: 1 }),
         outputLimit: 4096,
       });
@@ -254,7 +261,7 @@ export function createExecutor(options: {
           available:
             process.platform === 'win32' &&
             supervised &&
-            (await fs.stat(path.join(options.projectRoot, 'dist/helpers/safe-apply.exe')).then(
+            (await fs.stat(safeApplyPath).then(
               (stat) => stat.isFile(),
               () => false,
             )),
@@ -282,8 +289,10 @@ export function createExecutor(options: {
         for (const key of Object.keys(args))
           if (!(key in properties))
             throw new ToolError('INVALID_ARGUMENT', `Unknown argument: ${key}`);
-        if (name === 'web_read') return await webRead(str(args, 'url'), context);
-        if (name === 'web_search') return await webSearch(str(args, 'query'), context);
+        if (name === 'web_read')
+          return await webRead(str(args, 'url'), context, { lookup: options.lookup });
+        if (name === 'web_search')
+          return await webSearch(str(args, 'query'), context, { lookup: options.lookup });
         if (name === 'process_run') {
           if (!context.scope.allowProcess)
             throw new ToolError(

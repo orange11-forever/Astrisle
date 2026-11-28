@@ -35,6 +35,29 @@ export function isTrustedSender(actual: string, expected: string, mainFrame: boo
   }
 }
 
+export function contentSecurityPolicy(devOrigin?: string): string {
+  if (devOrigin && devOrigin !== 'http://127.0.0.1:5173')
+    throw new Error('Unsupported development origin');
+  const dev = devOrigin === 'http://127.0.0.1:5173';
+  return [
+    "default-src 'self'",
+    dev ? "script-src 'self' 'unsafe-inline' http://127.0.0.1:5173" : "script-src 'self'",
+    dev
+      ? "style-src 'self' 'unsafe-inline' http://127.0.0.1:5173"
+      : "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "media-src 'self' data: blob:",
+    dev
+      ? "connect-src 'self' data: blob: http://127.0.0.1:5173 ws://127.0.0.1:5173"
+      : "connect-src 'self' data: blob:",
+    "worker-src 'self' blob:",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "frame-ancestors 'none'",
+  ].join('; ');
+}
+
 export function canOpenExternally(path: string): boolean {
   return new Set([
     '.docx',

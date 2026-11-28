@@ -2,6 +2,7 @@ import { createRuntime, type RuntimeService } from '../../../packages/runtime/sr
 import { createExecutor } from '../../../packages/executor/src/index';
 import type { ProviderInput, ProjectSnapshot } from '@astrisle/contracts';
 import { join } from 'node:path';
+import type { DesktopResourcePaths } from './paths';
 
 type ParentPort = {
   on(name: 'message', listener: (event: { data: RpcRequest }) => void): void;
@@ -59,18 +60,29 @@ port.on('message', async ({ data: request }) => {
       const input = request.args[0] as {
         dataRoot: string;
         projectRoot: string;
+        paths?: DesktopResourcePaths;
         credentials: (ProviderInput & { apiKey: string }) | null;
       };
       credentials = input.credentials;
       const executor = createExecutor({
         projectRoot: input.projectRoot,
-        pythonPath: join(input.projectRoot, '.venv', 'Scripts', 'python.exe'),
+        supervisorPath: input.paths?.supervisorPath,
+        safeApplyPath: input.paths?.safeApplyPath,
+        pythonPath:
+          input.paths?.pythonPath ??
+          join(
+            input.projectRoot,
+            '.venv',
+            process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python',
+          ),
+        workerPath: input.paths?.officeWorkerPath,
       });
       service = createRuntime({
         dataRoot: input.dataRoot,
         executor,
         getCredentials: async () => credentials,
-        applyHelperPath: join(input.projectRoot, 'dist/helpers/safe-apply.exe'),
+        applyHelperPath:
+          input.paths?.safeApplyPath ?? join(input.projectRoot, 'dist/helpers/safe-apply.exe'),
         ...(process.env.ASTRISLE_AUTOMATION === '1' && process.env.ASTRISLE_TEST_LOCAL_GIT === '1'
           ? { gitDeliveryLocalRemoteRoot: join(input.dataRoot, 'git-remotes') }
           : {}),

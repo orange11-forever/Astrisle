@@ -145,11 +145,9 @@ export function ready(task: Task, snapshot: ProjectSnapshot): boolean {
     task.dependencies.every((id) => {
       const dep = snapshot.tasks.find((t) => t.id === id);
       return task.dependencyKinds?.[id] === 'artifact_available'
-        ? (task.kind !== 'review' ||
-            dep?.kind === 'review' ||
-            ['awaiting_review', 'passed'].includes(dep?.status ?? '')) &&
-            dep?.outputArtifactIds.some((id) =>
-              snapshot.artifacts.some((a) => a.id === id && a.validity === 'current'),
+        ? (dep?.kind === 'review' || ['awaiting_review', 'passed'].includes(dep?.status ?? '')) &&
+            dep?.outputArtifactIds.some((outId) =>
+              snapshot.artifacts.some((a) => a.id === outId && a.validity === 'current'),
             )
         : dep?.status === 'passed';
     })

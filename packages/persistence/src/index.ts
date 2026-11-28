@@ -1,7 +1,12 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import type { CommandResult, ProjectSnapshot, Workspace } from '../../contracts/src/index';
+import type {
+  CommandResult,
+  Commission,
+  ProjectSnapshot,
+  Workspace,
+} from '../../contracts/src/index';
 import { DailyNewsStore } from './daily-news';
 export interface StoredCall {
   id: string;
@@ -87,6 +92,19 @@ export class RuntimeStore {
         .exec(`CREATE TABLE IF NOT EXISTS runtime_generation(id INTEGER PRIMARY KEY CHECK(id=1), epoch INTEGER NOT NULL);
         INSERT OR IGNORE INTO runtime_generation VALUES(1,0);
         INSERT OR IGNORE INTO migrations VALUES(3);`);
+      const projectColumns = this.db.prepare('PRAGMA table_info(projects)').all();
+      if (!projectColumns.some((column) => column.name === 'summary_data')) {
+        this.db.exec('ALTER TABLE projects ADD COLUMN summary_data TEXT');
+        const backfill = this.db.prepare('UPDATE projects SET summary_data=? WHERE id=?');
+        for (const row of this.db
+          .prepare('SELECT id, data FROM projects WHERE summary_data IS NULL')
+          .all()) {
+          const snapshot = JSON.parse(row.data as string) as ProjectSnapshot;
+          backfill.run(JSON.stringify(snapshot.commission), row.id as string);
+        }
+      }
+      // Migrations 5 and 6 are recorded by DailyNewsStore.
+      this.db.exec('INSERT OR IGNORE INTO migrations VALUES(7)');
     });
     this.runtimeEpoch = this.db.prepare('SELECT epoch FROM runtime_generation WHERE id=1').get()!
       .epoch as number;
@@ -173,6 +191,18 @@ export class RuntimeStore {
       .all()
       .map((r) => JSON.parse(r.data as string));
   }
+  commissions(): Commission[] {
+    return this.db
+      .prepare(
+        'SELECT summary_data, CASE WHEN summary_data IS NULL THEN data END AS data FROM projects ORDER BY rowid',
+      )
+      .all()
+      .map((r) =>
+        r.summary_data
+          ? (JSON.parse(r.summary_data as string) as Commission)
+          : (JSON.parse(r.data as string) as ProjectSnapshot).commission,
+      );
+  }
   get(id: string): ProjectSnapshot {
     const project = this.findProject(id);
     if (!project) throw new Error('Commission not found');
@@ -193,12 +223,37 @@ export class RuntimeStore {
       : 1;
     this.db
       .prepare(
-        'INSERT INTO projects VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET writable=excluded.writable,data=excluded.data',
+        'INSERT INTO projects(id,workspace_id,writable,data,summary_data) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET writable=excluded.writable,data=excluded.data,summary_data=excluded.summary_data',
       )
-      .run(snapshot.commission.id, snapshot.workspace.id, writable, JSON.stringify(snapshot));
+      .run(
+        snapshot.commission.id,
+        snapshot.workspace.id,
+        writable,
+        JSON.stringify(snapshot),
+        JSON.stringify(snapshot.commission),
+      );
+    if (snapshot.events.length === 0) return;
+    const stats = this.db
+      .prepare(
+        'SELECT count(*) AS cnt, min(sequence) AS min_seq, coalesce(max(sequence), 0) AS max_seq FROM outbox WHERE project_id=?',
+      )
+      .get(snapshot.commission.id)!;
+    const cnt = stats.cnt as number;
+    const minSeq = stats.min_seq as number | null;
+    const maxSeq = stats.max_seq as number;
+    const contiguous = cnt > 0 && minSeq === 1 && cnt === maxSeq;
     const insert = this.db.prepare('INSERT OR IGNORE INTO outbox VALUES(?,?,?,?)');
-    for (const event of snapshot.events)
+    for (const event of snapshot.events) {
+      if (
+        contiguous &&
+        event.commissionId === snapshot.commission.id &&
+        event.sequence >= 1 &&
+        event.sequence <= maxSeq
+      ) {
+        continue;
+      }
       insert.run(event.id, event.commissionId, event.sequence, JSON.stringify(event));
+    }
   }
   receipt(id: string):
     | {

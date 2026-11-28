@@ -148,6 +148,22 @@ function grantedTool(tool: ToolDefinition, scope: Scope) {
 function artifactWithoutWebSources({ webSources: _webSources, ...artifact }: Artifact) {
   return artifact;
 }
+function reviewContextArtifacts(
+  artifacts: readonly Artifact[],
+  inputs: readonly Artifact[],
+): ReturnType<typeof artifactWithoutWebSources>[] {
+  const allowed = new Set<string>();
+  for (const input of inputs) {
+    let cursor: Artifact | undefined = input;
+    while (cursor && !allowed.has(cursor.versionId)) {
+      allowed.add(cursor.versionId);
+      cursor = cursor.previousVersionId
+        ? artifacts.find((a) => a.versionId === cursor!.previousVersionId)
+        : undefined;
+    }
+  }
+  return artifacts.filter((a) => allowed.has(a.versionId)).map(artifactWithoutWebSources);
+}
 const result = (ok: boolean, message: string, code?: string): CommandResult => ({
   ok,
   message,
@@ -577,7 +593,7 @@ class Runtime implements RuntimeService {
     const p = await this.options.getCredentials();
     return {
       workspaces: this.store.workspaces(),
-      commissions: this.store.projects().map((s) => s.commission),
+      commissions: this.store.commissions(),
       provider: {
         kind: p?.kind ?? 'openai-compatible',
         baseUrl: p?.baseUrl ?? '',
@@ -1871,7 +1887,7 @@ class Runtime implements RuntimeService {
     const messages: Message[] = [
       {
         role: 'system',
-        content: `You are ${task.agentId}, carrying out your assigned task in an isolated task workspace. The task description and criterionIds define your scope; the overall project goal is context, not an instruction to perform other partners' tasks. Only create and publish files owned by this task. Use registered tools. All paths are relative to your workspace. Do not claim execution or tests without tool output. Publish all final files with submit_artifact, then call complete_task once the handoff is ready. Before using render_source, publish the source or use the exact published input supplied by your dependency. For a targeted replacement, publish the selected file and the specifically listed regenerated files. Remove temporary changes before completion. A reviewer must inspect every pinned input version with workspace_read or inspect_delivery, then perform applicable checks and submit_review with the real evidence IDs and every input version ID. Process output alone does not establish which file version was inspected. Insufficient evidence is unable_to_verify. Never approve your own work. User rejections must be respected. Tools may not access runtime state files. ${skillInstructions} ${webInstructions}`,
+        content: `You are ${task.agentId}, carrying out your assigned task in an isolated task workspace. The task description and criterionIds define your scope; the overall project goal is context, not an instruction to perform other partners' tasks. Only create and publish files owned by this task. Use registered tools. All paths are relative to your workspace. Do not claim execution or tests without tool output. Publish all final files with submit_artifact, then call complete_task once the handoff is ready. Before using render_source, publish the source or use the exact published input supplied by your dependency. For a targeted replacement, publish the selected file and the specifically listed regenerated files. Remove temporary changes before completion. A reviewer must inspect every pinned input version with workspace_read or inspect_delivery, then perform applicable checks and submit_review with the real evidence IDs and every input version ID. Pass only expectedReviewVersionIds in submit_review.versionIds. Process output alone does not establish which file version was inspected. Insufficient evidence is unable_to_verify. Never approve your own work. User rejections must be respected. Tools may not access runtime state files. ${skillInstructions} ${webInstructions}`,
       },
       {
         role: 'user',
@@ -1895,6 +1911,9 @@ class Runtime implements RuntimeService {
           },
           capabilities: await this.options.executor.capabilities(),
           inputs,
+          ...(task.kind === 'review' && {
+            expectedReviewVersionIds: inputs.map((a) => a.versionId),
+          }),
           previousArtifact: reworkBase,
           ...(priorSourcedArtifacts.length && { priorSourcedArtifacts }),
           ...(reworkOutputs.length > 1 && {
@@ -1908,7 +1927,10 @@ class Runtime implements RuntimeService {
           ),
           priorEvidence: summarizeTaskEvidence(evidence),
           priorEvidenceMayBeTruncated: evidence.length > 24,
-          availableArtifacts: initial.artifacts.map(artifactWithoutWebSources),
+          availableArtifacts:
+            task.kind === 'review'
+              ? reviewContextArtifacts(initial.artifacts, inputs)
+              : initial.artifacts.map(artifactWithoutWebSources),
           continuation: await buildTaskContinuation(
             workPath,
             this.store.recentTaskCalls(id, taskId),
@@ -2557,7 +2579,6 @@ class Runtime implements RuntimeService {
           artifactVersionId: artifact.versionId,
         },
       );
-      this.kick(id);
       return {
         ok: true,
         artifactId: artifact.id,
@@ -2676,6 +2697,7 @@ class Runtime implements RuntimeService {
       }
       if (!integration.ok)
         throw new Error(`Integration conflicts: ${integration.conflicts.join(', ')}`);
+      this.kick(id);
       return {
         ok: true,
       };
@@ -2761,6 +2783,20 @@ class Runtime implements RuntimeService {
         code: 'WEB_SOURCE_REVIEW_REQUIRED',
         output:
           'Independently read each bound original URL with web_read and include the successful receipts with your file inspection in submit_review. If a source cannot be verified, submit unable_to_verify.',
+      };
+    const outOfScopeVersions = versions.filter((v) => !expected.includes(v));
+    const missingExpectedVersions = expected.filter((v) => !versions.includes(v));
+    if (
+      unchanged &&
+      expected.length > 0 &&
+      (outOfScopeVersions.length > 0 ||
+        (verdict === 'pass' && validEvidence && missingExpectedVersions.length > 0))
+    )
+      return {
+        ok: false,
+        code: 'REVIEW_VERSION_SCOPE_MISMATCH',
+        expectedVersionIds: expected,
+        output: `Submit review only for this task's pinned current input versions (${expected.join(', ')}). Remove unrelated versions and include every pinned input version.`,
       };
     const retryableSourceReview = verdict === 'unable_to_verify' && missingSources && unchanged;
     if (
